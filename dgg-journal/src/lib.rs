@@ -14,16 +14,14 @@ use {
   },
 };
 
-/// Marker written when a connection opens. dgg events are upper case, so
-/// lower-case markers never collide with them.
-pub const CONN_OPEN: &str = "conn_open";
-/// Marker written when a connection drops; `raw` holds the reason.
-pub const CONN_CLOSE: &str = "conn_close";
-
 /// How often [`Writer::sync_if_due`] fsyncs.
 pub const SYNC_INTERVAL: Duration = Duration::from_secs(1);
 
-/// One journal line.
+/// One journal line: shared fields plus a [`Body`] whose variant name is the
+/// JSON key, e.g. `{"recv":…,"inst":"…","conn":3,"frame":"MSG {…}"}`.
+///
+/// Unknown extra keys are ignored; a line with no known body key fails to
+/// parse, so a future kind is never mistaken for a frame.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Record {
   /// Local receive time, unix ms.
@@ -32,11 +30,41 @@ pub struct Record {
   pub inst: String,
   /// Connection number within the instance, counting from 1.
   pub conn: u64,
-  /// dgg event name, or [`CONN_OPEN`] / [`CONN_CLOSE`].
-  pub ev: String,
-  /// The frame exactly as received (`EVENT payload`), or a marker's detail.
-  #[serde(default, skip_serializing_if = "String::is_empty")]
-  pub raw: String,
+  #[serde(flatten)]
+  pub body: Body,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Body {
+  /// A dgg text frame exactly as received (`EVENT payload`).
+  Frame(String),
+  /// A binary frame, base64 in the journal. dgg doesn't send these today;
+  /// they're kept so a protocol change can't silently lose data.
+  Binary(#[serde(with = "base64")] Vec<u8>),
+  /// Connection opened, with the URL it connected to.
+  Open(String),
+  /// Connection dropped, with why.
+  Close(String),
+}
+
+mod base64 {
+  use {
+    ::base64::{Engine, engine::general_purpose::STANDARD},
+    ::serde::{Deserialize, Deserializer, Serializer, de::Error},
+  };
+
+  pub fn serialize<S: Serializer>(v: &[u8], s: S) -> Result<S::Ok, S::Error> {
+    s.serialize_str(&STANDARD.encode(v))
+  }
+
+  pub fn deserialize<'de, D: Deserializer<'de>>(
+    d: D,
+  ) -> Result<Vec<u8>, D::Error> {
+    // Owned: `flatten` buffers values, so borrowing would fail.
+    let s = String::deserialize(d)?;
+    STANDARD.decode(s).map_err(D::Error::custom)
+  }
 }
 
 /// `YYYY-MM-DD` of a unix ms timestamp, in UTC.
@@ -279,14 +307,57 @@ mod tests {
     dir
   }
 
-  fn rec(recv: i64, raw: &str) -> Record {
+  fn rec(recv: i64, frame: &str) -> Record {
     Record {
       recv,
       inst: "a".into(),
       conn: 1,
-      ev: "MSG".into(),
-      raw: raw.into(),
+      body: Body::Frame(frame.into()),
     }
+  }
+
+  fn frame(e: &Result<Entry, ReadError>) -> &str {
+    match &e.as_ref().unwrap().record.body {
+      Body::Frame(f) => f,
+      b => panic!("not a frame: {b:?}"),
+    }
+  }
+
+  #[test]
+  fn line_format() {
+    let line = |body| {
+      let r = Record {
+        recv: 5,
+        inst: "a".into(),
+        conn: 2,
+        body,
+      };
+      let s = ::serde_json::to_string(&r).unwrap();
+      assert_eq!(::serde_json::from_str::<Record>(&s).unwrap(), r);
+      s
+    };
+    assert_eq!(
+      line(Body::Frame("MSG {}".into())),
+      r#"{"recv":5,"inst":"a","conn":2,"frame":"MSG {}"}"#
+    );
+    assert_eq!(
+      line(Body::Binary(vec![0, 255])),
+      r#"{"recv":5,"inst":"a","conn":2,"binary":"AP8="}"#
+    );
+    assert_eq!(
+      line(Body::Open("wss://x".into())),
+      r#"{"recv":5,"inst":"a","conn":2,"open":"wss://x"}"#
+    );
+    assert_eq!(
+      line(Body::Close("idle".into())),
+      r#"{"recv":5,"inst":"a","conn":2,"close":"idle"}"#
+    );
+
+    let parse = ::serde_json::from_str::<Record>;
+    let r = parse(r#"{"recv":5,"inst":"a","conn":2,"src":"x","frame":"Q"}"#);
+    assert_eq!(r.unwrap().body, Body::Frame("Q".into()));
+    assert!(parse(r#"{"recv":5,"inst":"a","conn":2,"later":"x"}"#).is_err());
+    assert!(parse(r#"{"recv":5,"inst":"a","conn":2}"#).is_err());
   }
 
   #[test]
@@ -360,7 +431,7 @@ mod tests {
     f.write_all(b"\n").unwrap();
     let rest: Vec<_> = Reader::open(path, r.offset()).unwrap().collect();
     assert_eq!(rest.len(), 1);
-    assert_eq!(rest[0].as_ref().unwrap().record.raw, "MSG 3");
+    assert_eq!(frame(&rest[0]), "MSG 3");
     fs::remove_dir_all(&root).unwrap();
   }
 
@@ -383,9 +454,9 @@ mod tests {
     drop(w);
     let read: Vec<_> = Reader::open(&path, 0).unwrap().collect();
     assert_eq!(read.len(), 3);
-    assert_eq!(read[0].as_ref().unwrap().record.raw, "MSG 1");
+    assert_eq!(frame(&read[0]), "MSG 1");
     assert!(matches!(read[1], Err(ReadError::Bad { .. })));
-    assert_eq!(read[2].as_ref().unwrap().record.raw, "MSG 2");
+    assert_eq!(frame(&read[2]), "MSG 2");
     fs::remove_dir_all(&root).unwrap();
   }
 }

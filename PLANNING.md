@@ -36,7 +36,13 @@ The layout is flat: each crate is a direct child of the root.
   - `journal/control/<instance>.json`: heartbeats.
   - Hot paths only ever list `live/`.
 - **Days:** UTC.
-- **Line format:** `{"recv":ms,"inst":id,"conn":n,"ev":"MSG","raw":"<exact frame>"}`, plus `conn_open` and `conn_close` markers.
+- **Line format:** shared `recv` (ms), `inst` and `conn`, plus exactly one body key:
+  - `"frame":"<exact text frame>"`;
+  - `"binary":"<base64>"`;
+  - `"open":"<url>"`;
+  - `"close":"<why>"`.
+
+  Event names are never interpreted at this layer, so dgg adding or removing events can't break the journal.
 - **capture:** dgg-chat into the journal, and nothing else, so it stays tiny and rarely changes.
   - **In-place upgrade:** start the new binary. Once it's healthy, the old instance writes for a 30 s overlap and then retires itself.
   - **Across hosts:** the same rule works with `--peer <url>`.
