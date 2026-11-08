@@ -3,8 +3,8 @@
 use {
   ::journal::{
     DecodeError, Entry, ReadError, Reader, Record, Version, Writer,
-    current::{self, Body},
     layout::{live_dir, live_files},
+    record::v1::{self, Body},
   },
   ::std::{
     fs::{self, OpenOptions},
@@ -34,8 +34,8 @@ impl Drop for TempRoot {
   }
 }
 
-fn rec(recv: i64, frame: &str) -> current::Record {
-  current::Record {
+fn rec(recv: i64, frame: &str) -> v1::Record {
+  v1::Record {
     recv,
     inst: "a".into(),
     conn: 1,
@@ -43,17 +43,17 @@ fn rec(recv: i64, frame: &str) -> current::Record {
   }
 }
 
-fn write(w: &mut Writer, r: &current::Record) {
+fn write(w: &mut Writer, r: &v1::Record) {
   w.write(r.recv, r.conn, r.body.clone()).unwrap();
 }
 
-fn v1(e: Result<Entry, ReadError>) -> current::Record {
+fn record(e: Result<Entry, ReadError>) -> v1::Record {
   let Record::V1(r) = e.unwrap().record;
   r
 }
 
 fn frame(e: Result<Entry, ReadError>) -> String {
-  match v1(e).body {
+  match record(e).body {
     Body::Frame(f) => f,
     b => panic!("not a frame: {b:?}"),
   }
@@ -88,7 +88,7 @@ fn write_read_and_rollover() {
   let read: Vec<_> = files
     .iter()
     .flat_map(|f| Reader::open(f, 0).unwrap())
-    .map(v1)
+    .map(record)
     .collect();
   assert_eq!(read, recs);
 }

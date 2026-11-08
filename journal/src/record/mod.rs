@@ -1,13 +1,13 @@
+//! A decoded line from a file of any readable version.
+//!
 //! The header line every journal file starts with: `journal <major>.<minor>`.
 
-use crate::{digits, v1};
+pub mod v1;
 
 /// Format name at the start of every file's header line.
 pub const MAGIC: &str = "journal";
-
 /// The version this crate writes.
 pub const CURRENT: Version = v1::VERSION;
-
 /// Majors this crate has a decoder for.
 pub const READABLE_MAJORS: &[u32] = &[v1::VERSION.major];
 
@@ -43,4 +43,36 @@ impl Version {
       minor: minor.parse().ok()?,
     })
   }
+}
+
+/// A record from a file of any readable version, tagged by its major.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Record {
+  V1(v1::Record),
+}
+
+/// Why a complete line couldn't be decoded.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DecodeError {
+  /// Not a well-formed line, e.g. one torn by a crash.
+  Bad(&'static str),
+  /// Well-formed, but a kind this version doesn't know (added by a newer
+  /// minor, say).
+  Unknown(String),
+  /// No decoder for this major version.
+  NoDecoder(u32),
+}
+
+impl Record {
+  /// Decodes one line, without its newline, from a file at `version`.
+  pub fn decode(version: Version, line: &[u8]) -> Result<Self, DecodeError> {
+    match version.major {
+      1 => v1::Record::decode(line).map(Self::V1),
+      major => Err(DecodeError::NoDecoder(major)),
+    }
+  }
+}
+
+pub(crate) fn digits(s: &str) -> bool {
+  !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit())
 }

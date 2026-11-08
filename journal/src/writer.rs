@@ -1,10 +1,9 @@
-//! Appends records to live files, always in the [`current`] format.
+//! Appends records to live files, always in the [`v1`] format.
 
 use {
   crate::{
-    current::{self, Body},
     layout::{live_file, utc_day},
-    version::CURRENT,
+    record::v1::{self, Body},
   },
   ::std::{
     fs::{self, File, OpenOptions},
@@ -35,7 +34,7 @@ impl Writer {
   pub fn new(root: impl Into<PathBuf>, inst: impl Into<String>) -> Self {
     let inst = inst.into();
     assert!(
-      current::valid_inst(&inst),
+      v1::valid_inst(&inst),
       "instance id must be [A-Za-z0-9._-]+: {inst:?}"
     );
     Self {
@@ -57,7 +56,7 @@ impl Writer {
       self.sync()?;
       self.open = Some((day.clone(), self.open_day(&day)?));
     }
-    let rec = current::Record {
+    let rec = v1::Record {
       recv,
       inst: self.inst.clone(),
       conn,
@@ -98,7 +97,7 @@ impl Writer {
       .append(true)
       .open(path)?;
     if file.metadata()?.len() == 0 {
-      file.write_all(format!("{}\n", CURRENT.header()).as_bytes())?;
+      file.write_all(format!("{}\n", v1::VERSION.header()).as_bytes())?;
     } else {
       // Isolate a torn line left by a crash, so the next record starts clean.
       let mut last = [0];

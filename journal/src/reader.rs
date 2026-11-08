@@ -1,10 +1,7 @@
 //! Reads records from files of any readable version.
 
 use {
-  crate::{
-    record::{DecodeError, Record},
-    version::Version,
-  },
+  crate::record::{DecodeError, Record, Version},
   ::std::{
     fs::File,
     io::{self, BufRead, BufReader, Seek, SeekFrom},
