@@ -1,5 +1,5 @@
 [package]
-name = "dgg-journal"
+name = "journal"
 version = "0.1.0"
 edition.workspace = true
 

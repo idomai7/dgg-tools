@@ -5,7 +5,7 @@ A Cargo workspace of tools built around destiny.gg chat and its endpoints. Every
 ## Layout
 The layout is flat: each crate is a direct child of the root.
 - `dgg-chat/`: the shared socket client and event types.
-- `dgg-journal/`: the journal file format, with a writer and a reader.
+- `journal/`: the journal file format, with a writer and a reader.
 - `logger/`: binaries `capture`, `index`, `serve`, `sync`, `backfill` and `compact`.
 - `viewer/`: the read-only chat viewer, formerly dggkick.
 
@@ -36,7 +36,7 @@ The layout is flat: each crate is a direct child of the root.
   - `journal/control/<instance>.json`: heartbeats.
   - Hot paths only ever list `live/`.
 - **Days:** UTC.
-- **Line format:** explicit and hand-written, with no serde. The full spec is in the `dgg-journal` crate docs.
+- **Line format:** explicit and hand-written, with no serde. The full spec is in the `journal` crate docs.
   - Each file starts with `dgg-journal <major>.<minor>` (currently `1.0`). Readers accept any minor of their own major, so minor bumps may only add kinds, which old readers skip as unknown. Anything else is a major bump, which old readers refuse.
   - Each line is `<recv> <inst> <conn> <kind> <data>`, separated by single spaces, with `data` verbatim to the end of the line.
   - Kinds are `frame` (the exact text frame), `binary` (base64), `open` (the URL) and `close` (why).
@@ -72,7 +72,7 @@ The layout is flat: each crate is a direct child of the root.
   - The dgg probe is at `dgg-chat/examples/probe.rs`.
   - `viewer` is a placeholder stub.
 - **`dgg-chat`:** a minimal client (reconnect with backoff, PING/PONG, idle timeout). The typed events and assets are still to do.
-- **`dgg-journal`:** live files, plus a writer and a reader. The `.zst` archives and manifests come with `compact`.
+- **`journal`:** live files, plus a writer and a reader. The `.zst` archives and manifests come with `compact`.
 - **Next:** `logger capture`, then `index`.
 
 ## Deferred: Kick
