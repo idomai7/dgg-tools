@@ -1,39 +1,26 @@
-// Probe: connect to dgg chat and print MSG events until the socket closes.
+// Probe: stream dgg chat through dgg_chat::Client and print what arrives.
 // Usage: cargo run -p dgg-chat --example probe -- [--no-origin]
-use futures_util::{SinkExt, StreamExt};
-use tokio_tungstenite::tungstenite::{
-  Message, client::IntoClientRequest, http::HeaderValue,
-};
+use dgg_chat::{Client, Item, Options};
 
 #[tokio::main]
 async fn main() {
-  let _ = rustls::crypto::ring::default_provider().install_default();
-  let mut req = "wss://chat.destiny.gg/ws".into_client_request().unwrap();
-  if !std::env::args().any(|a| a == "--no-origin") {
-    req
-      .headers_mut()
-      .insert("Origin", HeaderValue::from_static("https://www.destiny.gg"));
+  let mut opts = Options::default();
+  if std::env::args().any(|a| a == "--no-origin") {
+    opts.origin = None;
   }
 
-  let (mut ws, resp) = match tokio_tungstenite::connect_async(req).await {
-    Ok(v) => v,
-    Err(e) => return eprintln!("connect failed: {e}"),
-  };
-  println!("connected: {}", resp.status());
-
-  while let Some(frame) = ws.next().await {
-    let Ok(Message::Text(text)) = frame else {
-      continue;
-    };
-    let (event, payload) = text.split_once(' ').unwrap_or((&text, ""));
-    match event {
-      "PING" => ws
-        .send(Message::text(format!("PONG {payload}")))
-        .await
-        .unwrap(),
-      "MSG" => println!("{payload}"),
-      _ => println!("[{event}] {} bytes", payload.len()),
+  let mut client = Client::spawn(opts);
+  while let Some(item) = client.next().await {
+    match item {
+      Item::Connected { conn } => println!("connected (#{conn})"),
+      Item::Frame(f) if f.event() == "MSG" => println!("{}", f.payload()),
+      Item::Frame(f) => println!("[{}] {} bytes", f.event(), f.payload().len()),
+      Item::Disconnected { conn, reason } => {
+        println!("disconnected (#{conn}): {reason}")
+      }
+      Item::ConnectFailed { error, retry_in } => {
+        println!("connect failed: {error}; retrying in {retry_in:?}")
+      }
     }
   }
-  println!("disconnected");
 }
