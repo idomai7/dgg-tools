@@ -30,7 +30,23 @@ The layout is flat: each crate is a direct child of the root.
    - embed transcriptions;
    - archival;
    - clipping tools;
-   - links/attachments viewer (like linkers.ooo).
+   - links/attachments viewer (like linkers.ooo);
+   - embed stats viewer: when embeds are live, how many viewers, and perhaps which viewers.
+4. **Archives and stats, not yet ordered.** Some can likely be derived from chat events the journal already captures (marked *chat*). The rest need other dgg endpoints or sites, which still have to be probed (marked *probe*).
+   - donations: amounts, users, messages, times (*chat*: `DONATION`);
+   - gifted subs: gifter, recipients, times (*chat*: `GIFTSUB`/`MASSGIFT`);
+   - bans, with their reasons (*chat*: `BAN`/`MUTE`);
+   - pinned messages (*chat*: `PIN`);
+   - emotes: which are popular, each user's emotes and how often they use them, and rare emotes (*chat*: `MSG` text against the emote list);
+   - user activity times (*chat*: `MSG`/`JOIN`/`QUIT`);
+   - user subscription statuses (*chat*: `MSG`/`NAMES` carry `subscription` and `features`);
+   - TTS messages (*probe*; may arrive as chat events);
+   - user bios (*probe*);
+   - dgg profile membership cards (*probe*);
+   - Vestaboard art (*probe*);
+   - tweets (*probe*);
+   - the schedule (*probe*);
+   - the website's change notes (*probe*).
 
 ## Logger design
 - **Journal layout:**
