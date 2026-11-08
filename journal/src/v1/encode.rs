@@ -13,7 +13,7 @@ impl Record {
       Body::Binary(b) => ("binary", b.as_slice()),
     };
     let binary = matches!(self.body, Body::Binary(_));
-    let text64 = !binary && data.iter().any(|&b| b == b'\n' || b == b'\r');
+    let text64 = !binary && data.contains(&b'\n');
     let suffix = if text64 { "64" } else { "" };
     let header =
       format!("{} {} {} {kind}{suffix}", self.recv, self.inst, self.conn);

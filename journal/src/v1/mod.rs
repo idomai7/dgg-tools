@@ -16,8 +16,9 @@
 //! - `open`: a connection opened; data is the URL.
 //! - `close`: a connection dropped; data is why.
 //!
-//! Text containing a CR or LF can't sit on one line, so it's written with the
-//! kind suffixed `64` and the data base64 (`frame64`, `open64`, `close64`).
+//! Lines end at LF only; a CR is ordinary data. Text containing an LF can't
+//! sit on one line, so it's written with the kind suffixed `64` and the data
+//! base64 (`frame64`, `open64`, `close64`).
 //!
 //! Minor versions:
 //!

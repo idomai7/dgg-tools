@@ -32,7 +32,8 @@ fn line_format() {
     "5 a 2 close idle timeout"
   );
   assert_eq!(line(Body::Close("".into())), "5 a 2 close");
-  assert_eq!(line(Body::Close("a\r".into())), "5 a 2 close64 YQ0=");
+  assert_eq!(line(Body::Close("a\r".into())), "5 a 2 close a\r");
+  assert_eq!(line(Body::Frame("\r\n".into())), "5 a 2 frame64 DQo=");
 }
 
 #[test]

@@ -43,7 +43,7 @@ The layout is flat: each crate is a direct child of the root.
   - Each file starts with `journal <major>.<minor>` (currently `1.0`). Readers accept any minor of their own major, so minor bumps may only add kinds, which old readers skip as unknown. Anything else is a major bump, which readers without that major's module refuse.
   - Each line is `<recv> <inst> <conn> <kind> <data>`, separated by single spaces, with `data` verbatim to the end of the line.
   - Kinds are `frame` (the exact text frame), `binary` (base64), `open` (the URL) and `close` (why).
-  - Text containing CR or LF is written as `<kind>64` with the data in base64.
+  - Lines end at LF only, and a CR is ordinary data. Text containing an LF is written as `<kind>64` with the data in base64.
   - Unknown kinds are reported separately from malformed lines.
 
   Event names are never interpreted at this layer, so dgg adding or removing events can't break the journal.
