@@ -23,7 +23,7 @@ async fn main() {
       _ = &mut deadline => break,
       item = live.next() => {
         if let Some(Item::Frame(f)) = item
-          && f.conn == 1
+          && f.connection == 1
           && f.event() == "MSG"
         {
           seen.push(f.payload().to_owned());

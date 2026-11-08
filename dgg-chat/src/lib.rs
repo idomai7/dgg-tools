@@ -56,15 +56,19 @@ impl Default for Options {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Frame {
   /// Which connection (counting from 1) the frame arrived on.
-  pub conn: u64,
+  pub connection: u64,
   raw: String,
   split: usize,
 }
 
 impl Frame {
-  pub fn parse(conn: u64, raw: String) -> Self {
+  pub fn parse(connection: u64, raw: String) -> Self {
     let split = raw.find(' ').unwrap_or(raw.len());
-    Self { conn, raw, split }
+    Self {
+      connection,
+      raw,
+      split,
+    }
   }
 
   pub fn event(&self) -> &str {
@@ -88,17 +92,17 @@ impl Frame {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Item {
   Connected {
-    conn: u64,
+    connection: u64,
   },
   Frame(Frame),
   /// A binary frame. dgg doesn't send these today; they're passed through
   /// so a protocol change can't be silently dropped.
   Binary {
-    conn: u64,
+    connection: u64,
     data: Vec<u8>,
   },
   Disconnected {
-    conn: u64,
+    connection: u64,
     reason: String,
   },
   ConnectFailed {
@@ -137,19 +141,19 @@ type Tx = mpsc::UnboundedSender<Item>;
 
 async fn run(opts: Options, tx: Tx) {
   let mut backoff = opts.min_backoff;
-  let mut conn = 0;
+  let mut connection = 0;
   loop {
     match connect(&opts).await {
       Ok(ws) => {
-        conn += 1;
-        if tx.send(Item::Connected { conn }).is_err() {
+        connection += 1;
+        if tx.send(Item::Connected { connection }).is_err() {
           return;
         }
         let started = Instant::now();
-        let Some(reason) = pump(ws, conn, &opts, &tx).await else {
+        let Some(reason) = pump(ws, connection, &opts, &tx).await else {
           return;
         };
-        if tx.send(Item::Disconnected { conn, reason }).is_err() {
+        if tx.send(Item::Disconnected { connection, reason }).is_err() {
           return;
         }
         if started.elapsed() >= STABLE_AFTER {
@@ -197,7 +201,7 @@ async fn connect(opts: &Options) -> Result<Ws, String> {
 /// the receiver has gone away.
 async fn pump(
   mut ws: Ws,
-  conn: u64,
+  connection: u64,
   opts: &Options,
   tx: &Tx,
 ) -> Option<String> {
@@ -210,7 +214,7 @@ async fn pump(
         last = Instant::now();
         match msg {
           Some(Ok(Message::Text(text))) => {
-            let frame = Frame::parse(conn, text.as_str().to_owned());
+            let frame = Frame::parse(connection, text.as_str().to_owned());
             if frame.event() == "PING" {
               let pong = Message::text(format!("PONG {}", frame.payload()));
               if let Err(e) = ws.send(pong).await {
@@ -221,7 +225,7 @@ async fn pump(
             }
           }
           Some(Ok(Message::Binary(data))) => {
-            let item = Item::Binary { conn, data: data.to_vec() };
+            let item = Item::Binary { connection, data: data.to_vec() };
             if tx.send(item).is_err() {
               return None;
             }

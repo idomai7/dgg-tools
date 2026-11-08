@@ -44,23 +44,24 @@ async fn ping_and_reconnect() {
     ..Options::default()
   };
   let mut client = Client::spawn(opts);
-  for conn in 1..=2 {
-    assert_eq!(client.next().await, Some(Item::Connected { conn }));
+  for connection in 1..=2 {
+    assert_eq!(client.next().await, Some(Item::Connected { connection }));
     let Some(Item::Frame(f)) = client.next().await else {
       panic!("expected frame");
     };
-    assert_eq!((f.conn, f.raw()), (conn, "MSG {}"));
+    assert_eq!((f.connection, f.raw()), (connection, "MSG {}"));
     assert_eq!(
       client.next().await,
       Some(Item::Binary {
-        conn,
+        connection,
         data: vec![1, 2]
       })
     );
-    let next = client.next().await;
-    assert!(
-      matches!(next, Some(Item::Disconnected { conn: c, .. }) if c == conn)
-    );
+    let Some(Item::Disconnected { connection: c, .. }) = client.next().await
+    else {
+      panic!("expected disconnect");
+    };
+    assert_eq!(c, connection);
   }
   server.await.unwrap();
 }

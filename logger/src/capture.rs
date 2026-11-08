@@ -58,21 +58,21 @@ pub async fn run(
         let Some(item) = item else { break };
         let now = now_ms();
         match item {
-          Item::Connected { conn } => {
-            connected = Some(conn);
-            writer.write(now, conn, Body::Open(url.clone()))?;
+          Item::Connected { connection } => {
+            connected = Some(connection);
+            writer.write(now, connection, Body::Open(url.clone()))?;
           }
           Item::Frame(frame) => {
-            let connection = frame.conn;
+            let connection = frame.connection;
             writer.write(now, connection, Body::Frame(frame.into_raw()))?;
           }
-          Item::Binary { conn, data } => {
-            writer.write(now, conn, Body::Binary(data))?;
+          Item::Binary { connection, data } => {
+            writer.write(now, connection, Body::Binary(data))?;
           }
-          Item::Disconnected { conn, reason } => {
+          Item::Disconnected { connection, reason } => {
             connected = None;
-            eprintln!("disconnected (#{conn}): {reason}");
-            writer.write(now, conn, Body::Close(reason))?;
+            eprintln!("disconnected (#{connection}): {reason}");
+            writer.write(now, connection, Body::Close(reason))?;
           }
           Item::ConnectFailed { error, retry_in } => {
             eprintln!("connect failed: {error}; retrying in {retry_in:?}");

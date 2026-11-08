@@ -12,12 +12,12 @@ async fn main() {
   let mut client = Client::spawn(opts);
   while let Some(item) = client.next().await {
     match item {
-      Item::Connected { conn } => println!("connected (#{conn})"),
+      Item::Connected { connection } => println!("connected (#{connection})"),
       Item::Frame(f) if f.event() == "MSG" => println!("{}", f.payload()),
       Item::Frame(f) => println!("[{}] {} bytes", f.event(), f.payload().len()),
       Item::Binary { data, .. } => println!("[binary] {} bytes", data.len()),
-      Item::Disconnected { conn, reason } => {
-        println!("disconnected (#{conn}): {reason}")
+      Item::Disconnected { connection, reason } => {
+        println!("disconnected (#{connection}): {reason}")
       }
       Item::ConnectFailed { error, retry_in } => {
         println!("connect failed: {error}; retrying in {retry_in:?}")
