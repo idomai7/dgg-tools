@@ -13,7 +13,10 @@ The layout is flat: each crate is a direct child of the root.
 - **Stack:** Rust. Node isn't installed on this machine.
   - axum, tokio-tungstenite, reqwest, rustls (ring).
   - Pages are plain JS with no build step.
-- **Style:** rustfmt with `max_width = 80` and `tab_spaces = 2` (`rustfmt.toml`).
+- **Style:**
+  - rustfmt with `max_width = 80` and `tab_spaces = 2` (`rustfmt.toml`).
+  - One `use { … }` block per scope, and a `::` prefix on every external crate, `std` included.
+  - Tests go in each crate's `tests/` directory, never inline in the source.
 - **Deployment:** must stay portable across Windows and Linux.
 - **Logger storage:** an append-only raw journal is the source of truth. SQLite (rusqlite, `bundled`) is an index that can be rebuilt from it.
 - **Kick:** deferred (see below).
@@ -31,13 +34,13 @@ The layout is flat: each crate is a direct child of the root.
 
 ## Logger design
 - **Journal layout:**
-  - `journal/live/YYYY-MM-DD/<instance>.journal`: one file per capture instance per day. These are the hot files.
-  - `journal/archive/YYYY/MM/YYYY-MM-DD.journal.zst` plus a `manifest.json` per month. These are cold.
-  - `journal/control/<instance>.json`: heartbeats.
+  - `data/journal/live/YYYY-MM-DD/<instance>.journal`: one file per capture instance per day. These are the hot files.
+  - `data/journal/archive/YYYY/MM/YYYY-MM-DD.journal.zst` plus a `manifest.json` per month. These are cold.
+  - `data/journal/control/<instance>.json`: heartbeats.
   - Hot paths only ever list `live/`.
 - **Days:** UTC.
-- **Line format:** explicit and hand-written, with no serde. The full spec is in the `journal` crate docs.
-  - Each file starts with `dgg-journal <major>.<minor>` (currently `1.0`). Readers accept any minor of their own major, so minor bumps may only add kinds, which old readers skip as unknown. Anything else is a major bump, which old readers refuse.
+- **Line format:** explicit and hand-written, with no serde. The spec lives in the `journal` crate: each major version has its own module (`journal/src/v1/`), with child modules for encoding and decoding, so several formats can coexist in the library.
+  - Each file starts with `journal <major>.<minor>` (currently `1.0`). Readers accept any minor of their own major, so minor bumps may only add kinds, which old readers skip as unknown. Anything else is a major bump, which readers without that major's module refuse.
   - Each line is `<recv> <inst> <conn> <kind> <data>`, separated by single spaces, with `data` verbatim to the end of the line.
   - Kinds are `frame` (the exact text frame), `binary` (base64), `open` (the URL) and `close` (why).
   - Text containing CR or LF is written as `<kind>64` with the data in base64.
