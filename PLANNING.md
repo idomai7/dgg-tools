@@ -64,7 +64,15 @@ The layout is flat: each crate is a direct child of the root.
   - Tables: `messages` (with an FTS5 table, `messages_fts`), `connections` (open, close and last-seen times, close reasons, and the oldest timestamp in each connection's `HISTORY`), `unparsed` and `files` (per-file checkpoints).
   - Each file's checkpoint commits in the same transaction as its rows, so an interrupted run resumes exactly where it stopped.
   - `--rebuild` replays the whole journal. An index from another schema version must be rebuilt.
-- **serve / sync:** read-only HTTP access to the journal, and pulling another host's journal. Together they handle migrating to a new host and running a warm standby.
+- **serve / sync:** `serve` also lists live files (`GET /manifest`, format `journal-manifest 1.0`) and serves their bytes (`GET /files/live/<day>/<instance>.journal`, honouring `Range: bytes=N-`).
+  - `sync --peer <url>` appends whatever remote bytes are missing locally, then fsyncs. Journal files are append-only, so a local copy is always a prefix of the remote file and an interrupted sync just resumes.
+  - A remote file shorter than its local copy is reported and left alone.
+  - `--follow` keeps a warm standby.
+  - **Migration:**
+    1. On the old host, run `serve`.
+    2. On the new host, start `capture --peer` and `sync --follow`, then run `index`.
+    3. When the old capture has retired, run a final `sync`.
+  - Tested live: a byte-identical copy, and 0 gaps in the new host's index across both instances.
 - **backfill:** fills gaps that `HISTORY` didn't cover, from rustlesearch.dev. overrustlelogs.net is gone: the domain no longer resolves (checked 2026-11-08).
   - **API:** `GET https://api-v2.rustlesearch.dev/anon/search?channel=Destinygg&search_after=<ms>`, with optional `start_date`/`end_date` (YYYY-MM-DD), `username` and `text`.
     - It returns `{data: {messages: [{channel, text, ts, username, searchAfter}]}}`: 100 per page, newest first. `searchAfter` is the ms cursor for the next, older page.
@@ -108,7 +116,8 @@ The layout is flat: each crate is a direct child of the root.
   - `fetch_ranges` spans mark gaps as filled, and `backfill` skips filled gaps.
   - Live test: after backfill, the index holds exactly a reference capture's 583 messages over the same span. 16 nicks stay lowercase because those users were never seen natively.
 - **Cross-host handoff:** done. Tested live: the old instance retired about 38 s after the new one started.
-- **Next:** `sync` (with `serve` serving journal files), then `compact`.
+- **`serve` / `sync`:** done.
+- **Next:** `compact` (closed days into zstd archives, plus the monthly manifests).
 
 ## Deferred: Kick
 The Kick probe lives on the `kick` branch (`viewer/examples/kick.rs`, with `.env.example`). It compiles but hasn't been run.

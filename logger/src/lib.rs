@@ -6,4 +6,6 @@ pub mod capture;
 pub mod control;
 pub mod gaps;
 pub mod index;
+pub mod manifest;
 pub mod serve;
+pub mod sync;
