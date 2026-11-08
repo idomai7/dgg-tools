@@ -57,7 +57,7 @@ The layout is flat: each crate is a direct child of the root.
 - **index:** journal into `data/index.sqlite` (schema in `logger/src/index.rs`, versioned with `user_version`).
   - The dedupe key is `(timestamp, nick, data)`. It was verified with `dgg-chat/examples/history_check.rs`: `HISTORY` is a JSON array of the last 150 `"MSG {...}"` frames, byte-identical to the live frames.
   - A message seen both live and in `HISTORY` is kept with `source = live` and the earliest live receive time.
-  - Tables: `messages` (with an FTS5 table, `messages_fts`), `connections` (open and close times and reasons, for finding gaps), `unparsed` and `files` (per-file checkpoints).
+  - Tables: `messages` (with an FTS5 table, `messages_fts`), `connections` (open, close and last-seen times, close reasons, and the oldest timestamp in each connection's `HISTORY`), `unparsed` and `files` (per-file checkpoints).
   - Each file's checkpoint commits in the same transaction as its rows, so an interrupted run resumes exactly where it stopped.
   - `--rebuild` replays the whole journal. An index from another schema version must be rebuilt.
 - **serve / sync:** read-only HTTP access to the journal, and pulling another host's journal. Together they handle migrating to a new host and running a warm standby.
@@ -84,7 +84,8 @@ The layout is flat: each crate is a direct child of the root.
 - **`journal`:** live files, plus a writer and a reader. The `.zst` archives and manifests come with `compact`.
 - **`logger capture`:** done, including local handoff.
 - **`logger index`:** done for live files, one-shot or `--follow` (polls every `--interval` seconds, default 1; prints a summary every `--report` seconds, default 60).
-- **Next:** a gaps query, or cross-host handoff (`--peer`).
+- **`logger gaps`:** done. It reports stretches when no connection was open (a connection that never closed ends at its last line), and whether the next connection's `HISTORY` reached back far enough to cover each one.
+- **Next:** cross-host handoff (`--peer`), or `backfill` for gaps `HISTORY` didn't cover.
 
 ## Deferred: Kick
 The Kick probe lives on the `kick` branch (`viewer/examples/kick.rs`, with `.env.example`). It compiles but hasn't been run.

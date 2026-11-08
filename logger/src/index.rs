@@ -13,14 +13,16 @@ use {
   ::journal::{
     ReadError, Reader, Record, layout::live_files, record::v1::Body,
   },
-  ::rusqlite::{Connection, OptionalExtension, Transaction, params},
+  ::rusqlite::{
+    Connection, OptionalExtension, Transaction, TransactionBehavior, params,
+  },
   ::serde_json::Value,
-  ::std::{fs, io, path::Path, time::Duration},
+  ::std::{collections::HashMap, fs, io, path::Path, time::Duration},
 };
 
 /// Bumped whenever the schema changes; an index at another version must be
 /// rebuilt.
-pub const SCHEMA_VERSION: i64 = 1;
+pub const SCHEMA_VERSION: i64 = 2;
 
 const SCHEMA: &str = "
 CREATE TABLE files (
@@ -34,6 +36,8 @@ CREATE TABLE connections (
   opened INTEGER NOT NULL,
   closed INTEGER,
   close_reason TEXT,
+  last_seen INTEGER NOT NULL,  -- receive time of its latest line
+  history_from INTEGER,        -- oldest MSG timestamp in its HISTORY
   PRIMARY KEY (instance, connection)
 );
 CREATE TABLE messages (
@@ -88,7 +92,8 @@ impl ::std::fmt::Display for Error {
       Self::Sqlite(e) => write!(f, "sqlite: {e}"),
       Self::Schema(version) => write!(
         f,
-        "index has schema {version}, not {SCHEMA_VERSION}; rebuild it"
+        "index has schema {version}, not {SCHEMA_VERSION}; \
+         run `index --rebuild`"
       ),
     }
   }
@@ -109,20 +114,52 @@ pub struct Stats {
 
 /// Opens the index at `path`, creating it if needed.
 pub fn open(path: &Path) -> Result<Connection, Error> {
-  let db = Connection::open(path)?;
-  db.pragma_update(None, "journal_mode", "WAL")?;
+  let mut db = Connection::open(path)?;
+  // Other processes (a follower, a report) may hold the lock briefly; wait
+  // for it rather than failing at once.
+  db.busy_timeout(Duration::from_secs(10))?;
+  set_wal(&db)?;
   db.pragma_update(None, "synchronous", "NORMAL")?;
+  // Check and create the schema holding the write lock, so two processes
+  // opening a new index at once can't both try to create it.
+  let transaction =
+    db.transaction_with_behavior(TransactionBehavior::Immediate)?;
   let version: i64 =
-    db.pragma_query_value(None, "user_version", |row| row.get(0))?;
+    transaction.pragma_query_value(None, "user_version", |row| row.get(0))?;
   match version {
     0 => {
-      db.execute_batch(SCHEMA)?;
-      db.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+      transaction.execute_batch(SCHEMA)?;
+      transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     }
     SCHEMA_VERSION => {}
     other => return Err(Error::Schema(other)),
   }
+  transaction.commit()?;
   Ok(db)
+}
+
+/// Switches the database to WAL mode if it isn't already. Switching needs
+/// an exclusive lock, and SQLite reports busy at once rather than waiting
+/// for one, so a fresh database opened by two processes at once is retried
+/// for a while.
+fn set_wal(db: &Connection) -> Result<(), Error> {
+  let deadline = ::std::time::Instant::now() + Duration::from_secs(10);
+  loop {
+    let mode: String =
+      db.pragma_query_value(None, "journal_mode", |row| row.get(0))?;
+    if mode.eq_ignore_ascii_case("wal") {
+      return Ok(());
+    }
+    match db.pragma_update(None, "journal_mode", "WAL") {
+      Err(::rusqlite::Error::SqliteFailure(e, _))
+        if e.code == ::rusqlite::ErrorCode::DatabaseBusy
+          && ::std::time::Instant::now() < deadline =>
+      {
+        ::std::thread::sleep(Duration::from_millis(10));
+      }
+      result => result?,
+    }
+  }
 }
 
 /// Deletes the index at `path` (and its WAL files), then opens a fresh one.
@@ -199,11 +236,16 @@ fn index_file(
   loop {
     let transaction = db.transaction()?;
     let mut lines = 0;
+    // Latest receive time per connection in this batch.
+    let mut last_seen = HashMap::new();
     for entry in reader.by_ref().take(BATCH) {
       lines += 1;
       match entry {
         Ok(entry) => {
           let Record::V1(record) = entry.record;
+          let key = (record.instance.clone(), record.connection);
+          let seen = last_seen.entry(key).or_insert(record.receive_time);
+          *seen = record.receive_time.max(*seen);
           let line = Line {
             path,
             offset: entry.offset,
@@ -220,6 +262,13 @@ fn index_file(
         Err(ReadError::Io(e)) => return Err(e.into()),
         Err(e) => return Err(io::Error::other(format!("{e:?}")).into()),
       }
+    }
+    for ((instance, connection), seen) in last_seen {
+      transaction.execute(
+        "UPDATE connections SET last_seen = max(last_seen, ?3)
+          WHERE instance = ?1 AND connection = ?2",
+        params![instance, connection as i64, seen],
+      )?;
     }
     transaction.execute(
       "INSERT INTO files (path, offset) VALUES (?1, ?2)
@@ -253,7 +302,8 @@ fn index_body(
     Body::Open(url) => {
       db.execute(
         "INSERT OR IGNORE INTO connections
-          (instance, connection, url, opened) VALUES (?1, ?2, ?3, ?4)",
+          (instance, connection, url, opened, last_seen)
+          VALUES (?1, ?2, ?3, ?4, ?4)",
         params![line.instance, line.connection as i64, url, line.received],
       )?;
     }
@@ -267,7 +317,9 @@ fn index_body(
     Body::Frame(frame) => {
       let (event, payload) = frame.split_once(' ').unwrap_or((&frame, ""));
       match event {
-        "MSG" => message(db, line, 0, payload, "live", stats)?,
+        "MSG" => {
+          message(db, line, 0, payload, "live", stats)?;
+        }
         "HISTORY" => history(db, line, payload, stats)?,
         _ => {}
       }
@@ -277,7 +329,8 @@ fn index_body(
   Ok(())
 }
 
-/// Indexes each `MSG` in a HISTORY frame's JSON array of frames.
+/// Indexes each `MSG` in a HISTORY frame's JSON array of frames, and notes
+/// the oldest one on the connection so gaps it covers can be told apart.
 fn history(
   db: &Transaction,
   line: &Line,
@@ -289,6 +342,7 @@ fn history(
     stats.unparsed += 1;
     return Ok(());
   };
+  let mut oldest = None;
   for (item, entry) in (1..).zip(entries) {
     let Value::String(frame) = entry else {
       unparsed(
@@ -301,14 +355,25 @@ fn history(
       stats.unparsed += 1;
       continue;
     };
-    if let Some(payload) = frame.strip_prefix("MSG ") {
-      message(db, line, item, payload, "history", stats)?;
+    if let Some(payload) = frame.strip_prefix("MSG ")
+      && let Some(timestamp) =
+        message(db, line, item, payload, "history", stats)?
+    {
+      oldest = Some(oldest.map_or(timestamp, |o: i64| o.min(timestamp)));
     }
+  }
+  if let Some(oldest) = oldest {
+    db.execute(
+      "UPDATE connections SET history_from = min(coalesce(history_from, ?3), ?3)
+        WHERE instance = ?1 AND connection = ?2",
+      params![line.instance, line.connection as i64, oldest],
+    )?;
   }
   Ok(())
 }
 
 /// Indexes one `MSG` payload, deduplicating against what's already there.
+/// Returns its timestamp, or `None` if it couldn't be parsed.
 fn message(
   db: &Transaction,
   line: &Line,
@@ -316,7 +381,7 @@ fn message(
   payload: &str,
   source: &str,
   stats: &mut Stats,
-) -> Result<(), Error> {
+) -> Result<Option<i64>, Error> {
   let parsed = ::serde_json::from_str::<Value>(payload)
     .map_err(|_| "MSG not JSON")
     .and_then(|value| {
@@ -333,7 +398,7 @@ fn message(
     Err(reason) => {
       unparsed(db, line.path, line.offset, item, reason)?;
       stats.unparsed += 1;
-      return Ok(());
+      return Ok(None);
     }
   };
   let inserted = db.execute(
@@ -360,7 +425,7 @@ fn message(
       params![timestamp, nick, data, line.received],
     )?;
   }
-  Ok(())
+  Ok(Some(timestamp))
 }
 
 fn unparsed(
