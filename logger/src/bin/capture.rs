@@ -3,7 +3,7 @@
 use {
   ::clap::Parser,
   ::dgg_chat::{DEFAULT_URL, Options},
-  ::logger::capture::{Config, Exit, Handoff, instance_id, now_ms, run},
+  ::logger::capture::{Config, Exit, Handoff, Peer, instance_id, now_ms, run},
   ::std::{path::PathBuf, process::ExitCode, time::Duration},
 };
 
@@ -28,6 +28,13 @@ struct Args {
   /// Never retire in favour of a newer instance.
   #[arg(long)]
   keep_running: bool,
+  /// Another host's `serve` (e.g. `http://old-host:8788`) to push this
+  /// instance's status to, so the capture there hands off to this one.
+  #[arg(long)]
+  peer: Option<String>,
+  /// Bearer token for `--peer`.
+  #[arg(long, env = "LOGGER_PEER_TOKEN", hide_env_values = true)]
+  peer_token: Option<String>,
 }
 
 #[::tokio::main]
@@ -47,6 +54,14 @@ async fn main() -> ExitCode {
   }
   let journal_root = args.data.join("journal");
   eprintln!("capturing as {instance} into {}", journal_root.display());
+  let peer = match (args.peer, args.peer_token) {
+    (Some(url), Some(token)) if !token.is_empty() => Some(Peer { url, token }),
+    (Some(_), _) => {
+      eprintln!("--peer needs --peer-token (or LOGGER_PEER_TOKEN)");
+      return ExitCode::FAILURE;
+    }
+    (None, _) => None,
+  };
   let config = Config {
     chat,
     journal_root,
@@ -57,6 +72,7 @@ async fn main() -> ExitCode {
       keep_running: args.keep_running,
       ..Handoff::default()
     },
+    peer,
   };
   match run(config, shutdown()).await {
     Ok(Exit::Shutdown) => ExitCode::SUCCESS,

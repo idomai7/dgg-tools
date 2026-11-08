@@ -3,7 +3,9 @@
 //!
 //! Instances hand off to each other through [`control`] status files: an
 //! instance retires once a later-started one has been healthy for the
-//! handoff grace period, so upgrading means starting the new binary.
+//! handoff grace period, so upgrading means starting the new binary. An
+//! instance on another host takes over by pushing its status to that host's
+//! `serve` ([`Peer`]).
 
 use {
   crate::control::{self, Status},
@@ -76,6 +78,17 @@ pub struct Config {
   /// When this instance started, unix ms. Later-started instances win.
   pub started: i64,
   pub handoff: Handoff,
+  /// Another host to push this instance's status to, so instances there
+  /// hand off to this one.
+  pub peer: Option<Peer>,
+}
+
+/// Another host's `serve`.
+#[derive(Clone, Debug)]
+pub struct Peer {
+  /// e.g. `http://old-host:8788`.
+  pub url: String,
+  pub token: String,
 }
 
 /// Why [`run`] returned.
@@ -125,6 +138,7 @@ pub async fn run(
     instance,
     started,
     handoff,
+    peer,
   } = config;
   let url = chat.url.clone();
   let control = control::dir(&journal_root);
@@ -134,6 +148,10 @@ pub async fn run(
   let mut heartbeat = ::tokio::time::interval(handoff.interval);
   let mut connected = None;
   let mut health = Health::default();
+  let pusher = peer.clone().map(|peer| {
+    let (control, instance) = (control.clone(), instance.clone());
+    ::tokio::spawn(push_status(peer, control, instance, handoff.interval))
+  });
   ::tokio::pin!(shutdown);
   let exit = loop {
     ::tokio::select! {
@@ -196,7 +214,79 @@ pub async fn run(
   if let Err(e) = control::remove(&control, &instance) {
     eprintln!("control: {e}");
   }
+  if let (Some(pusher), Some(peer)) = (pusher, peer) {
+    pusher.abort();
+    withdraw_status(&peer, &instance).await;
+  }
   Ok(exit)
+}
+
+fn peer_client() -> ::reqwest::Client {
+  let _ = ::rustls::crypto::ring::default_provider().install_default();
+  ::reqwest::Client::builder()
+    .timeout(Duration::from_secs(5))
+    .build()
+    .expect("http client")
+}
+
+fn peer_url(peer: &Peer, instance: &str) -> String {
+  format!("{}/control/{instance}", peer.url.trim_end_matches('/'))
+}
+
+/// Pushes this instance's status file to `peer` every `interval`, until
+/// aborted. Failures are reported when they start and stop, not every
+/// round: the peer's copy just goes stale, so its instances keep running.
+async fn push_status(
+  peer: Peer,
+  control: PathBuf,
+  instance: String,
+  interval: Duration,
+) {
+  let client = peer_client();
+  let url = peer_url(&peer, &instance);
+  let mut tick = ::tokio::time::interval(interval);
+  let mut failing: Option<String> = None;
+  loop {
+    tick.tick().await;
+    let path = control::path(&control, &instance);
+    let Ok(status) = ::tokio::fs::read_to_string(path).await else {
+      continue;
+    };
+    let sent = client
+      .put(&url)
+      .bearer_auth(&peer.token)
+      .body(control::push_body(&status, now_ms()))
+      .send()
+      .await;
+    let error = match sent {
+      Ok(response) if response.status().is_success() => None,
+      Ok(response) => Some(format!("HTTP {}", response.status())),
+      Err(e) => Some(e.to_string()),
+    };
+    match (&failing, error) {
+      (None, Some(error)) => {
+        eprintln!("peer {}: {error}", peer.url);
+        failing = Some(error);
+      }
+      (Some(_), None) => {
+        eprintln!("peer {}: pushing again", peer.url);
+        failing = None;
+      }
+      _ => {}
+    }
+  }
+}
+
+/// Removes this instance's status from `peer`, best effort.
+async fn withdraw_status(peer: &Peer, instance: &str) {
+  let sent = peer_client()
+    .delete(peer_url(peer, instance))
+    .bearer_auth(&peer.token)
+    .send()
+    .await;
+  if let Err(e) = sent {
+    eprintln!("peer {}: {e}", peer.url);
+  }
 }
 
 /// Writes this instance's status, then returns the successor to hand off

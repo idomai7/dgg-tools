@@ -54,7 +54,10 @@ The layout is flat: each crate is a direct child of the root.
     - An older instance retires once a later-started one has a fresh heartbeat (under 5 s old) and has been healthy for the grace period (`--handoff-grace`, default 30 s). Its journal ends with `close handoff to <instance>`.
     - `--keep-running` opts out, for deliberate redundancy.
     - Tested live: 34 s of overlap, with 13 MSGs in both journals and none missing from their union.
-  - **Across hosts:** the same rule works with `--peer <url>`.
+  - **Across hosts:** the old host runs `serve`, and the new instance runs `capture --peer http://old-host:8788 --peer-token …`.
+    - The new instance pushes its status there every second (`PUT /control/<instance>`), shifted onto the old host's clock, and withdraws it on exit.
+    - The old instance retires by the same rule as a local handoff, and needs no flags or restart.
+    - Use a VPN or SSH tunnel between hosts: the bearer token isn't encrypted over plain HTTP.
 - **index:** journal into `data/index.sqlite` (schema in `logger/schemas/index/v<N>.sql`, every past version kept there; the version is stored in `user_version`).
   - The dedupe key is `(timestamp, nick, data)`. It was verified with `dgg-chat/examples/history_check.rs`: `HISTORY` is a JSON array of the last 150 `"MSG {...}"` frames, byte-identical to the live frames.
   - A message seen both live and in `HISTORY` is kept with `source = live` and the earliest live receive time.
@@ -104,7 +107,8 @@ The layout is flat: each crate is a direct child of the root.
   - A fetched nick takes its capitalisation from the same user's native messages.
   - `fetch_ranges` spans mark gaps as filled, and `backfill` skips filled gaps.
   - Live test: after backfill, the index holds exactly a reference capture's 583 messages over the same span. 16 nicks stay lowercase because those users were never seen natively.
-- **Next:** cross-host handoff (`--peer`), then `serve`/`sync` and `compact`.
+- **Cross-host handoff:** done. Tested live: the old instance retired about 38 s after the new one started.
+- **Next:** `sync` (with `serve` serving journal files), then `compact`.
 
 ## Deferred: Kick
 The Kick probe lives on the `kick` branch (`viewer/examples/kick.rs`, with `.env.example`). It compiles but hasn't been run.

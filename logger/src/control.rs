@@ -15,6 +15,11 @@
 //! later line is `<key> <value>`. `healthy-since` is omitted while the
 //! instance isn't healthy. Readers ignore keys they don't know, so a minor
 //! bump may add keys; anything else is a major bump.
+//!
+//! An instance on another host makes itself known by pushing its status to
+//! this host's `serve` (see [`push_body`]), which writes it here with its
+//! times shifted onto this host's clock, so local instances treat it like
+//! any other.
 
 use {
   ::journal::record::v1::valid_instance,
@@ -98,6 +103,34 @@ impl Status {
       healthy_since,
     })
   }
+
+  /// Moves every time by `by` ms, onto another clock.
+  pub fn shift(&mut self, by: i64) {
+    self.started += by;
+    self.heartbeat += by;
+    if let Some(since) = self.healthy_since.as_mut() {
+      *since += by;
+    }
+  }
+}
+
+/// The body pushed to another host's `serve`: `now <sender's unix ms>`,
+/// then the status file as written.
+pub fn push_body(status: &str, now: i64) -> String {
+  format!("now {now}\n{status}")
+}
+
+/// Decodes a pushed body, shifting its times by the difference between the
+/// receiver's clock (`now`) and the sender's.
+pub fn parse_push(body: &str, now: i64) -> Option<Status> {
+  let (first, status) = body.split_once('\n')?;
+  let sent = first.strip_prefix("now ")?;
+  if !digits(sent) {
+    return None;
+  }
+  let mut status = Status::decode(status)?;
+  status.shift(now - sent.parse::<i64>().ok()?);
+  Some(status)
 }
 
 fn digits(text: &str) -> bool {
@@ -109,7 +142,8 @@ pub fn dir(journal_root: &Path) -> PathBuf {
   journal_root.join("control")
 }
 
-fn path(dir: &Path, instance: &str) -> PathBuf {
+/// One instance's status file.
+pub fn path(dir: &Path, instance: &str) -> PathBuf {
   dir.join(format!("{instance}.{EXTENSION}"))
 }
 

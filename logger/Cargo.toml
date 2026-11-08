@@ -7,6 +7,7 @@ edition.workspace = true
 dgg-chat.workspace = true
 journal.workspace = true
 
+axum.workspace = true
 clap.workspace = true
 gethostname.workspace = true
 reqwest.workspace = true
