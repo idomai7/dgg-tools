@@ -103,10 +103,10 @@ fn header_is_checked() {
   drop(writer);
   let path = live_files(&root.0).unwrap()[0].clone();
   let text = fs::read_to_string(&path).unwrap();
-  assert_eq!(text, "journal 1.0\n0 a 1 frame MSG 1\n");
+  assert_eq!(text, "journal 1.1\n0 a 1 frame MSG 1\n");
 
   let with = |header: &str| {
-    fs::write(&path, text.replacen("journal 1.0", header, 1)).unwrap();
+    fs::write(&path, text.replacen("journal 1.1", header, 1)).unwrap();
     Reader::open(&path, 0)
   };
   // A newer minor is read; kinds it added would come back as Unknown.

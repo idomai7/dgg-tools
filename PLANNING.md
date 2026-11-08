@@ -40,9 +40,10 @@ The layout is flat: each crate is a direct child of the root.
   - Hot paths only ever list `live/`.
 - **Days:** UTC.
 - **Line format:** explicit and hand-written, with no serde. The spec lives in the `journal` crate: each major version has its own module (`journal/src/record/v1.rs`) holding its structure, encoding and decoding, so several formats can coexist in the library.
-  - Each file starts with `journal <major>.<minor>` (currently `1.0`). Readers accept any minor of their own major, so minor bumps may only add kinds, which old readers skip as unknown. Anything else is a major bump, which readers without that major's module refuse.
+  - Each file starts with `journal <major>.<minor>` (currently `1.1`). Readers accept any minor of their own major, so minor bumps may only add kinds, which old readers skip as unknown. Anything else is a major bump, which readers without that major's module refuse.
   - Each line is `<receive-time> <instance> <connection> <kind> <data>`, separated by single spaces, with `data` verbatim to the end of the line.
   - Kinds are `frame` (the exact text frame), `binary` (base64), `open` (the URL) and `close` (why).
+  - 1.1 adds `fetched` (`<source> <timestamp> <nick> <text>`, one backfilled message) and `fetchrange` (`<source> <from> <to>`, a span the source returned in full).
   - Lines end at LF only, and a CR is ordinary data. Text containing an LF is written as `<kind>64` with the data in base64.
   - Unknown kinds are reported separately from malformed lines.
 
@@ -61,9 +62,18 @@ The layout is flat: each crate is a direct child of the root.
   - Each file's checkpoint commits in the same transaction as its rows, so an interrupted run resumes exactly where it stopped.
   - `--rebuild` replays the whole journal. An index from another schema version must be rebuilt.
 - **serve / sync:** read-only HTTP access to the journal, and pulling another host's journal. Together they handle migrating to a new host and running a warm standby.
-- **backfill:** fills gaps from a peer's journal, from `HISTORY`, or from public archives (rustlogs etc.).
-  - Rows from public archives match on the same nick and data within ±2 s, and native rows win.
-  - The sources still need probing.
+- **backfill:** fills gaps that `HISTORY` didn't cover, from rustlesearch.dev. overrustlelogs.net is gone: the domain no longer resolves (checked 2026-11-08).
+  - **API:** `GET https://api-v2.rustlesearch.dev/anon/search?channel=Destinygg&search_after=<ms>`, with optional `start_date`/`end_date` (YYYY-MM-DD), `username` and `text`.
+    - It returns `{data: {messages: [{channel, text, ts, username, searchAfter}]}}`: 100 per page, newest first. `searchAfter` is the ms cursor for the next, older page.
+    - Found via github.com/Fritz-02/rustlesearch-exporter.
+  - **Matches dgg:**
+    - `ts` equals dgg's timestamp to the millisecond. 2016-era logs have whole seconds only.
+    - Usernames are lowercased, and newlines in text become spaces.
+    - There are no flairs or roles.
+  - **Freshness and depth:** it runs about 5 s behind live, and goes back to at least 2016.
+  - **Rate limit:** 200 requests per day (`Ratelimit-Policy: 200;w=86400`).
+  - **Matching:** a backfilled message matches a native one on exact timestamp plus case-insensitive nick. Native rows win.
+  - Journaled as one `fetched` line per message, plus a `fetchrange` per page, in the backfill run's own `live/` file.
 - **compact:** merges a closed day into one archive file, dedupes and zstd-compresses it, and verifies the result before deleting the originals.
 
 ## destiny.gg chat (from chat-gui: https://github.com/destinygg/chat-gui)

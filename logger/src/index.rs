@@ -291,7 +291,8 @@ fn index_body(
         _ => {}
       }
     }
-    Body::Binary(_) => {}
+    // Backfilled messages aren't indexed yet.
+    Body::Binary(_) | Body::Fetched { .. } | Body::FetchRange { .. } => {}
   }
   Ok(())
 }

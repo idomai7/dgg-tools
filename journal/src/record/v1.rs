@@ -15,21 +15,29 @@
 //! - `binary`: a binary frame, base64.
 //! - `open`: a connection opened; data is the URL.
 //! - `close`: a connection dropped; data is why.
+//! - `fetched`: a message fetched from another source to fill a gap; data is
+//!   `<source> <timestamp> <nick> <text>`, with `timestamp` dgg's unix ms and
+//!   `text` verbatim to the end of the line. (1.1)
+//! - `fetchrange`: a source returned everything it has between two times;
+//!   data is `<source> <from> <to>`, unix ms. (1.1)
 //!
-//! Lines end at LF only; a CR is ordinary data. Text containing an LF can't
-//! sit on one line, so it's written with the kind suffixed `64` and the data
-//! base64 (`frame64`, `open64`, `close64`).
+//! `source` and `nick` are [tokens](valid_token). Lines end at LF only; a CR
+//! is ordinary data. Data containing an LF can't sit on one line, so it's
+//! written with the kind suffixed `64` and the data base64 (`frame64`,
+//! `open64`, `close64`, `fetched64`).
 //!
 //! Minor versions:
 //!
-//! - `1.0`: the above.
+//! - `1.0`: `frame`, `binary`, `open` and `close`.
+//! - `1.1`: adds `fetched` and `fetchrange`.
 
 use {
   super::{DecodeError, Version, digits},
   ::base64::{Engine, engine::general_purpose::STANDARD as BASE64},
+  ::std::borrow::Cow,
 };
 
-pub const VERSION: Version = Version { major: 1, minor: 0 };
+pub const VERSION: Version = Version { major: 1, minor: 1 };
 
 /// One line.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -54,6 +62,23 @@ pub enum Body {
   Open(String),
   /// Connection dropped, with why.
   Close(String),
+  /// A message fetched from another source to fill a gap. (1.1)
+  Fetched {
+    source: String,
+    /// dgg's timestamp, unix ms.
+    timestamp: i64,
+    nick: String,
+    text: String,
+  },
+  /// `source` returned everything it has from `from` to `to`, unix ms.
+  /// (1.1)
+  FetchRange { source: String, from: i64, to: i64 },
+}
+
+/// Whether `token` can be a space-separated field: non-empty, with no space
+/// or LF.
+pub fn valid_token(token: &str) -> bool {
+  !token.is_empty() && !token.contains([' ', '\n'])
 }
 
 /// Whether `instance` is a valid instance id: one or more of `[A-Za-z0-9._-]`,
@@ -77,13 +102,39 @@ fn valid_kind(kind: &str) -> bool {
 
 impl Record {
   /// Appends this record's line, newline included, to `out`.
+  ///
+  /// # Panics
+  ///
+  /// If a `source` or `nick` isn't a [`valid_token`]; it couldn't be read
+  /// back.
   pub fn encode(&self, out: &mut Vec<u8>) {
-    let (kind, data) = match &self.body {
-      Body::Frame(text) => ("frame", text.as_bytes()),
-      Body::Open(text) => ("open", text.as_bytes()),
-      Body::Close(text) => ("close", text.as_bytes()),
-      Body::Binary(bytes) => ("binary", bytes.as_slice()),
+    let tokens = |tokens: &[&str]| {
+      for token in tokens {
+        assert!(valid_token(token), "not a valid token: {token:?}");
+      }
     };
+    let (kind, data) = match &self.body {
+      Body::Frame(text) => ("frame", Cow::Borrowed(text.as_bytes())),
+      Body::Open(text) => ("open", Cow::Borrowed(text.as_bytes())),
+      Body::Close(text) => ("close", Cow::Borrowed(text.as_bytes())),
+      Body::Binary(bytes) => ("binary", Cow::Borrowed(bytes.as_slice())),
+      Body::Fetched {
+        source,
+        timestamp,
+        nick,
+        text,
+      } => {
+        tokens(&[source, nick]);
+        let data = format!("{source} {timestamp} {nick} {text}");
+        ("fetched", Cow::Owned(data.into_bytes()))
+      }
+      Body::FetchRange { source, from, to } => {
+        tokens(&[source]);
+        let data = format!("{source} {from} {to}");
+        ("fetchrange", Cow::Owned(data.into_bytes()))
+      }
+    };
+    let data = &*data;
     let binary = matches!(self.body, Body::Binary(_));
     let text64 = !binary && data.contains(&b'\n');
     let suffix = if text64 { "64" } else { "" };
@@ -138,6 +189,21 @@ impl Record {
       "open64" => Body::Open(text64()?),
       "close64" => Body::Close(text64()?),
       "binary" => Body::Binary(unbase64()?),
+      "fetched" => fetched(data)?,
+      "fetched64" => fetched(&text64()?)?,
+      "fetchrange" => {
+        let mut parts = data.split(' ');
+        let (Some(source), Some(from), Some(to), None) =
+          (parts.next(), parts.next(), parts.next(), parts.next())
+        else {
+          return Err(Bad("fetchrange needs source, from and to"));
+        };
+        Body::FetchRange {
+          source: token(source)?,
+          from: number(from)?,
+          to: number(to)?,
+        }
+      }
       _ => return Err(DecodeError::Unknown(kind.into())),
     };
     Ok(Self {
@@ -147,4 +213,37 @@ impl Record {
       body,
     })
   }
+}
+
+/// Decodes a `fetched` line's data: `<source> <timestamp> <nick> <text>`.
+fn fetched(data: &str) -> Result<Body, DecodeError> {
+  let mut parts = data.splitn(4, ' ');
+  let (Some(source), Some(timestamp), Some(nick)) =
+    (parts.next(), parts.next(), parts.next())
+  else {
+    return Err(DecodeError::Bad("fetched needs source, timestamp and nick"));
+  };
+  Ok(Body::Fetched {
+    source: token(source)?,
+    timestamp: number(timestamp)?,
+    nick: token(nick)?,
+    text: parts.next().unwrap_or("").into(),
+  })
+}
+
+fn token(text: &str) -> Result<String, DecodeError> {
+  if valid_token(text) {
+    Ok(text.into())
+  } else {
+    Err(DecodeError::Bad("bad token"))
+  }
+}
+
+fn number(text: &str) -> Result<i64, DecodeError> {
+  if !digits(text) {
+    return Err(DecodeError::Bad("not decimal"));
+  }
+  text
+    .parse()
+    .map_err(|_| DecodeError::Bad("number out of range"))
 }

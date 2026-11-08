@@ -56,3 +56,70 @@ fn decode_errors() {
     assert!(matches!(decode(bad), Err(DecodeError::Bad(_))), "{bad:?}");
   }
 }
+
+#[test]
+fn fetched_lines() {
+  let line = |body| {
+    let record = Record {
+      receive_time: 5,
+      instance: "b".into(),
+      connection: 1,
+      body,
+    };
+    let mut out = Vec::new();
+    record.encode(&mut out);
+    let encoded = String::from_utf8(out).unwrap();
+    let encoded = encoded.strip_suffix('\n').unwrap().to_owned();
+    assert_eq!(Record::decode(encoded.as_bytes()), Ok(record));
+    encoded
+  };
+  let fetched = |text: &str| Body::Fetched {
+    source: "rustlesearch".into(),
+    timestamp: 1_794_146_765_482,
+    nick: "feustang".into(),
+    text: text.into(),
+  };
+  assert_eq!(
+    line(fetched("hi  there")),
+    "5 b 1 fetched rustlesearch 1794146765482 feustang hi  there"
+  );
+  assert_eq!(
+    line(fetched("")),
+    "5 b 1 fetched rustlesearch 1794146765482 feustang "
+  );
+  assert!(line(fetched("a\nb")).starts_with("5 b 1 fetched64 "));
+  let range = Body::FetchRange {
+    source: "rustlesearch".into(),
+    from: 10,
+    to: 20,
+  };
+  assert_eq!(line(range), "5 b 1 fetchrange rustlesearch 10 20");
+
+  let decode = |s: &str| Record::decode(s.as_bytes());
+  for bad in [
+    "5 b 1 fetched rustlesearch 17x feustang hi",
+    "5 b 1 fetched rustlesearch 17",
+    "5 b 1 fetchrange rustlesearch 10",
+    "5 b 1 fetchrange rustlesearch 10 20 30",
+    "5 b 1 fetchrange rustlesearch -10 20",
+  ] {
+    assert!(matches!(decode(bad), Err(DecodeError::Bad(_))), "{bad:?}");
+  }
+}
+
+#[test]
+#[should_panic(expected = "not a valid token")]
+fn fetched_nick_with_space_panics() {
+  let record = Record {
+    receive_time: 5,
+    instance: "b".into(),
+    connection: 1,
+    body: Body::Fetched {
+      source: "rustlesearch".into(),
+      timestamp: 1,
+      nick: "two words".into(),
+      text: "x".into(),
+    },
+  };
+  record.encode(&mut Vec::new());
+}
