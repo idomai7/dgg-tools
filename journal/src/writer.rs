@@ -68,18 +68,22 @@ impl Writer {
     body: Body,
   ) -> io::Result<()> {
     let day = utc_day(receive_time);
-    if self.open.as_ref().is_none_or(|(d, _)| *d != day) {
+    if self
+      .open
+      .as_ref()
+      .is_none_or(|(current, _)| *current != day)
+    {
       self.sync()?;
       self.open = Some((day.clone(), self.open_day(&day)?));
     }
-    let rec = v1::Record {
+    let record = v1::Record {
       receive_time,
       instance: self.instance.clone(),
       connection,
       body,
     };
     let mut line = Vec::new();
-    rec.encode(&mut line);
+    record.encode(&mut line);
     let (_, file) = self.open.as_mut().unwrap();
     file.write_all(&line)?;
     self.dirty = true;

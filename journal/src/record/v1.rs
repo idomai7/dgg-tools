@@ -79,10 +79,10 @@ impl Record {
   /// Appends this record's line, newline included, to `out`.
   pub fn encode(&self, out: &mut Vec<u8>) {
     let (kind, data) = match &self.body {
-      Body::Frame(t) => ("frame", t.as_bytes()),
-      Body::Open(t) => ("open", t.as_bytes()),
-      Body::Close(t) => ("close", t.as_bytes()),
-      Body::Binary(b) => ("binary", b.as_slice()),
+      Body::Frame(text) => ("frame", text.as_bytes()),
+      Body::Open(text) => ("open", text.as_bytes()),
+      Body::Close(text) => ("close", text.as_bytes()),
+      Body::Binary(bytes) => ("binary", bytes.as_slice()),
     };
     let binary = matches!(self.body, Body::Binary(_));
     let text64 = !binary && data.contains(&b'\n');

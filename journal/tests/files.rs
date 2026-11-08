@@ -34,7 +34,7 @@ impl Drop for TempRoot {
   }
 }
 
-fn rec(receive_time: i64, frame: &str) -> v1::Record {
+fn frame_record(receive_time: i64, frame: &str) -> v1::Record {
   v1::Record {
     receive_time,
     instance: "a".into(),
@@ -43,36 +43,37 @@ fn rec(receive_time: i64, frame: &str) -> v1::Record {
   }
 }
 
-fn write(w: &mut Writer, r: &v1::Record) {
-  w.write(r.receive_time, r.connection, r.body.clone())
+fn write(writer: &mut Writer, record: &v1::Record) {
+  writer
+    .write(record.receive_time, record.connection, record.body.clone())
     .unwrap();
 }
 
-fn record(e: Result<Entry, ReadError>) -> v1::Record {
-  let Record::V1(r) = e.unwrap().record;
-  r
+fn record(entry: Result<Entry, ReadError>) -> v1::Record {
+  let Record::V1(record) = entry.unwrap().record;
+  record
 }
 
-fn frame(e: Result<Entry, ReadError>) -> String {
-  match record(e).body {
-    Body::Frame(f) => f,
-    b => panic!("not a frame: {b:?}"),
+fn frame(entry: Result<Entry, ReadError>) -> String {
+  match record(entry).body {
+    Body::Frame(frame) => frame,
+    body => panic!("not a frame: {body:?}"),
   }
 }
 
 #[test]
 fn write_read_and_rollover() {
   let root = TempRoot::new();
-  let mut w = Writer::new(&root.0, "a");
-  let recs = [
-    rec(1_709_251_199_998, "MSG {\"n\":1}"),
-    rec(1_709_251_199_999, "MSG {\"n\":2}"),
-    rec(1_709_251_200_000, "MSG {\"n\":3}"),
+  let mut writer = Writer::new(&root.0, "a");
+  let records = [
+    frame_record(1_709_251_199_998, "MSG {\"n\":1}"),
+    frame_record(1_709_251_199_999, "MSG {\"n\":2}"),
+    frame_record(1_709_251_200_000, "MSG {\"n\":3}"),
   ];
-  for r in &recs {
-    write(&mut w, r);
+  for record in &records {
+    write(&mut writer, record);
   }
-  drop(w);
+  drop(writer);
 
   let files = live_files(&root.0).unwrap();
   let names: Vec<_> = files
@@ -88,18 +89,18 @@ fn write_read_and_rollover() {
   );
   let read: Vec<_> = files
     .iter()
-    .flat_map(|f| Reader::open(f, 0).unwrap())
+    .flat_map(|file| Reader::open(file, 0).unwrap())
     .map(record)
     .collect();
-  assert_eq!(read, recs);
+  assert_eq!(read, records);
 }
 
 #[test]
 fn header_is_checked() {
   let root = TempRoot::new();
-  let mut w = Writer::new(&root.0, "a");
-  write(&mut w, &rec(0, "MSG 1"));
-  drop(w);
+  let mut writer = Writer::new(&root.0, "a");
+  write(&mut writer, &frame_record(0, "MSG 1"));
+  drop(writer);
   let path = live_files(&root.0).unwrap()[0].clone();
   let text = fs::read_to_string(&path).unwrap();
   assert_eq!(text, "journal 1.0\n0 a 1 frame MSG 1\n");
@@ -109,9 +110,9 @@ fn header_is_checked() {
     Reader::open(&path, 0)
   };
   // A newer minor is read; kinds it added would come back as Unknown.
-  let mut r = with("journal 1.7").unwrap();
-  assert_eq!(r.version(), Some(Version { major: 1, minor: 7 }));
-  assert_eq!(frame(r.next().unwrap()), "MSG 1");
+  let mut reader = with("journal 1.7").unwrap();
+  assert_eq!(reader.version(), Some(Version { major: 1, minor: 7 }));
+  assert_eq!(frame(reader.next().unwrap()), "MSG 1");
   // A major without a decoder is refused.
   let v2 = Version { major: 2, minor: 0 };
   assert!(matches!(with("journal 2.0"), Err(ReadError::Version(v)) if v == v2));
@@ -121,35 +122,35 @@ fn header_is_checked() {
   ));
   // A header still being written reads as empty.
   fs::write(&path, "journ").unwrap();
-  let mut r = Reader::open(&path, 0).unwrap();
-  assert_eq!(r.version(), None);
-  assert!(r.next().is_none());
+  let mut reader = Reader::open(&path, 0).unwrap();
+  assert_eq!(reader.version(), None);
+  assert!(reader.next().is_none());
 }
 
 #[test]
 fn partial_tail_is_left_for_later() {
   let root = TempRoot::new();
-  let mut w = Writer::new(&root.0, "a");
-  write(&mut w, &rec(0, "MSG 1"));
-  write(&mut w, &rec(0, "MSG 2"));
-  drop(w);
+  let mut writer = Writer::new(&root.0, "a");
+  write(&mut writer, &frame_record(0, "MSG 1"));
+  write(&mut writer, &frame_record(0, "MSG 2"));
+  drop(writer);
   let path = &live_files(&root.0).unwrap()[0];
   let full = fs::read(path).unwrap();
   let mut third = Vec::new();
-  rec(0, "MSG 3").encode(&mut third);
+  frame_record(0, "MSG 3").encode(&mut third);
   let (head, tail) = third.split_at(10);
   let append = |bytes: &[u8]| {
-    let mut f = OpenOptions::new().append(true).open(path).unwrap();
-    f.write_all(bytes).unwrap();
+    let mut file = OpenOptions::new().append(true).open(path).unwrap();
+    file.write_all(bytes).unwrap();
   };
   append(head);
 
-  let mut r = Reader::open(path, 0).unwrap();
-  assert_eq!(r.by_ref().count(), 2);
-  assert_eq!(r.offset(), full.len() as u64);
+  let mut reader = Reader::open(path, 0).unwrap();
+  assert_eq!(reader.by_ref().count(), 2);
+  assert_eq!(reader.offset(), full.len() as u64);
 
   append(tail);
-  let rest: Vec<_> = Reader::open(path, r.offset()).unwrap().collect();
+  let rest: Vec<_> = Reader::open(path, reader.offset()).unwrap().collect();
   assert_eq!(rest.len(), 1);
   assert_eq!(frame(rest.into_iter().next().unwrap()), "MSG 3");
 }
@@ -157,17 +158,17 @@ fn partial_tail_is_left_for_later() {
 #[test]
 fn torn_line_is_isolated_on_reopen() {
   let root = TempRoot::new();
-  let mut w = Writer::new(&root.0, "a");
-  write(&mut w, &rec(0, "MSG 1"));
-  drop(w);
+  let mut writer = Writer::new(&root.0, "a");
+  write(&mut writer, &frame_record(0, "MSG 1"));
+  drop(writer);
   let path = live_files(&root.0).unwrap()[0].clone();
-  let mut f = OpenOptions::new().append(true).open(&path).unwrap();
-  f.write_all(b"0 a 1 fra").unwrap();
-  drop(f);
+  let mut file = OpenOptions::new().append(true).open(&path).unwrap();
+  file.write_all(b"0 a 1 fra").unwrap();
+  drop(file);
 
-  let mut w = Writer::new(&root.0, "a");
-  write(&mut w, &rec(0, "MSG 2"));
-  drop(w);
+  let mut writer = Writer::new(&root.0, "a");
+  write(&mut writer, &frame_record(0, "MSG 2"));
+  drop(writer);
   let mut read = Reader::open(&path, 0).unwrap();
   assert_eq!(frame(read.next().unwrap()), "MSG 1");
   assert!(matches!(

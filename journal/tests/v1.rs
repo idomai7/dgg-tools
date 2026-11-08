@@ -6,18 +6,18 @@ use ::journal::{
 #[test]
 fn line_format() {
   let line = |body| {
-    let r = Record {
+    let record = Record {
       receive_time: 5,
       instance: "a".into(),
       connection: 2,
       body,
     };
     let mut out = Vec::new();
-    r.encode(&mut out);
-    let s = String::from_utf8(out).unwrap();
-    let s = s.strip_suffix('\n').unwrap().to_owned();
-    assert_eq!(Record::decode(s.as_bytes()), Ok(r));
-    s
+    record.encode(&mut out);
+    let encoded = String::from_utf8(out).unwrap();
+    let encoded = encoded.strip_suffix('\n').unwrap().to_owned();
+    assert_eq!(Record::decode(encoded.as_bytes()), Ok(record));
+    encoded
   };
   assert_eq!(
     line(Body::Frame(r#"MSG {"data":"hi \"x\""}"#.into())),

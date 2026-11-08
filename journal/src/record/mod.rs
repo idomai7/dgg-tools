@@ -71,6 +71,6 @@ impl Record {
   }
 }
 
-pub(crate) fn digits(s: &str) -> bool {
-  !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit())
+pub(crate) fn digits(text: &str) -> bool {
+  !text.is_empty() && text.bytes().all(|b| b.is_ascii_digit())
 }

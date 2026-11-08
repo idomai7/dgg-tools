@@ -50,7 +50,10 @@ pub fn live_files(root: &Path) -> io::Result<Vec<PathBuf>> {
     }
     for file in fs::read_dir(day.path())? {
       let path = file?.path();
-      if path.extension().is_some_and(|e| e == EXTENSION) {
+      if path
+        .extension()
+        .is_some_and(|extension| extension == EXTENSION)
+      {
         files.push(path);
       }
     }

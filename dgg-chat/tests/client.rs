@@ -8,12 +8,15 @@ use {
 
 #[test]
 fn frame_split() {
-  let f = Frame::parse(1, r#"MSG {"nick":"a b"}"#.into());
-  assert_eq!((f.event(), f.payload()), ("MSG", r#"{"nick":"a b"}"#));
-  let f = Frame::parse(1, "PING".into());
-  assert_eq!((f.event(), f.payload()), ("PING", ""));
-  let f = Frame::parse(1, "X ".into());
-  assert_eq!((f.event(), f.payload()), ("X", ""));
+  let frame = Frame::parse(1, r#"MSG {"nick":"a b"}"#.into());
+  assert_eq!(
+    (frame.event(), frame.payload()),
+    ("MSG", r#"{"nick":"a b"}"#)
+  );
+  let frame = Frame::parse(1, "PING".into());
+  assert_eq!((frame.event(), frame.payload()), ("PING", ""));
+  let frame = Frame::parse(1, "X ".into());
+  assert_eq!((frame.event(), frame.payload()), ("X", ""));
 }
 
 /// Local server: answers PING internally, forwards other frames, and
@@ -37,19 +40,19 @@ async fn ping_and_reconnect() {
     }
   });
 
-  let opts = Options {
+  let options = Options {
     url,
     origin: None,
     min_backoff: Duration::from_millis(10),
     ..Options::default()
   };
-  let mut client = Client::spawn(opts);
+  let mut client = Client::spawn(options);
   for connection in 1..=2 {
     assert_eq!(client.next().await, Some(Item::Connected { connection }));
-    let Some(Item::Frame(f)) = client.next().await else {
+    let Some(Item::Frame(frame)) = client.next().await else {
       panic!("expected frame");
     };
-    assert_eq!((f.connection, f.raw()), (connection, "MSG {}"));
+    assert_eq!((frame.connection, frame.raw()), (connection, "MSG {}"));
     assert_eq!(
       client.next().await,
       Some(Item::Binary {
@@ -57,11 +60,13 @@ async fn ping_and_reconnect() {
         data: vec![1, 2]
       })
     );
-    let Some(Item::Disconnected { connection: c, .. }) = client.next().await
+    let Some(Item::Disconnected {
+      connection: closed, ..
+    }) = client.next().await
     else {
       panic!("expected disconnect");
     };
-    assert_eq!(c, connection);
+    assert_eq!(closed, connection);
   }
   server.await.unwrap();
 }

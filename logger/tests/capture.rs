@@ -87,29 +87,29 @@ async fn journals_connections_and_shutdown() {
   assert_eq!(files.len(), 1);
   let bodies: Vec<_> = Reader::open(&files[0], 0)
     .unwrap()
-    .map(|e| {
-      let Record::V1(r) = e.unwrap().record;
-      assert_eq!(r.instance, "t");
-      (r.connection, r.body)
+    .map(|entry| {
+      let Record::V1(record) = entry.unwrap().record;
+      assert_eq!(record.instance, "t");
+      (record.connection, record.body)
     })
     .collect();
   let [
-    (1, Body::Open(u1)),
-    (1, Body::Frame(f1)),
-    (1, Body::Binary(b)),
+    (1, Body::Open(url1)),
+    (1, Body::Frame(frame1)),
+    (1, Body::Binary(binary)),
     (1, Body::Close(_)),
-    (2, Body::Open(u2)),
-    (2, Body::Frame(f2)),
+    (2, Body::Open(url2)),
+    (2, Body::Frame(frame2)),
     (2, Body::Close(why)),
   ] = &bodies[..]
   else {
     panic!("unexpected journal: {bodies:#?}");
   };
-  assert_eq!((u1, u2), (&url, &url));
+  assert_eq!((url1, url2), (&url, &url));
   assert_eq!(
-    (f1.as_str(), f2.as_str()),
+    (frame1.as_str(), frame2.as_str()),
     ("MSG {\"n\":1}", "MSG {\"n\":2}")
   );
-  assert_eq!(b, &[7]);
+  assert_eq!(binary, &[7]);
   assert_eq!(why, SHUTDOWN);
 }

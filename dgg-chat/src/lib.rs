@@ -118,10 +118,10 @@ pub struct Client {
 }
 
 impl Client {
-  pub fn spawn(opts: Options) -> Self {
+  pub fn spawn(options: Options) -> Self {
     let _ = ::rustls::crypto::ring::default_provider().install_default();
     let (tx, rx) = mpsc::unbounded_channel();
-    let task = ::tokio::spawn(run(opts, tx));
+    let task = ::tokio::spawn(run(options, tx));
     Self { rx, task }
   }
 
@@ -139,25 +139,25 @@ impl Drop for Client {
 type Ws = WebSocketStream<MaybeTlsStream<TcpStream>>;
 type Tx = mpsc::UnboundedSender<Item>;
 
-async fn run(opts: Options, tx: Tx) {
-  let mut backoff = opts.min_backoff;
+async fn run(options: Options, tx: Tx) {
+  let mut backoff = options.min_backoff;
   let mut connection = 0;
   loop {
-    match connect(&opts).await {
+    match connect(&options).await {
       Ok(ws) => {
         connection += 1;
         if tx.send(Item::Connected { connection }).is_err() {
           return;
         }
         let started = Instant::now();
-        let Some(reason) = pump(ws, connection, &opts, &tx).await else {
+        let Some(reason) = pump(ws, connection, &options, &tx).await else {
           return;
         };
         if tx.send(Item::Disconnected { connection, reason }).is_err() {
           return;
         }
         if started.elapsed() >= STABLE_AFTER {
-          backoff = opts.min_backoff;
+          backoff = options.min_backoff;
         }
       }
       Err(error) => {
@@ -171,25 +171,30 @@ async fn run(opts: Options, tx: Tx) {
       }
     }
     sleep(backoff).await;
-    backoff = (backoff * 2).min(opts.max_backoff);
+    backoff = (backoff * 2).min(options.max_backoff);
   }
 }
 
-async fn connect(opts: &Options) -> Result<Ws, String> {
-  let mut req = opts
+async fn connect(options: &Options) -> Result<Ws, String> {
+  let mut request = options
     .url
     .as_str()
     .into_client_request()
     .map_err(|e| e.to_string())?;
-  let headers = req.headers_mut();
-  for (name, value) in [("Origin", &opts.origin), ("Cookie", &opts.cookie)] {
+  let headers = request.headers_mut();
+  for (name, value) in
+    [("Origin", &options.origin), ("Cookie", &options.cookie)]
+  {
     if let Some(value) = value {
       let value = HeaderValue::from_str(value).map_err(|e| e.to_string())?;
       headers.insert(name, value);
     }
   }
-  match timeout(opts.idle_timeout, ::tokio_tungstenite::connect_async(req))
-    .await
+  match timeout(
+    options.idle_timeout,
+    ::tokio_tungstenite::connect_async(request),
+  )
+  .await
   {
     Ok(Ok((ws, _))) => Ok(ws),
     Ok(Err(e)) => Err(e.to_string()),
@@ -202,17 +207,17 @@ async fn connect(opts: &Options) -> Result<Ws, String> {
 async fn pump(
   mut ws: Ws,
   connection: u64,
-  opts: &Options,
+  options: &Options,
   tx: &Tx,
 ) -> Option<String> {
-  let mut ping = ::tokio::time::interval(opts.idle_timeout / 3);
+  let mut ping = ::tokio::time::interval(options.idle_timeout / 3);
   ping.tick().await;
   let mut last = Instant::now();
   loop {
     ::tokio::select! {
-      msg = ws.next() => {
+      message = ws.next() => {
         last = Instant::now();
-        match msg {
+        match message {
           Some(Ok(Message::Text(text))) => {
             let frame = Frame::parse(connection, text.as_str().to_owned());
             if frame.event() == "PING" {
@@ -230,8 +235,9 @@ async fn pump(
               return None;
             }
           }
-          Some(Ok(Message::Close(Some(f)))) => {
-            return Some(format!("closed: {} {}", u16::from(f.code), f.reason));
+          Some(Ok(Message::Close(Some(close)))) => {
+            let code = u16::from(close.code);
+            return Some(format!("closed: {code} {}", close.reason));
           }
           Some(Ok(Message::Close(None))) => return Some("closed".into()),
           Some(Ok(_)) => {}
@@ -240,7 +246,7 @@ async fn pump(
         }
       }
       _ = ping.tick() => {
-        if last.elapsed() >= opts.idle_timeout {
+        if last.elapsed() >= options.idle_timeout {
           return Some("idle timeout".into());
         }
         if let Err(e) = ws.send(Message::Ping(Default::default())).await {
