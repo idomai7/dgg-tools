@@ -6,8 +6,6 @@ pub mod v1;
 
 /// Format name at the start of every file's header line.
 pub const MAGIC: &str = "journal";
-/// The version this crate writes.
-pub const CURRENT: Version = v1::VERSION;
 /// Majors this crate has a decoder for.
 pub const READABLE_MAJORS: &[u32] = &[v1::VERSION.major];
 

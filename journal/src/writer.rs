@@ -31,6 +31,12 @@ pub struct Writer {
 }
 
 impl Writer {
+  /// A writer for instance `inst` under journal `root`. Nothing is opened
+  /// until the first [`Writer::write`].
+  ///
+  /// # Panics
+  ///
+  /// If `inst` isn't [`v1::valid_inst`].
   pub fn new(root: impl Into<PathBuf>, inst: impl Into<String>) -> Self {
     let inst = inst.into();
     assert!(
@@ -46,10 +52,14 @@ impl Writer {
     }
   }
 
+  /// The instance id written on every line.
   pub fn inst(&self) -> &str {
     &self.inst
   }
 
+  /// Appends one line to the live file for `recv`'s UTC day, opening (and on
+  /// a day change, syncing and switching) files as needed. The line reaches
+  /// the OS before this returns, but isn't fsynced; see [`Writer::sync`].
   pub fn write(&mut self, recv: i64, conn: u64, body: Body) -> io::Result<()> {
     let day = utc_day(recv);
     if self.open.as_ref().is_none_or(|(d, _)| *d != day) {
@@ -70,6 +80,7 @@ impl Writer {
     Ok(())
   }
 
+  /// Fsyncs the open file if anything was written since the last sync.
   pub fn sync(&mut self) -> io::Result<()> {
     if let Some((_, file)) = &self.open
       && self.dirty
@@ -81,6 +92,7 @@ impl Writer {
     Ok(())
   }
 
+  /// [`Writer::sync`]s if [`SYNC_INTERVAL`] has passed since the last sync.
   pub fn sync_if_due(&mut self) -> io::Result<()> {
     if self.last_sync.elapsed() >= SYNC_INTERVAL {
       self.sync()?;
@@ -88,6 +100,8 @@ impl Writer {
     Ok(())
   }
 
+  /// Opens (creating if needed) this instance's live file for `day`. A new
+  /// file gets the v1 header; an existing one with a torn tail gets a newline.
   fn open_day(&self, day: &str) -> io::Result<File> {
     let path = live_file(&self.root, day, &self.inst);
     fs::create_dir_all(path.parent().unwrap())?;

@@ -23,6 +23,7 @@ pub fn utc_day(ms: i64) -> String {
   format!("{y:04}-{m:02}-{d:02}")
 }
 
+/// The directory holding the per-day live directories under journal `root`.
 pub fn live_dir(root: &Path) -> PathBuf {
   root.join("live")
 }

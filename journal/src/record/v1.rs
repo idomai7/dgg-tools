@@ -56,6 +56,8 @@ pub enum Body {
   Close(String),
 }
 
+/// Whether `inst` is a valid instance id: one or more of `[A-Za-z0-9._-]`,
+/// so it can't contain the field separator and is safe as a file name.
 pub fn valid_inst(inst: &str) -> bool {
   !inst.is_empty()
     && inst
@@ -63,6 +65,9 @@ pub fn valid_inst(inst: &str) -> bool {
       .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
 }
 
+/// Whether `kind` is well-formed: one or more of `[a-z0-9]`. A well-formed
+/// kind this version doesn't recognise is [`DecodeError::Unknown`], not
+/// [`DecodeError::Bad`].
 fn valid_kind(kind: &str) -> bool {
   !kind.is_empty()
     && kind
