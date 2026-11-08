@@ -1,0 +1,15 @@
+[package]
+name = "logger"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+clap.workspace = true
+dgg-chat.workspace = true
+gethostname.workspace = true
+journal.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+futures-util.workspace = true
+tokio-tungstenite.workspace = true
