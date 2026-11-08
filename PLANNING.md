@@ -60,11 +60,13 @@ The layout is flat: each crate is a direct child of the root.
   - Flairs: https://cdn.destiny.gg/flairs/flairs.json (`name`, `label`, `priority`, `color`, `hidden`, `image[0].url`) plus `flairs.css`.
 
 ## Status
-- **Workspace restructure:** done. The old dgg probe is at `viewer/examples/dgg.rs`.
-- **Next:** extract `dgg-chat`, then `dgg-journal`, then `logger capture` and `index`.
+- **Workspace restructure:** done.
+  - The dgg probe is at `dgg-chat/examples/probe.rs`.
+  - `viewer` is a placeholder stub.
+- **Next:** a minimal `dgg-chat` (connect, frame split, PING/PONG, reconnect), then `dgg-journal`, then `logger capture` and `index`.
 
 ## Deferred: Kick
-The `viewer/examples/kick.rs` probe compiles but hasn't been run.
+The Kick probe lives on the `kick` branch (`viewer/examples/kick.rs`, with `.env.example`). It compiles but hasn't been run.
 - **Approach:** official webhooks.
   - App token via `POST https://id.kick.com/oauth/token` (`client_credentials`).
   - Channel lookup via `GET /public/v1/channels?slug=` (gives `broadcaster_user_id`).
@@ -78,4 +80,4 @@ The `viewer/examples/kick.rs` probe compiles but hasn't been run.
   - a tunnel such as `cloudflared tunnel --url http://localhost:8787`;
   - `.env` filled in from `.env.example`.
 
-  Then run `cargo run -p viewer --example kick -- <slug>`.
+  Then, on the `kick` branch, run `cargo run -p viewer --example kick -- <slug>`.

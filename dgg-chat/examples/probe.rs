@@ -1,5 +1,5 @@
 // Probe: connect to dgg chat and print MSG events until the socket closes.
-// Usage: cargo run --example dgg [--no-origin]
+// Usage: cargo run -p dgg-chat --example probe -- [--no-origin]
 use futures_util::{SinkExt, StreamExt};
 use tokio_tungstenite::tungstenite::{
   Message, client::IntoClientRequest, http::HeaderValue,
