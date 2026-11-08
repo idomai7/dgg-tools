@@ -6,14 +6,15 @@ members = ["dgg-chat", "journal", "logger", "viewer"]
 edition = "2024"
 
 [workspace.dependencies]
+dgg-chat = { path = "dgg-chat" }
+journal = { path = "journal" }
+
 axum = "0.8.9"
 base64 = "0.23.1"
 clap = { version = "4.6.7", features = ["derive"] }
-dgg-chat = { path = "dgg-chat" }
 dotenvy = "0.15.7"
 futures-util = "0.3.34"
 gethostname = "1.1.0"
-journal = { path = "journal" }
 reqwest = { version = "0.13.5", default-features = false, features = ["json", "rustls", "form", "query"] }
 rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
 serde = { version = "1.0.229", features = ["derive"] }

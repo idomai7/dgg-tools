@@ -4,10 +4,11 @@ version = "0.1.0"
 edition.workspace = true
 
 [dependencies]
-clap.workspace = true
 dgg-chat.workspace = true
-gethostname.workspace = true
 journal.workspace = true
+
+clap.workspace = true
+gethostname.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]
