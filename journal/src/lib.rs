@@ -8,9 +8,9 @@
 //! # Versions
 //!
 //! The first line of every file is `journal <major>.<minor>` (see
-//! [`record::Version`]); the rest of the file is in that version's line format. Each
-//! major version has its own module under [`record`] describing its
-//! structure, encoding and decoding, so old and new formats coexist:
+//! [`record::Version`]); the rest of the file is in that version's line
+//! format. Each major version has its own module under [`record`] describing
+//! its structure, encoding and decoding, so old and new formats coexist:
 //!
 //! - [`record::v1`]: the current format.
 //!

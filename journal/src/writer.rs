@@ -57,9 +57,10 @@ impl Writer {
     &self.instance
   }
 
-  /// Appends one line to the live file for `receive_time`'s UTC day, opening (and on
-  /// a day change, syncing and switching) files as needed. The line reaches
-  /// the OS before this returns, but isn't fsynced; see [`Writer::sync`].
+  /// Appends one line to the live file for `receive_time`'s UTC day, opening
+  /// (and on a day change, syncing and switching) files as needed. The line
+  /// reaches the OS before this returns, but isn't fsynced; see
+  /// [`Writer::sync`].
   pub fn write(
     &mut self,
     receive_time: i64,
