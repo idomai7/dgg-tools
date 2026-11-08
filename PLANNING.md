@@ -37,7 +37,7 @@ The layout is flat: each crate is a direct child of the root.
   - Hot paths only ever list `live/`.
 - **Days:** UTC.
 - **Line format:** explicit and hand-written, with no serde. The full spec is in the `dgg-journal` crate docs.
-  - Each file starts with `dgg-journal 1`.
+  - Each file starts with `dgg-journal <major>.<minor>` (currently `1.0`). Readers accept any minor of their own major, so minor bumps may only add kinds, which old readers skip as unknown. Anything else is a major bump, which old readers refuse.
   - Each line is `<recv> <inst> <conn> <kind> <data>`, separated by single spaces, with `data` verbatim to the end of the line.
   - Kinds are `frame` (the exact text frame), `binary` (base64), `open` (the URL) and `close` (why).
   - Text containing CR or LF is written as `<kind>64` with the data in base64.

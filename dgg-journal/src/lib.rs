@@ -6,7 +6,8 @@
 //!
 //! # Format
 //!
-//! The first line of every file is [`HEADER`]. Each later line is
+//! The first line of every file is `dgg-journal <major>.<minor>` (see
+//! [`VERSION`]). Each later line is
 //!
 //! ```text
 //! <recv> <inst> <conn> <kind> <data>
@@ -24,6 +25,13 @@
 //!
 //! Text containing a CR or LF can't sit on one line, so it's written with the
 //! kind suffixed `64` and the data base64 (`frame64`, `open64`, `close64`).
+//!
+//! # Versioning
+//!
+//! A reader accepts any file with its own major version, whatever the minor.
+//! So a minor bump may only make changes old readers tolerate: new kinds,
+//! which they report as [`DecodeError::Unknown`] and skip. Anything else is a
+//! major bump, and old readers refuse the file.
 
 use {
   ::base64::{Engine, engine::general_purpose::STANDARD as BASE64},
@@ -35,8 +43,45 @@ use {
   },
 };
 
-/// First line of every journal file: the format name and version.
-pub const HEADER: &str = "dgg-journal 1";
+/// Format name at the start of every file's header line.
+pub const MAGIC: &str = "dgg-journal";
+
+/// The format version this crate writes.
+pub const VERSION: Version = Version { major: 1, minor: 0 };
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Version {
+  /// Bumped for changes old readers can't handle.
+  pub major: u32,
+  /// Bumped for changes old readers tolerate (new kinds).
+  pub minor: u32,
+}
+
+impl Version {
+  /// Whether this crate can read files written at this version.
+  pub fn readable(self) -> bool {
+    self.major == VERSION.major
+  }
+
+  /// The header line, without its newline.
+  pub fn header(self) -> String {
+    format!("{MAGIC} {}.{}", self.major, self.minor)
+  }
+
+  /// Parses a header line, without its newline.
+  pub fn parse_header(line: &[u8]) -> Option<Self> {
+    let line = ::std::str::from_utf8(line).ok()?;
+    let version = line.strip_prefix(MAGIC)?.strip_prefix(' ')?;
+    let (major, minor) = version.split_once('.')?;
+    if !digits(major) || !digits(minor) {
+      return None;
+    }
+    Some(Self {
+      major: major.parse().ok()?,
+      minor: minor.parse().ok()?,
+    })
+  }
+}
 
 /// File extension of live journal files.
 pub const EXTENSION: &str = "journal";
@@ -289,7 +334,7 @@ impl Writer {
       .append(true)
       .open(path)?;
     if file.metadata()?.len() == 0 {
-      file.write_all(format!("{HEADER}\n").as_bytes())?;
+      file.write_all(format!("{}\n", VERSION.header()).as_bytes())?;
     } else {
       // Isolate a torn line left by a crash, so the next record starts clean.
       let mut last = [0];
@@ -322,13 +367,15 @@ pub struct Entry {
 pub enum ReadError {
   /// Reading stops after an I/O error.
   Io(io::Error),
-  /// The file doesn't start with [`HEADER`]. Reading stops.
+  /// The file doesn't start with a header line. Reading stops.
   Header { found: String },
+  /// The file's major version isn't [`VERSION`]'s. Reading stops.
+  Version(Version),
   /// A complete line that couldn't be decoded. Reading continues past it.
   Line { offset: u64, error: DecodeError },
 }
 
-/// Reads complete lines from `offset` on, checking [`HEADER`] when starting
+/// Reads complete lines from `offset` on, checking the header when starting
 /// at 0. A trailing line without its newline is still being written (or was
 /// torn by a crash), so iteration stops before it; read again from the last
 /// `next` to pick it up later.
@@ -337,6 +384,7 @@ pub struct Reader {
   offset: u64,
   line: Vec<u8>,
   done: bool,
+  version: Option<Version>,
 }
 
 impl Reader {
@@ -348,7 +396,14 @@ impl Reader {
       offset,
       line: Vec::new(),
       done: false,
+      version: None,
     })
+  }
+
+  /// The file's version, once its header has been read (only when reading
+  /// from offset 0).
+  pub fn version(&self) -> Option<Version> {
+    self.version
   }
 
   /// Offset just past the last complete line read so far.
@@ -378,11 +433,16 @@ impl Iterator for Reader {
       self.offset += n as u64;
       let text = &self.line[..n - 1];
       if offset == 0 {
-        if text != HEADER.as_bytes() {
+        let Some(version) = Version::parse_header(text) else {
           self.done = true;
           let found = String::from_utf8_lossy(text).into_owned();
           return Some(Err(ReadError::Header { found }));
+        };
+        if !version.readable() {
+          self.done = true;
+          return Some(Err(ReadError::Version(version)));
         }
+        self.version = Some(version);
         continue;
       }
       if text.is_empty() {
@@ -539,14 +599,34 @@ mod tests {
     drop(w);
     let path = live_files(&root).unwrap()[0].clone();
     let text = fs::read_to_string(&path).unwrap();
-    assert_eq!(text, "dgg-journal 1\n0 a 1 frame MSG 1\n");
+    assert_eq!(text, "dgg-journal 1.0\n0 a 1 frame MSG 1\n");
 
-    fs::write(&path, text.replacen("journal 1", "journal 2", 1)).unwrap();
-    let read: Vec<_> = Reader::open(&path, 0).unwrap().collect();
-    assert!(matches!(
-      &read[..],
-      [Err(ReadError::Header { found })] if found == "dgg-journal 2"
-    ));
+    let with = |header: &str| {
+      fs::write(&path, text.replacen("dgg-journal 1.0", header, 1)).unwrap();
+      let mut r = Reader::open(&path, 0).unwrap();
+      let read: Vec<_> = r.by_ref().collect();
+      (r.version(), read)
+    };
+    // A newer minor is read; kinds it added would come back as Unknown.
+    let (version, read) = with("dgg-journal 1.7");
+    assert_eq!(version, Some(Version { major: 1, minor: 7 }));
+    assert_eq!(frame(&read[0]), "MSG 1");
+    // A newer major is refused.
+    let (_, read) = with("dgg-journal 2.0");
+    let v2 = Version { major: 2, minor: 0 };
+    assert!(matches!(&read[..], [Err(ReadError::Version(v))] if *v == v2));
+    for bad in [
+      "dgg-journal 1",
+      "dgg-journal 1.",
+      "dgg-journal +1.0",
+      "x 1.0",
+    ] {
+      let (_, read) = with(bad);
+      assert!(matches!(
+        &read[..],
+        [Err(ReadError::Header { found })] if found == bad
+      ));
+    }
     fs::remove_dir_all(&root).unwrap();
   }
 
