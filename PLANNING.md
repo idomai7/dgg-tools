@@ -36,7 +36,7 @@ The layout is flat: each crate is a direct child of the root.
 - **Journal layout:**
   - `data/journal/live/YYYY-MM-DD/<instance>.journal`: one file per capture instance per day. These are the hot files.
   - `data/journal/archive/YYYY/MM/YYYY-MM-DD.journal.zst` plus a `manifest.json` per month. These are cold.
-  - `data/journal/control/<instance>.json`: heartbeats.
+  - `data/journal/control/<instance>.status`: heartbeats (`capture-status 1.0`; see `logger/src/control.rs`).
   - Hot paths only ever list `live/`.
 - **Days:** UTC.
 - **Line format:** explicit and hand-written, with no serde. The spec lives in the `journal` crate: each major version has its own module (`journal/src/record/v1.rs`) holding its structure, encoding and decoding, so several formats can coexist in the library.
@@ -48,7 +48,11 @@ The layout is flat: each crate is a direct child of the root.
 
   Event names are never interpreted at this layer, so dgg adding or removing events can't break the journal.
 - **capture:** dgg-chat into the journal, and nothing else, so it stays tiny and rarely changes.
-  - **In-place upgrade:** start the new binary. Once it's healthy, the old instance writes for a 30 s overlap and then retires itself.
+  - **In-place upgrade:** start the new binary.
+    - An instance is healthy once its current connection has delivered `HISTORY` and a `MSG`.
+    - An older instance retires once a later-started one has a fresh heartbeat (under 5 s old) and has been healthy for the grace period (`--handoff-grace`, default 30 s). Its journal ends with `close handoff to <instance>`.
+    - `--keep-running` opts out, for deliberate redundancy.
+    - Tested live: 34 s of overlap, with 13 MSGs in both journals and none missing from their union.
   - **Across hosts:** the same rule works with `--peer <url>`.
 - **index:** journal into SQLite.
   - The dedupe key is `(ts, nick, data)`. It was verified with `dgg-chat/examples/history_check.rs`: `HISTORY` is a JSON array of the last 150 `"MSG {...}"` frames, byte-identical to the live frames.
@@ -76,7 +80,8 @@ The layout is flat: each crate is a direct child of the root.
   - `viewer` is a placeholder stub.
 - **`dgg-chat`:** a minimal client (reconnect with backoff, PING/PONG, idle timeout). The typed events and assets are still to do.
 - **`journal`:** live files, plus a writer and a reader. The `.zst` archives and manifests come with `compact`.
-- **Next:** `logger capture`, then `index`.
+- **`logger capture`:** done, including local handoff.
+- **Next:** `index`, then cross-host handoff (`--peer`).
 
 ## Deferred: Kick
 The Kick probe lives on the `kick` branch (`viewer/examples/kick.rs`, with `.env.example`). It compiles but hasn't been run.

@@ -1,0 +1,178 @@
+//! Status files capture instances use to hand off to each other.
+//!
+//! Each running instance keeps `<journal root>/control/<instance>.status`
+//! up to date:
+//!
+//! ```text
+//! capture-status 1.0
+//! instance <id>
+//! started <unix ms>
+//! heartbeat <unix ms>
+//! healthy-since <unix ms>
+//! ```
+//!
+//! The first line is the format name and `<major>.<minor>` version. Each
+//! later line is `<key> <value>`. `healthy-since` is omitted while the
+//! instance isn't healthy. Readers ignore keys they don't know, so a minor
+//! bump may add keys; anything else is a major bump.
+
+use {
+  ::journal::record::v1::valid_instance,
+  ::std::{
+    fs, io,
+    path::{Path, PathBuf},
+    time::Duration,
+  },
+};
+
+/// Format name and major version on the first line of a status file.
+pub const HEADER_PREFIX: &str = "capture-status 1.";
+
+/// The full header line this crate writes.
+pub const HEADER: &str = "capture-status 1.0";
+
+/// File extension of status files.
+pub const EXTENSION: &str = "status";
+
+/// One instance's status.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Status {
+  pub instance: String,
+  /// When the instance started, unix ms.
+  pub started: i64,
+  /// When the status was last written, unix ms.
+  pub heartbeat: i64,
+  /// Since when the instance has been healthy, unix ms, if it is.
+  pub healthy_since: Option<i64>,
+}
+
+impl Status {
+  /// The file contents.
+  pub fn encode(&self) -> String {
+    let mut text = format!(
+      "{HEADER}\ninstance {}\nstarted {}\nheartbeat {}\n",
+      self.instance, self.started, self.heartbeat
+    );
+    if let Some(since) = self.healthy_since {
+      text += &format!("healthy-since {since}\n");
+    }
+    text
+  }
+
+  /// Parses file contents, or `None` if they aren't a readable status.
+  pub fn decode(text: &str) -> Option<Self> {
+    let mut lines = text.strip_suffix('\n')?.split('\n');
+    let header = lines.next()?;
+    let minor = header.strip_prefix(HEADER_PREFIX)?;
+    if !digits(minor) {
+      return None;
+    }
+    let (mut instance, mut started, mut heartbeat, mut healthy_since) =
+      (None, None, None, None);
+    for line in lines {
+      let (key, value) = line.split_once(' ')?;
+      let slot = match key {
+        "instance" => {
+          if instance.replace(value).is_some() {
+            return None;
+          }
+          continue;
+        }
+        "started" => &mut started,
+        "heartbeat" => &mut heartbeat,
+        "healthy-since" => &mut healthy_since,
+        _ => continue,
+      };
+      if !digits(value) || slot.replace(value.parse().ok()?).is_some() {
+        return None;
+      }
+    }
+    let instance = instance?;
+    if !valid_instance(instance) {
+      return None;
+    }
+    Some(Self {
+      instance: instance.into(),
+      started: started?,
+      heartbeat: heartbeat?,
+      healthy_since,
+    })
+  }
+}
+
+fn digits(text: &str) -> bool {
+  !text.is_empty() && text.bytes().all(|b| b.is_ascii_digit())
+}
+
+/// The control directory under a journal root.
+pub fn dir(journal_root: &Path) -> PathBuf {
+  journal_root.join("control")
+}
+
+fn path(dir: &Path, instance: &str) -> PathBuf {
+  dir.join(format!("{instance}.{EXTENSION}"))
+}
+
+/// Writes `status` to its file, atomically: to a temporary file first, then
+/// renamed over the old one, so readers never see a partial status.
+pub fn write(dir: &Path, status: &Status) -> io::Result<()> {
+  fs::create_dir_all(dir)?;
+  let path = path(dir, &status.instance);
+  let temporary = path.with_extension(format!("{EXTENSION}.tmp"));
+  fs::write(&temporary, status.encode())?;
+  fs::rename(temporary, path)
+}
+
+/// Deletes an instance's status file, if it exists.
+pub fn remove(dir: &Path, instance: &str) -> io::Result<()> {
+  match fs::remove_file(path(dir, instance)) {
+    Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
+    _ => Ok(()),
+  }
+}
+
+/// Every readable status in `dir`. Files that can't be read or decoded (one
+/// mid-rename, say) are skipped; they'll be read on a later round.
+pub fn read_all(dir: &Path) -> io::Result<Vec<Status>> {
+  let entries = match fs::read_dir(dir) {
+    Ok(entries) => entries,
+    Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+    Err(e) => return Err(e),
+  };
+  let mut statuses = Vec::new();
+  for entry in entries {
+    let path = entry?.path();
+    if path
+      .extension()
+      .is_some_and(|extension| extension == EXTENSION)
+      && let Ok(text) = fs::read_to_string(&path)
+      && let Some(status) = Status::decode(&text)
+    {
+      statuses.push(status);
+    }
+  }
+  Ok(statuses)
+}
+
+/// The instance `me` should hand off to, if any: one started after it (ties
+/// broken by id) whose heartbeat is no older than `stale_after` and which
+/// has been healthy for at least `grace`. The latest-started such instance
+/// wins.
+pub fn successor<'a>(
+  me: &Status,
+  others: &'a [Status],
+  now: i64,
+  grace: Duration,
+  stale_after: Duration,
+) -> Option<&'a Status> {
+  let (grace, stale_after) = (grace.as_millis(), stale_after.as_millis());
+  let age = |since: i64| u128::try_from(now - since).unwrap_or(0);
+  others
+    .iter()
+    .filter(|other| {
+      (other.started, &other.instance) > (me.started, &me.instance)
+    })
+    .filter(|other| age(other.heartbeat) <= stale_after)
+    .filter(|other| other.healthy_since.is_some_and(|h| age(h) >= grace))
+    .max_by_key(|other| (other.started, &other.instance))
+}

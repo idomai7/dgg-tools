@@ -6,7 +6,10 @@ use {
     layout::live_files,
     record::v1::{self, Body},
   },
-  ::logger::capture::{SHUTDOWN, instance_id, run},
+  ::logger::{
+    capture::{Config, Exit, HANDOFF, Handoff, SHUTDOWN, instance_id, run},
+    control,
+  },
   ::std::{
     fs,
     path::PathBuf,
@@ -78,9 +81,14 @@ async fn journals_connections_and_shutdown() {
     // Let capture take the last frame off its queue.
     ::tokio::time::sleep(Duration::from_millis(100)).await;
   };
-  run(chat, root.0.clone(), "t".into(), shutdown)
-    .await
-    .unwrap();
+  let config = Config {
+    chat,
+    journal_root: root.0.clone(),
+    instance: "t".into(),
+    started: 1,
+    handoff: Handoff::default(),
+  };
+  assert_eq!(run(config, shutdown).await.unwrap(), Exit::Shutdown);
   server.abort();
 
   let files = live_files(&root.0).unwrap();
@@ -112,4 +120,82 @@ async fn journals_connections_and_shutdown() {
   );
   assert_eq!(binary, &[7]);
   assert_eq!(why, SHUTDOWN);
+}
+
+/// Reads every v1 record body from `instance`'s live files.
+fn bodies(root: &TempRoot, instance: &str) -> Vec<Body> {
+  live_files(&root.0)
+    .unwrap()
+    .iter()
+    .filter(|file| file.file_stem().unwrap() == instance)
+    .flat_map(|file| Reader::open(file, 0).unwrap())
+    .map(|entry| {
+      let Record::V1(record) = entry.unwrap().record;
+      record.body
+    })
+    .collect()
+}
+
+/// An older instance retires once a newer one has been healthy for the
+/// grace period, and both leave the control directory clean.
+#[::tokio::test]
+async fn hands_off_to_a_newer_instance() {
+  let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+  let url = format!("ws://{}", listener.local_addr().unwrap());
+  // Every connection gets HISTORY, then a MSG every 10 ms.
+  let server = ::tokio::spawn(async move {
+    loop {
+      let (tcp, _) = listener.accept().await.unwrap();
+      ::tokio::spawn(async move {
+        let mut ws = ::tokio_tungstenite::accept_async(tcp).await.unwrap();
+        ws.send(Message::text("HISTORY []")).await.unwrap();
+        while ws.send(Message::text("MSG {}")).await.is_ok() {
+          ::tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+      });
+    }
+  });
+
+  let root = TempRoot::new();
+  let config = |instance: &str, started| Config {
+    chat: Options {
+      url: url.clone(),
+      origin: None,
+      ..Options::default()
+    },
+    journal_root: root.0.clone(),
+    instance: instance.into(),
+    started,
+    handoff: Handoff {
+      grace: Duration::from_millis(200),
+      stale_after: Duration::from_secs(2),
+      interval: Duration::from_millis(20),
+      keep_running: false,
+    },
+  };
+
+  let old = ::tokio::spawn(run(config("old", 1), ::std::future::pending()));
+  ::tokio::time::sleep(Duration::from_millis(300)).await;
+  let (stop, stopped) = oneshot::channel::<()>();
+  let new = ::tokio::spawn(run(config("new", 2), async {
+    let _ = stopped.await;
+  }));
+
+  let old_exit = ::tokio::time::timeout(Duration::from_secs(5), old)
+    .await
+    .expect("old instance didn't retire")
+    .unwrap()
+    .unwrap();
+  assert_eq!(old_exit, Exit::HandedOff("new".into()));
+  stop.send(()).unwrap();
+  assert_eq!(new.await.unwrap().unwrap(), Exit::Shutdown);
+  server.abort();
+
+  let old = bodies(&root, "old");
+  assert_eq!(old.last(), Some(&Body::Close(format!("{HANDOFF}new"))));
+  let new = bodies(&root, "new");
+  assert!(matches!(new.first(), Some(Body::Open(_))));
+  assert_eq!(new.last(), Some(&Body::Close(SHUTDOWN.into())));
+  let control = control::dir(&root.0);
+  assert_eq!(control::read_all(&control).unwrap(), []);
 }

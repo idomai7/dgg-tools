@@ -2,3 +2,4 @@
 //! these modules.
 
 pub mod capture;
+pub mod control;
