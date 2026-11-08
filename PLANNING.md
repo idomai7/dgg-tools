@@ -54,10 +54,12 @@ The layout is flat: each crate is a direct child of the root.
     - `--keep-running` opts out, for deliberate redundancy.
     - Tested live: 34 s of overlap, with 13 MSGs in both journals and none missing from their union.
   - **Across hosts:** the same rule works with `--peer <url>`.
-- **index:** journal into SQLite.
-  - The dedupe key is `(ts, nick, data)`. It was verified with `dgg-chat/examples/history_check.rs`: `HISTORY` is a JSON array of the last 150 `"MSG {...}"` frames, byte-identical to the live frames.
-  - It also records `src` (where each row came from), gaps, and per-file checkpoints, and has an FTS5 table for search.
-  - `--rebuild` replays the whole journal.
+- **index:** journal into `data/index.sqlite` (schema in `logger/src/index.rs`, versioned with `user_version`).
+  - The dedupe key is `(timestamp, nick, data)`. It was verified with `dgg-chat/examples/history_check.rs`: `HISTORY` is a JSON array of the last 150 `"MSG {...}"` frames, byte-identical to the live frames.
+  - A message seen both live and in `HISTORY` is kept with `source = live` and the earliest live receive time.
+  - Tables: `messages` (with an FTS5 table, `messages_fts`), `connections` (open and close times and reasons, for finding gaps), `unparsed` and `files` (per-file checkpoints).
+  - Each file's checkpoint commits in the same transaction as its rows, so an interrupted run resumes exactly where it stopped.
+  - `--rebuild` replays the whole journal. An index from another schema version must be rebuilt.
 - **serve / sync:** read-only HTTP access to the journal, and pulling another host's journal. Together they handle migrating to a new host and running a warm standby.
 - **backfill:** fills gaps from a peer's journal, from `HISTORY`, or from public archives (rustlogs etc.).
   - Rows from public archives match on the same nick and data within ±2 s, and native rows win.
@@ -81,7 +83,8 @@ The layout is flat: each crate is a direct child of the root.
 - **`dgg-chat`:** a minimal client (reconnect with backoff, PING/PONG, idle timeout). The typed events and assets are still to do.
 - **`journal`:** live files, plus a writer and a reader. The `.zst` archives and manifests come with `compact`.
 - **`logger capture`:** done, including local handoff.
-- **Next:** `index`, then cross-host handoff (`--peer`).
+- **`logger index`:** done for live files (one-shot runs).
+- **Next:** decide between `index --follow`, a gaps query, and cross-host handoff (`--peer`).
 
 ## Deferred: Kick
 The Kick probe lives on the `kick` branch (`viewer/examples/kick.rs`, with `.env.example`). It compiles but hasn't been run.

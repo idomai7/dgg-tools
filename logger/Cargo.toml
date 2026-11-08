@@ -9,6 +9,8 @@ journal.workspace = true
 
 clap.workspace = true
 gethostname.workspace = true
+rusqlite.workspace = true
+serde_json.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]
