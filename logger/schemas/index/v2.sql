@@ -1,4 +1,4 @@
--- Index schema version 2, the current one (logger::index::SCHEMA_VERSION).
+-- Index schema version 2. Superseded by v3; kept as a record.
 --
 -- Changes from v1: connections gains last_seen and history_from.
 

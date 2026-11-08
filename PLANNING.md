@@ -99,7 +99,12 @@ The layout is flat: each crate is a direct child of the root.
   - It writes one `fetched` line per message and a `fetchrange` per page.
   - It's limited by `--max-requests` (default 50) and stops when the rate limit has fewer than `--reserve` (10) requests left.
   - `--dry-run` lists the gaps it would fetch.
-- **Next:** index `fetched` and `fetchrange` lines (schema v3: native rows win, nick casing restored, gaps filled by backfill), then cross-host handoff (`--peer`).
+- **Backfill indexing:** done (schema v3).
+  - Fetched messages are stored with `source = backfill:<source>` and matched on timestamp plus lowercased nick. Native rows win, whichever is indexed first.
+  - A fetched nick takes its capitalisation from the same user's native messages.
+  - `fetch_ranges` spans mark gaps as filled, and `backfill` skips filled gaps.
+  - Live test: after backfill, the index holds exactly a reference capture's 583 messages over the same span. 16 nicks stay lowercase because those users were never seen natively.
+- **Next:** cross-host handoff (`--peer`), then `serve`/`sync` and `compact`.
 
 ## Deferred: Kick
 The Kick probe lives on the `kick` branch (`viewer/examples/kick.rs`, with `.env.example`). It compiles but hasn't been run.

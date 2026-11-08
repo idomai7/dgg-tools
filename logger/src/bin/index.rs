@@ -110,6 +110,7 @@ impl Reporter {
     }
     self.totals.lines += stats.lines;
     self.totals.messages += stats.messages;
+    self.totals.backfilled += stats.backfilled;
     self.totals.unparsed += stats.unparsed;
     if self.totals.lines > 0 && self.since.elapsed() >= self.period {
       print_counts(&self.totals);
@@ -121,8 +122,8 @@ impl Reporter {
 
 fn print_counts(stats: &Stats) {
   eprintln!(
-    "{} lines, {} new messages, {} unparsed",
-    stats.lines, stats.messages, stats.unparsed
+    "{} lines, {} new messages ({} backfilled), {} unparsed",
+    stats.lines, stats.messages, stats.backfilled, stats.unparsed
   );
 }
 

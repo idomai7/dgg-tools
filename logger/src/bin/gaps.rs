@@ -54,6 +54,8 @@ fn main() -> ExitCode {
     let (instance, connection) = &gap.resumed_by;
     let filled = if gap.covered() {
       "covered by HISTORY".to_owned()
+    } else if gap.backfilled {
+      "filled by backfill".to_owned()
     } else {
       match gap.history_from {
         Some(from) => format!("NOT covered: HISTORY from {}", format_utc(from)),

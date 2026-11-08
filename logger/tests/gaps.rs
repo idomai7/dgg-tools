@@ -87,6 +87,7 @@ fn finds_gaps_and_coverage() {
         resumed_by: ("a".into(), 2),
         history_from: Some(1500),
         recovered: 1,
+        backfilled: false,
       },
       Gap {
         start: 3000,
@@ -94,6 +95,7 @@ fn finds_gaps_and_coverage() {
         resumed_by: ("b".into(), 1),
         history_from: Some(3200),
         recovered: 2,
+        backfilled: false,
       },
     ]
   );
@@ -117,4 +119,40 @@ fn formats() {
   assert_eq!(format_duration(245_000), "4m05s");
   assert_eq!(format_duration(7_620_000), "2h07m");
   assert_eq!(format_duration(273_600_000), "3d04h");
+}
+
+#[test]
+fn fetched_spans_fill_gaps() {
+  let root = TempRoot::new();
+  let journal = root.0.join("journal");
+  let mut a = Writer::new(&journal, "a");
+  a.write(1000, 1, Body::Open("wss://x".into())).unwrap();
+  a.write(2000, 1, Body::Close("reset".into())).unwrap();
+  a.write(5000, 2, Body::Open("wss://x".into())).unwrap();
+  a.write(6000, 2, Body::Close("reset".into())).unwrap();
+  a.write(8000, 3, Body::Open("wss://x".into())).unwrap();
+  drop(a);
+  // Two touching spans cover 2000..5000; 6000..8000 is only half fetched.
+  let mut backfill = Writer::new(&journal, "backfill-x");
+  for (from, to) in [(1900, 3000), (3000, 5100), (7000, 8100)] {
+    let range = Body::FetchRange {
+      source: "rustlesearch".into(),
+      from,
+      to,
+    };
+    backfill.write(9000, 1, range).unwrap();
+  }
+  drop(backfill);
+
+  let mut db = open(&root.0.join("index.sqlite")).unwrap();
+  index(&mut db, &journal).unwrap();
+  let gaps = coverage(&db).unwrap().unwrap().gaps;
+  let summary: Vec<_> = gaps
+    .iter()
+    .map(|gap| (gap.start, gap.end, gap.backfilled, gap.filled()))
+    .collect();
+  assert_eq!(
+    summary,
+    [(2000, 5000, true, true), (6000, 8000, false, false)]
+  );
 }

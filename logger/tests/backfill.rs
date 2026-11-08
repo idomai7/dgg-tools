@@ -101,6 +101,7 @@ fn gap(start: i64, end: i64) -> Gap {
     resumed_by: ("a".into(), 1),
     history_from: None,
     recovered: 0,
+    backfilled: false,
   }
 }
 

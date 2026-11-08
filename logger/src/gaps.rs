@@ -6,9 +6,11 @@
 //!
 //! A gap may still have been filled: the connection that ended it replays
 //! dgg's recent `HISTORY`. If the oldest message in that replay is no newer
-//! than the gap's start, the gap is covered. Gap bounds are local receive
-//! times and message timestamps are dgg's, so coverage is only as exact as
-//! the two clocks agree.
+//! than the gap's start, the gap is covered. Otherwise backfill may have
+//! fetched it: a gap inside the `fetchrange` spans is backfilled.
+//!
+//! Gap bounds are local receive times and message timestamps are dgg's, so
+//! coverage is only as exact as the two clocks agree.
 
 use {
   ::journal::layout::utc_day,
@@ -29,6 +31,8 @@ pub struct Gap {
   /// Indexed messages timestamped inside the gap (so, from HISTORY or
   /// other sources).
   pub recovered: u64,
+  /// Whether fetched spans from backfill sources cover the whole gap.
+  pub backfilled: bool,
 }
 
 impl Gap {
@@ -36,6 +40,11 @@ impl Gap {
   /// start, so every message in it was replayed.
   pub fn covered(&self) -> bool {
     self.history_from.is_some_and(|from| from <= self.start)
+  }
+
+  /// Whether nothing is missing from the gap, by HISTORY or backfill.
+  pub fn filled(&self) -> bool {
+    self.covered() || self.backfilled
   }
 
   pub fn duration_ms(&self) -> i64 {
@@ -87,12 +96,17 @@ pub fn coverage(db: &Connection) -> ::rusqlite::Result<Option<Coverage>> {
         resumed_by: connection,
         history_from,
         recovered: 0,
+        backfilled: false,
       });
     }
     coverage.last = coverage.last.max(ended);
   }
   if let Some(coverage) = coverage.as_mut() {
+    let fetched = fetched_spans(db)?;
     for gap in &mut coverage.gaps {
+      gap.backfilled = fetched
+        .iter()
+        .any(|&(start, end)| start <= gap.start && gap.end <= end);
       gap.recovered = db.query_row(
         "SELECT count(*) FROM messages WHERE timestamp > ?1 AND timestamp < ?2",
         params![gap.start, gap.end],
@@ -101,6 +115,23 @@ pub fn coverage(db: &Connection) -> ::rusqlite::Result<Option<Coverage>> {
     }
   }
   Ok(coverage)
+}
+
+/// Every source's fetched spans, merged where they touch or overlap, oldest
+/// first.
+fn fetched_spans(db: &Connection) -> ::rusqlite::Result<Vec<(i64, i64)>> {
+  let mut query = db.prepare(
+    "SELECT start_time, end_time FROM fetch_ranges ORDER BY start_time",
+  )?;
+  let mut merged: Vec<(i64, i64)> = Vec::new();
+  for span in query.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))? {
+    let (start, end) = span?;
+    match merged.last_mut() {
+      Some(last) if start <= last.1 => last.1 = last.1.max(end),
+      _ => merged.push((start, end)),
+    }
+  }
+  Ok(merged)
 }
 
 /// `YYYY-MM-DD HH:MM:SS.mmm` in UTC.

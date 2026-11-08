@@ -251,3 +251,99 @@ fn follows_new_lines() {
   running.store(false, Ordering::Relaxed);
   assert_eq!(follower.join().unwrap(), 4);
 }
+
+#[test]
+fn backfill_yields_to_native_messages() {
+  let root = TempRoot::new();
+  let live = |nick: &str, timestamp, data: &str| {
+    frame(format!("MSG {}", message(timestamp, nick, data)))
+  };
+  let fetched = |timestamp, nick: &str, text: &str| Body::Fetched {
+    source: "rustlesearch".into(),
+    timestamp,
+    nick: nick.into(),
+    text: text.into(),
+  };
+  let mut a = Writer::new(root.journal(), "a");
+  a.write(100, 1, Body::Open("wss://x".into())).unwrap();
+  a.write(101, 1, live("Alice", 100, "one\ntwo")).unwrap();
+  drop(a);
+  let mut backfill = Writer::new(root.journal(), "backfill-x");
+  // The same message as a's, as rustlesearch has it: skipped.
+  backfill
+    .write(900, 1, fetched(100, "alice", "one two"))
+    .unwrap();
+  // Alice's casing is known from a; Bob's and Carol's aren't yet.
+  backfill
+    .write(900, 1, fetched(200, "alice", "only fetched"))
+    .unwrap();
+  backfill.write(900, 1, fetched(250, "carol", "hi")).unwrap();
+  backfill
+    .write(900, 1, fetched(300, "bob", "bob says"))
+    .unwrap();
+  let range = Body::FetchRange {
+    source: "rustlesearch".into(),
+    from: 50,
+    to: 400,
+  };
+  backfill.write(900, 1, range).unwrap();
+  drop(backfill);
+
+  let mut db = open(&root.database()).unwrap();
+  let stats = index(&mut db, &root.journal()).unwrap();
+  assert_eq!((stats.messages, stats.backfilled), (4, 3));
+  let rows = |db: &Connection| -> Vec<(i64, String, String)> {
+    messages(db)
+      .into_iter()
+      .map(|(timestamp, nick, _, _, source)| (timestamp, nick, source))
+      .collect()
+  };
+  let backfill = "backfill:rustlesearch";
+  assert_eq!(
+    rows(&db),
+    [
+      (100, "Alice".into(), "live".into()),
+      (200, "Alice".into(), backfill.into()),
+      (250, "carol".into(), backfill.into()),
+      (300, "bob".into(), backfill.into()),
+    ]
+  );
+
+  // Native messages arrive later: Bob's replaces the backfilled copy, and
+  // Carol's other message re-cases hers.
+  let mut b = Writer::new(root.journal(), "b");
+  b.write(1000, 1, Body::Open("wss://x".into())).unwrap();
+  b.write(1001, 1, live("Bob", 300, "bob\nsays")).unwrap();
+  b.write(1002, 1, live("Carol", 260, "yo")).unwrap();
+  drop(b);
+  index(&mut db, &root.journal()).unwrap();
+  assert_eq!(
+    rows(&db),
+    [
+      (100, "Alice".into(), "live".into()),
+      (200, "Alice".into(), backfill.into()),
+      (250, "Carol".into(), backfill.into()),
+      (260, "Carol".into(), "live".into()),
+      (300, "Bob".into(), "live".into()),
+    ]
+  );
+  // The replaced copy is gone from full-text search too.
+  let says = count(
+    &db,
+    "SELECT count(*) FROM messages_fts WHERE messages_fts MATCH 'says'",
+  );
+  assert_eq!(says, 1);
+  let ranges = count(
+    &db,
+    "SELECT count(*) FROM fetch_ranges
+      WHERE source = 'rustlesearch' AND start_time = 50 AND end_time = 400",
+  );
+  assert_eq!(ranges, 1);
+
+  // Rebuilding indexes the files in one go, in path order, and agrees.
+  let incremental = messages(&db);
+  drop(db);
+  let mut db = rebuild(&root.database()).unwrap();
+  index(&mut db, &root.journal()).unwrap();
+  assert_eq!(messages(&db), incremental);
+}

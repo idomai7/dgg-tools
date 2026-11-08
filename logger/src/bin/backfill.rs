@@ -54,14 +54,14 @@ async fn main() -> ExitCode {
       .map(|coverage| coverage.gaps)
       .unwrap_or_default()
       .into_iter()
-      .filter(|gap| !gap.covered())
+      .filter(|gap| !gap.filled())
       .collect(),
     Err(e) => {
       eprintln!("backfill failed: {e}");
       return ExitCode::FAILURE;
     }
   };
-  eprintln!("{} gaps not covered by HISTORY", gaps.len());
+  eprintln!("{} gaps not yet filled", gaps.len());
   for gap in &gaps {
     eprintln!(
       "  {} +{}",

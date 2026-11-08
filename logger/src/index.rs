@@ -8,6 +8,13 @@
 //! Messages are deduplicated on `(timestamp, nick, data)`, verified to match
 //! between live `MSG` frames and the `HISTORY` replay. A message seen both
 //! ways is kept as `live`, with the earliest live receive time.
+//!
+//! Backfilled (`fetched`) messages have lowercased nicks and may have their
+//! text altered (rustlesearch turns newlines into spaces), so they match on
+//! timestamp and lowercased nick instead. Native messages win: a backfilled
+//! one is skipped if a native one is already there, and replaced when one
+//! arrives. Its nick takes the capitalisation of the same user's native
+//! messages, whenever those are indexed.
 
 use {
   ::journal::{
@@ -22,12 +29,12 @@ use {
 
 /// Bumped whenever the schema changes; an index at another version must be
 /// rebuilt.
-pub const SCHEMA_VERSION: i64 = 2;
+pub const SCHEMA_VERSION: i64 = 3;
 
 /// The current schema. Every version's schema is kept in `schemas/index/`;
 /// add a new file there (and bump [`SCHEMA_VERSION`]) rather than editing
 /// an old one.
-const SCHEMA: &str = include_str!("../schemas/index/v2.sql");
+const SCHEMA: &str = include_str!("../schemas/index/v3.sql");
 
 /// Lines are committed in batches of this many, with their checkpoint.
 const BATCH: usize = 10_000;
@@ -73,6 +80,8 @@ pub struct Stats {
   pub lines: u64,
   /// Messages added to the index (not counting ones already there).
   pub messages: u64,
+  /// Of those, how many were backfilled.
+  pub backfilled: u64,
   /// Lines or HISTORY entries that couldn't be indexed; see `unparsed`.
   pub unparsed: u64,
   /// Files skipped because their header couldn't be read, with why.
@@ -291,8 +300,20 @@ fn index_body(
         _ => {}
       }
     }
-    // Backfilled messages aren't indexed yet.
-    Body::Binary(_) | Body::Fetched { .. } | Body::FetchRange { .. } => {}
+    Body::Fetched {
+      source,
+      timestamp,
+      nick,
+      text,
+    } => fetched(db, line, &source, timestamp, &nick, &text, stats)?,
+    Body::FetchRange { source, from, to } => {
+      db.execute(
+        "INSERT OR IGNORE INTO fetch_ranges (source, start_time, end_time)
+          VALUES (?1, ?2, ?3)",
+        params![source, from, to],
+      )?;
+    }
+    Body::Binary(_) => {}
   }
   Ok(())
 }
@@ -369,18 +390,25 @@ fn message(
       return Ok(None);
     }
   };
-  let inserted = db.execute(
-    "INSERT OR IGNORE INTO messages
-      (timestamp, nick, data, features, received, source)
-      VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-    params![timestamp, nick, data, features, line.received, source],
+  remove_backfilled(db, timestamp, &nick)?;
+  let inserted = insert(
+    db,
+    timestamp,
+    &nick,
+    &data,
+    &features,
+    line.received,
+    source,
   )?;
-  if inserted == 1 {
-    db.execute(
-      "INSERT INTO messages_fts (rowid, data) VALUES (?1, ?2)",
-      params![db.last_insert_rowid(), data],
-    )?;
+  if inserted {
     stats.messages += 1;
+    // Re-case any backfilled messages from this user.
+    db.execute(
+      "UPDATE messages SET nick = ?1
+        WHERE lower(nick) = lower(?1) AND nick <> ?1
+          AND source LIKE 'backfill:%'",
+      [&nick],
+    )?;
   } else if source == "live" {
     // Already there: a live sighting replaces a HISTORY one, and the
     // earliest live receive time wins.
@@ -394,6 +422,98 @@ fn message(
     )?;
   }
   Ok(Some(timestamp))
+}
+
+/// Indexes one backfilled message, unless a message from the same user at
+/// the same time is already there.
+fn fetched(
+  db: &Transaction,
+  line: &Line,
+  source: &str,
+  timestamp: i64,
+  nick: &str,
+  text: &str,
+  stats: &mut Stats,
+) -> Result<(), Error> {
+  let exists: bool = db.query_row(
+    "SELECT EXISTS (SELECT 1 FROM messages
+      WHERE timestamp = ?1 AND lower(nick) = lower(?2))",
+    params![timestamp, nick],
+    |row| row.get(0),
+  )?;
+  if exists {
+    return Ok(());
+  }
+  let cased: Option<String> = db
+    .query_row(
+      "SELECT nick FROM messages
+        WHERE lower(nick) = lower(?1) AND source NOT LIKE 'backfill:%'
+        LIMIT 1",
+      [nick],
+      |row| row.get(0),
+    )
+    .optional()?;
+  let nick = cased.as_deref().unwrap_or(nick);
+  let source = format!("backfill:{source}");
+  if insert(db, timestamp, nick, text, "[]", line.received, &source)? {
+    stats.messages += 1;
+    stats.backfilled += 1;
+  }
+  Ok(())
+}
+
+/// Inserts a message and its full-text entry, unless it's already there.
+/// Returns whether it was inserted.
+fn insert(
+  db: &Transaction,
+  timestamp: i64,
+  nick: &str,
+  data: &str,
+  features: &str,
+  received: i64,
+  source: &str,
+) -> Result<bool, Error> {
+  let inserted = db.execute(
+    "INSERT OR IGNORE INTO messages
+      (timestamp, nick, data, features, received, source)
+      VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+    params![timestamp, nick, data, features, received, source],
+  )?;
+  if inserted == 1 {
+    db.execute(
+      "INSERT INTO messages_fts (rowid, data) VALUES (?1, ?2)",
+      params![db.last_insert_rowid(), data],
+    )?;
+  }
+  Ok(inserted == 1)
+}
+
+/// Removes backfilled messages a native one at `timestamp` from `nick`
+/// supersedes, with their full-text entries.
+fn remove_backfilled(
+  db: &Transaction,
+  timestamp: i64,
+  nick: &str,
+) -> Result<(), Error> {
+  let mut query = db.prepare_cached(
+    "SELECT id, data FROM messages
+      WHERE timestamp = ?1 AND lower(nick) = lower(?2)
+        AND source LIKE 'backfill:%'",
+  )?;
+  let superseded: Vec<(i64, String)> = query
+    .query_map(params![timestamp, nick], |row| {
+      Ok((row.get(0)?, row.get(1)?))
+    })?
+    .collect::<Result<_, _>>()?;
+  for (id, data) in superseded {
+    db.execute(
+      "INSERT INTO messages_fts (messages_fts, rowid, data)
+        VALUES ('delete', ?1, ?2)",
+      params![id, data],
+    )?;
+    db.execute("DELETE FROM messages WHERE id = ?1", [id])?;
+  }
+  Ok(())
 }
 
 fn unparsed(
