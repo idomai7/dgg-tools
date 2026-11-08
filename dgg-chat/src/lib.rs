@@ -2,7 +2,8 @@
 //!
 //! [`Client`] keeps a socket to dgg chat open, reconnecting with backoff, and
 //! yields every text frame plus connect/disconnect markers so callers can see
-//! gaps. `PING` frames are answered internally and not yielded.
+//! gaps. `PING` frames are answered internally and not yielded; binary frames
+//! are yielded as-is.
 
 use {
   ::futures_util::{SinkExt, StreamExt},
@@ -86,10 +87,24 @@ impl Frame {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Item {
-  Connected { conn: u64 },
+  Connected {
+    conn: u64,
+  },
   Frame(Frame),
-  Disconnected { conn: u64, reason: String },
-  ConnectFailed { error: String, retry_in: Duration },
+  /// A binary frame. dgg doesn't send these today; they're passed through
+  /// so a protocol change can't be silently dropped.
+  Binary {
+    conn: u64,
+    data: Vec<u8>,
+  },
+  Disconnected {
+    conn: u64,
+    reason: String,
+  },
+  ConnectFailed {
+    error: String,
+    retry_in: Duration,
+  },
 }
 
 /// A self-reconnecting dgg chat connection. Dropping it closes the socket.
@@ -205,6 +220,12 @@ async fn pump(
               return None;
             }
           }
+          Some(Ok(Message::Binary(data))) => {
+            let item = Item::Binary { conn, data: data.to_vec() };
+            if tx.send(item).is_err() {
+              return None;
+            }
+          }
           Some(Ok(Message::Close(Some(f)))) => {
             return Some(format!("closed: {} {}", u16::from(f.code), f.reason));
           }
@@ -256,6 +277,7 @@ mod tests {
         };
         assert_eq!(pong.as_str(), "PONG 42");
         ws.send(Message::text("MSG {}")).await.unwrap();
+        ws.send(Message::binary(vec![1, 2])).await.unwrap();
         ws.close(None).await.unwrap();
       }
     });
@@ -273,6 +295,13 @@ mod tests {
         panic!("expected frame");
       };
       assert_eq!((f.conn, f.raw()), (conn, "MSG {}"));
+      assert_eq!(
+        client.next().await,
+        Some(Item::Binary {
+          conn,
+          data: vec![1, 2]
+        })
+      );
       let next = client.next().await;
       assert!(
         matches!(next, Some(Item::Disconnected { conn: c, .. }) if c == conn)

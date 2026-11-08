@@ -15,6 +15,7 @@ async fn main() {
       Item::Connected { conn } => println!("connected (#{conn})"),
       Item::Frame(f) if f.event() == "MSG" => println!("{}", f.payload()),
       Item::Frame(f) => println!("[{}] {} bytes", f.event(), f.payload().len()),
+      Item::Binary { data, .. } => println!("[binary] {} bytes", data.len()),
       Item::Disconnected { conn, reason } => {
         println!("disconnected (#{conn}): {reason}")
       }
