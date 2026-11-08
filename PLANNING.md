@@ -31,16 +31,17 @@ The layout is flat: each crate is a direct child of the root.
 
 ## Logger design
 - **Journal layout:**
-  - `journal/live/YYYY-MM-DD/<instance>.jsonl`: one file per capture instance per day. These are the hot files.
-  - `journal/archive/YYYY/MM/YYYY-MM-DD.jsonl.zst` plus a `manifest.json` per month. These are cold.
+  - `journal/live/YYYY-MM-DD/<instance>.journal`: one file per capture instance per day. These are the hot files.
+  - `journal/archive/YYYY/MM/YYYY-MM-DD.journal.zst` plus a `manifest.json` per month. These are cold.
   - `journal/control/<instance>.json`: heartbeats.
   - Hot paths only ever list `live/`.
 - **Days:** UTC.
-- **Line format:** shared `recv` (ms), `inst` and `conn`, plus exactly one body key:
-  - `"frame":"<exact text frame>"`;
-  - `"binary":"<base64>"`;
-  - `"open":"<url>"`;
-  - `"close":"<why>"`.
+- **Line format:** explicit and hand-written, with no serde. The full spec is in the `dgg-journal` crate docs.
+  - Each file starts with `dgg-journal 1`.
+  - Each line is `<recv> <inst> <conn> <kind> <data>`, separated by single spaces, with `data` verbatim to the end of the line.
+  - Kinds are `frame` (the exact text frame), `binary` (base64), `open` (the URL) and `close` (why).
+  - Text containing CR or LF is written as `<kind>64` with the data in base64.
+  - Unknown kinds are reported separately from malformed lines.
 
   Event names are never interpreted at this layer, so dgg adding or removing events can't break the journal.
 - **capture:** dgg-chat into the journal, and nothing else, so it stays tiny and rarely changes.
