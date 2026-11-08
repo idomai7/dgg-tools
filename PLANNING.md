@@ -54,7 +54,7 @@ The layout is flat: each crate is a direct child of the root.
     - `--keep-running` opts out, for deliberate redundancy.
     - Tested live: 34 s of overlap, with 13 MSGs in both journals and none missing from their union.
   - **Across hosts:** the same rule works with `--peer <url>`.
-- **index:** journal into `data/index.sqlite` (schema in `logger/src/index.rs`, versioned with `user_version`).
+- **index:** journal into `data/index.sqlite` (schema in `logger/schemas/index/v<N>.sql`, every past version kept there; the version is stored in `user_version`).
   - The dedupe key is `(timestamp, nick, data)`. It was verified with `dgg-chat/examples/history_check.rs`: `HISTORY` is a JSON array of the last 150 `"MSG {...}"` frames, byte-identical to the live frames.
   - A message seen both live and in `HISTORY` is kept with `source = live` and the earliest live receive time.
   - Tables: `messages` (with an FTS5 table, `messages_fts`), `connections` (open, close and last-seen times, close reasons, and the oldest timestamp in each connection's `HISTORY`), `unparsed` and `files` (per-file checkpoints).

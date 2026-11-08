@@ -24,43 +24,10 @@ use {
 /// rebuilt.
 pub const SCHEMA_VERSION: i64 = 2;
 
-const SCHEMA: &str = "
-CREATE TABLE files (
-  path TEXT PRIMARY KEY,  -- relative to the journal root, '/'-separated
-  offset INTEGER NOT NULL -- just past the last indexed line
-);
-CREATE TABLE connections (
-  instance TEXT NOT NULL,
-  connection INTEGER NOT NULL,
-  url TEXT NOT NULL,
-  opened INTEGER NOT NULL,
-  closed INTEGER,
-  close_reason TEXT,
-  last_seen INTEGER NOT NULL,  -- receive time of its latest line
-  history_from INTEGER,        -- oldest MSG timestamp in its HISTORY
-  PRIMARY KEY (instance, connection)
-);
-CREATE TABLE messages (
-  id INTEGER PRIMARY KEY,
-  timestamp INTEGER NOT NULL, -- dgg's, unix ms
-  nick TEXT NOT NULL,
-  data TEXT NOT NULL,
-  features TEXT NOT NULL,     -- JSON array, as sent
-  received INTEGER NOT NULL,  -- local receive time, unix ms
-  source TEXT NOT NULL,       -- 'live' or 'history'
-  UNIQUE (timestamp, nick, data)
-);
-CREATE INDEX messages_nick ON messages (nick, timestamp);
-CREATE VIRTUAL TABLE messages_fts
-  USING fts5(data, content = 'messages', content_rowid = 'id');
-CREATE TABLE unparsed (
-  path TEXT NOT NULL,
-  offset INTEGER NOT NULL,
-  item INTEGER NOT NULL, -- index within a HISTORY frame, else 0
-  reason TEXT NOT NULL,
-  PRIMARY KEY (path, offset, item)
-);
-";
+/// The current schema. Every version's schema is kept in `schemas/index/`;
+/// add a new file there (and bump [`SCHEMA_VERSION`]) rather than editing
+/// an old one.
+const SCHEMA: &str = include_str!("../schemas/index/v2.sql");
 
 /// Lines are committed in batches of this many, with their checkpoint.
 const BATCH: usize = 10_000;
