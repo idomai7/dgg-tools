@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["dgg-chat", "viewer"]
+members = ["dgg-chat", "dgg-journal", "viewer"]
 
 [workspace.package]
 edition = "2024"

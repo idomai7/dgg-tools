@@ -35,12 +35,13 @@ The layout is flat: each crate is a direct child of the root.
   - `journal/archive/YYYY/MM/YYYY-MM-DD.jsonl.zst` plus a `manifest.json` per month. These are cold.
   - `journal/control/<instance>.json`: heartbeats.
   - Hot paths only ever list `live/`.
-- **Line format:** `{"recv":ms,"inst":id,"conn":n,"ev":"MSG","raw":"<exact payload>"}`, plus `conn_open` and `conn_close` markers.
+- **Days:** UTC.
+- **Line format:** `{"recv":ms,"inst":id,"conn":n,"ev":"MSG","raw":"<exact frame>"}`, plus `conn_open` and `conn_close` markers.
 - **capture:** dgg-chat into the journal, and nothing else, so it stays tiny and rarely changes.
   - **In-place upgrade:** start the new binary. Once it's healthy, the old instance writes for a 30 s overlap and then retires itself.
   - **Across hosts:** the same rule works with `--peer <url>`.
 - **index:** journal into SQLite.
-  - The dedupe key is `(ts, nick, data)`; this still needs to be verified against `HISTORY`.
+  - The dedupe key is `(ts, nick, data)`. It was verified with `dgg-chat/examples/history_check.rs`: `HISTORY` is a JSON array of the last 150 `"MSG {...}"` frames, byte-identical to the live frames.
   - It also records `src` (where each row came from), gaps, and per-file checkpoints, and has an FTS5 table for search.
   - `--rebuild` replays the whole journal.
 - **serve / sync:** read-only HTTP access to the journal, and pulling another host's journal. Together they handle migrating to a new host and running a warm standby.
@@ -63,7 +64,9 @@ The layout is flat: each crate is a direct child of the root.
 - **Workspace restructure:** done.
   - The dgg probe is at `dgg-chat/examples/probe.rs`.
   - `viewer` is a placeholder stub.
-- **Next:** a minimal `dgg-chat` (connect, frame split, PING/PONG, reconnect), then `dgg-journal`, then `logger capture` and `index`.
+- **`dgg-chat`:** a minimal client (reconnect with backoff, PING/PONG, idle timeout). The typed events and assets are still to do.
+- **`dgg-journal`:** live files, plus a writer and a reader. The `.zst` archives and manifests come with `compact`.
+- **Next:** `logger capture`, then `index`.
 
 ## Deferred: Kick
 The Kick probe lives on the `kick` branch (`viewer/examples/kick.rs`, with `.env.example`). It compiles but hasn't been run.
