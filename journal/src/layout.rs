@@ -8,6 +8,10 @@ use ::std::{
 /// File extension of live journal files.
 pub const EXTENSION: &str = "journal";
 
+/// File name suffix of archived (compacted, zstd-compressed) journal files:
+/// one per UTC day, at `archive/YYYY/MM/YYYY-MM-DD.journal.zst`.
+pub const ARCHIVE_SUFFIX: &str = ".journal.zst";
+
 /// `YYYY-MM-DD` of a unix ms timestamp, in UTC.
 pub fn utc_day(ms: i64) -> String {
   // Howard Hinnant's civil_from_days.
@@ -60,4 +64,26 @@ pub fn live_files(root: &Path) -> io::Result<Vec<PathBuf>> {
   }
   files.sort();
   Ok(files)
+}
+
+/// The directory holding archived days under journal `root`.
+pub fn archive_dir(root: &Path) -> PathBuf {
+  root.join("archive")
+}
+
+/// The archive directory for the month containing `day` (`YYYY-MM-DD`):
+/// `archive/YYYY/MM`. Each holds that month's archives and its
+/// [manifest](crate::archive).
+pub fn archive_month_dir(root: &Path, day: &str) -> PathBuf {
+  archive_dir(root).join(&day[..4]).join(&day[5..7])
+}
+
+/// The archive for `day` (`YYYY-MM-DD`).
+pub fn archive_file(root: &Path, day: &str) -> PathBuf {
+  archive_month_dir(root, day).join(format!("{day}{ARCHIVE_SUFFIX}"))
+}
+
+/// The live directory for `day`.
+pub fn live_day_dir(root: &Path, day: &str) -> PathBuf {
+  live_dir(root).join(day)
 }

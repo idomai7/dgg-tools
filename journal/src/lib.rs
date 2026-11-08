@@ -3,7 +3,9 @@
 //!
 //! Live files live at `<root>/live/YYYY-MM-DD/<instance>.journal`, one per
 //! capture instance per UTC day, so overlapping instances never share a file
-//! (see [`layout`]).
+//! (see [`layout`]). Closed days are compacted into one zstd-compressed
+//! archive each, `<root>/archive/YYYY/MM/YYYY-MM-DD.journal.zst`, listed in
+//! a manifest per month (see [`archive`]); [`Reader`] reads both.
 //!
 //! # Versions
 //!
@@ -19,6 +21,7 @@
 //! as [`DecodeError::Unknown`] and skip. Anything else is a major bump, and
 //! readers without that major's module refuse the file.
 
+pub mod archive;
 pub mod layout;
 pub mod reader;
 pub mod record;

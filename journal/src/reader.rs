@@ -1,10 +1,13 @@
-//! Reads records from files of any readable version.
+//! Reads records from files of any readable version, live or archived.
 
 use {
-  crate::record::{DecodeError, Record, Version},
+  crate::{
+    layout::ARCHIVE_SUFFIX,
+    record::{DecodeError, Record, Version},
+  },
   ::std::{
     fs::File,
-    io::{self, BufRead, BufReader, Seek, SeekFrom},
+    io::{self, BufRead, BufReader, Read, Seek, SeekFrom},
     path::Path,
   },
 };
@@ -42,8 +45,11 @@ impl From<io::Error> for ReadError {
 /// A trailing line without its newline is still being written (or was torn
 /// by a crash), so iteration stops before it; read again from the last
 /// `next` to pick it up later.
+///
+/// Archives (`.journal.zst`) are read the same way, decompressed as they
+/// go; their offsets are into the decompressed journal.
 pub struct Reader {
-  inner: BufReader<File>,
+  inner: Box<dyn BufRead + Send>,
   version: Option<Version>,
   offset: u64,
   line: Vec<u8>,
@@ -56,18 +62,25 @@ impl Reader {
   ///
   /// A file whose header hasn't been completely written yet reads as empty.
   pub fn open(path: &Path, offset: u64) -> Result<Self, ReadError> {
-    let mut inner = BufReader::new(File::open(path)?);
+    let file = File::open(path)?;
+    let archived = path
+      .file_name()
+      .is_some_and(|name| name.to_string_lossy().ends_with(ARCHIVE_SUFFIX));
+    let mut inner: Box<dyn BufRead + Send> = if archived {
+      Box::new(BufReader::new(::zstd::Decoder::new(file)?))
+    } else {
+      Box::new(BufReader::new(file))
+    };
     let mut header = Vec::new();
     let n = inner.read_until(b'\n', &mut header)? as u64;
-    let mut reader = Self {
-      inner,
-      version: None,
-      offset: 0,
-      line: Vec::new(),
-      done: true,
-    };
     let Some(text) = header.strip_suffix(b"\n") else {
-      return Ok(reader);
+      return Ok(Self {
+        inner,
+        version: None,
+        offset: 0,
+        line: Vec::new(),
+        done: true,
+      });
     };
     let Some(version) = Version::parse_header(text) else {
       let found = String::from_utf8_lossy(text).into_owned();
@@ -76,11 +89,22 @@ impl Reader {
     if !version.readable() {
       return Err(ReadError::Version(version));
     }
-    reader.version = Some(version);
-    reader.offset = offset.max(n);
-    reader.inner.seek(SeekFrom::Start(reader.offset))?;
-    reader.done = false;
-    Ok(reader)
+    let offset = offset.max(n);
+    if archived {
+      // A compressed stream can't seek: read up to the offset.
+      io::copy(&mut (&mut inner).take(offset - n), &mut io::sink())?;
+    } else {
+      let mut file = File::open(path)?;
+      file.seek(SeekFrom::Start(offset))?;
+      inner = Box::new(BufReader::new(file));
+    }
+    Ok(Self {
+      inner,
+      version: Some(version),
+      offset,
+      line: Vec::new(),
+      done: false,
+    })
   }
 
   /// The file's version, or `None` if its header isn't complete yet.
