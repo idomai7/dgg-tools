@@ -15,7 +15,7 @@ use {
   },
   ::rusqlite::{Connection, OptionalExtension, Transaction, params},
   ::serde_json::Value,
-  ::std::{fs, io, path::Path},
+  ::std::{fs, io, path::Path, time::Duration},
 };
 
 /// Bumped whenever the schema changes; an index at another version must be
@@ -136,6 +136,30 @@ pub fn rebuild(path: &Path) -> Result<Connection, Error> {
     }
   }
   open(path)
+}
+
+/// Keeps the index up to date: runs [`index`] every `interval` while
+/// `running()` is true, passing each run's stats to `report`.
+///
+/// Errors from a run are passed to `report` and retried next round (a file
+/// briefly locked by another process, say), except [`Error::Schema`], which
+/// no retry can fix and so is returned.
+pub fn follow(
+  db: &mut Connection,
+  journal_root: &Path,
+  interval: Duration,
+  running: impl Fn() -> bool,
+  mut report: impl FnMut(Result<&Stats, &Error>),
+) -> Result<(), Error> {
+  while running() {
+    match index(db, journal_root) {
+      Ok(stats) => report(Ok(&stats)),
+      Err(e @ Error::Schema(_)) => return Err(e),
+      Err(e) => report(Err(&e)),
+    }
+    ::std::thread::sleep(interval);
+  }
+  Ok(())
 }
 
 /// Indexes everything in the journal at `journal_root` that isn't indexed

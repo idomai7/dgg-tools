@@ -1,6 +1,6 @@
 use {
   ::journal::{Writer, record::v1::Body},
-  ::logger::index::{Error, SCHEMA_VERSION, index, open, rebuild},
+  ::logger::index::{Error, SCHEMA_VERSION, follow, index, open, rebuild},
   ::rusqlite::Connection,
   ::std::{
     fs,
@@ -205,4 +205,49 @@ fn refuses_other_schema_versions() {
   let error = open(&root.database()).unwrap_err();
   assert!(matches!(error, Error::Schema(v) if v == SCHEMA_VERSION + 1));
   assert!(rebuild(&root.database()).is_ok());
+}
+
+#[test]
+fn follows_new_lines() {
+  use ::std::{
+    sync::{Arc, atomic::AtomicBool},
+    time::{Duration, Instant},
+  };
+  let root = TempRoot::new();
+  write_journal(&root);
+  let running = Arc::new(AtomicBool::new(true));
+  let follower = {
+    let (database, journal) = (root.database(), root.journal());
+    let running = running.clone();
+    ::std::thread::spawn(move || {
+      let mut db = open(&database).unwrap();
+      let mut messages = 0;
+      follow(
+        &mut db,
+        &journal,
+        Duration::from_millis(10),
+        || running.load(Ordering::Relaxed),
+        |round| messages += round.unwrap().messages,
+      )
+      .unwrap();
+      messages
+    })
+  };
+
+  let reader = open(&root.database()).unwrap();
+  let wait_for = |expected| {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while count(&reader, "SELECT count(*) FROM messages") != expected {
+      assert!(Instant::now() < deadline, "never reached {expected}");
+      ::std::thread::sleep(Duration::from_millis(10));
+    }
+  };
+  wait_for(3);
+  let mut b = Writer::new(root.journal(), "b");
+  b.write(93, 1, frame(format!("MSG {}", message(40, "z", "third"))))
+    .unwrap();
+  b.sync().unwrap();
+  wait_for(4);
+  running.store(false, Ordering::Relaxed);
+  assert_eq!(follower.join().unwrap(), 4);
 }

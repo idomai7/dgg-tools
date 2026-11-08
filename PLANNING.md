@@ -83,8 +83,8 @@ The layout is flat: each crate is a direct child of the root.
 - **`dgg-chat`:** a minimal client (reconnect with backoff, PING/PONG, idle timeout). The typed events and assets are still to do.
 - **`journal`:** live files, plus a writer and a reader. The `.zst` archives and manifests come with `compact`.
 - **`logger capture`:** done, including local handoff.
-- **`logger index`:** done for live files (one-shot runs).
-- **Next:** decide between `index --follow`, a gaps query, and cross-host handoff (`--peer`).
+- **`logger index`:** done for live files, one-shot or `--follow` (polls every `--interval` seconds, default 1).
+- **Next:** a gaps query, or cross-host handoff (`--peer`).
 
 ## Deferred: Kick
 The Kick probe lives on the `kick` branch (`viewer/examples/kick.rs`, with `.env.example`). It compiles but hasn't been run.
