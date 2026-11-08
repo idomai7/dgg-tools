@@ -4,12 +4,12 @@
 use {
   ::dgg_chat::{Client, Item, Options},
   ::serde_json::Value,
-  std::{collections::HashMap, time::Duration},
+  ::std::{collections::HashMap, time::Duration},
 };
 
 #[::tokio::main]
 async fn main() {
-  let secs = std::env::args()
+  let secs = ::std::env::args()
     .nth(1)
     .and_then(|s| s.parse().ok())
     .unwrap_or(60);

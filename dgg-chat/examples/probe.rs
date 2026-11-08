@@ -5,7 +5,7 @@ use ::dgg_chat::{Client, Item, Options};
 #[::tokio::main]
 async fn main() {
   let mut opts = Options::default();
-  if std::env::args().any(|a| a == "--no-origin") {
+  if ::std::env::args().any(|a| a == "--no-origin") {
     opts.origin = None;
   }
 

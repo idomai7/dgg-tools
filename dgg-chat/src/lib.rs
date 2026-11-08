@@ -6,6 +6,7 @@
 
 use {
   ::futures_util::{SinkExt, StreamExt},
+  ::std::time::Duration,
   ::tokio::{
     net::TcpStream,
     sync::mpsc,
@@ -16,7 +17,6 @@ use {
     MaybeTlsStream, WebSocketStream,
     tungstenite::{Message, client::IntoClientRequest, http::HeaderValue},
   },
-  std::time::Duration,
 };
 
 pub const DEFAULT_URL: &str = "wss://chat.destiny.gg/ws";
