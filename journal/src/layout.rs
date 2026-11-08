@@ -29,8 +29,10 @@ pub fn live_dir(root: &Path) -> PathBuf {
 }
 
 /// The live file one instance writes for one day.
-pub fn live_file(root: &Path, day: &str, inst: &str) -> PathBuf {
-  live_dir(root).join(day).join(format!("{inst}.{EXTENSION}"))
+pub fn live_file(root: &Path, day: &str, instance: &str) -> PathBuf {
+  live_dir(root)
+    .join(day)
+    .join(format!("{instance}.{EXTENSION}"))
 }
 
 /// Every live journal file, sorted by day then instance.

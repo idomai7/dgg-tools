@@ -7,9 +7,9 @@ use ::journal::{
 fn line_format() {
   let line = |body| {
     let r = Record {
-      recv: 5,
-      inst: "a".into(),
-      conn: 2,
+      receive_time: 5,
+      instance: "a".into(),
+      connection: 2,
       body,
     };
     let mut out = Vec::new();

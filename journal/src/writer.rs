@@ -17,35 +17,35 @@ use {
 pub const SYNC_INTERVAL: Duration = Duration::from_secs(1);
 
 /// Appends one instance's records to its live files, rolling over at UTC
-/// midnight (by each record's `recv`).
+/// midnight (by each record's `receive_time`).
 ///
 /// Every line is written with a single `write` call, so a crash leaves at
 /// most one torn line at the tail. Call [`Writer::sync_if_due`] on a timer to
 /// bound how much a power loss can take.
 pub struct Writer {
   root: PathBuf,
-  inst: String,
+  instance: String,
   open: Option<(String, File)>,
   dirty: bool,
   last_sync: Instant,
 }
 
 impl Writer {
-  /// A writer for instance `inst` under journal `root`. Nothing is opened
+  /// A writer for `instance` under journal `root`. Nothing is opened
   /// until the first [`Writer::write`].
   ///
   /// # Panics
   ///
-  /// If `inst` isn't [`v1::valid_inst`].
-  pub fn new(root: impl Into<PathBuf>, inst: impl Into<String>) -> Self {
-    let inst = inst.into();
+  /// If `instance` isn't [`v1::valid_instance`].
+  pub fn new(root: impl Into<PathBuf>, instance: impl Into<String>) -> Self {
+    let instance = instance.into();
     assert!(
-      v1::valid_inst(&inst),
-      "instance id must be [A-Za-z0-9._-]+: {inst:?}"
+      v1::valid_instance(&instance),
+      "instance id must be [A-Za-z0-9._-]+: {instance:?}"
     );
     Self {
       root: root.into(),
-      inst,
+      instance,
       open: None,
       dirty: false,
       last_sync: Instant::now(),
@@ -53,23 +53,28 @@ impl Writer {
   }
 
   /// The instance id written on every line.
-  pub fn inst(&self) -> &str {
-    &self.inst
+  pub fn instance(&self) -> &str {
+    &self.instance
   }
 
-  /// Appends one line to the live file for `recv`'s UTC day, opening (and on
+  /// Appends one line to the live file for `receive_time`'s UTC day, opening (and on
   /// a day change, syncing and switching) files as needed. The line reaches
   /// the OS before this returns, but isn't fsynced; see [`Writer::sync`].
-  pub fn write(&mut self, recv: i64, conn: u64, body: Body) -> io::Result<()> {
-    let day = utc_day(recv);
+  pub fn write(
+    &mut self,
+    receive_time: i64,
+    connection: u64,
+    body: Body,
+  ) -> io::Result<()> {
+    let day = utc_day(receive_time);
     if self.open.as_ref().is_none_or(|(d, _)| *d != day) {
       self.sync()?;
       self.open = Some((day.clone(), self.open_day(&day)?));
     }
     let rec = v1::Record {
-      recv,
-      inst: self.inst.clone(),
-      conn,
+      receive_time,
+      instance: self.instance.clone(),
+      connection,
       body,
     };
     let mut line = Vec::new();
@@ -103,7 +108,7 @@ impl Writer {
   /// Opens (creating if needed) this instance's live file for `day`. A new
   /// file gets the v1 header; an existing one with a torn tail gets a newline.
   fn open_day(&self, day: &str) -> io::Result<File> {
-    let path = live_file(&self.root, day, &self.inst);
+    let path = live_file(&self.root, day, &self.instance);
     fs::create_dir_all(path.parent().unwrap())?;
     let mut file = OpenOptions::new()
       .create(true)

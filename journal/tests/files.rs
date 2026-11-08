@@ -34,17 +34,18 @@ impl Drop for TempRoot {
   }
 }
 
-fn rec(recv: i64, frame: &str) -> v1::Record {
+fn rec(receive_time: i64, frame: &str) -> v1::Record {
   v1::Record {
-    recv,
-    inst: "a".into(),
-    conn: 1,
+    receive_time,
+    instance: "a".into(),
+    connection: 1,
     body: Body::Frame(frame.into()),
   }
 }
 
 fn write(w: &mut Writer, r: &v1::Record) {
-  w.write(r.recv, r.conn, r.body.clone()).unwrap();
+  w.write(r.receive_time, r.connection, r.body.clone())
+    .unwrap();
 }
 
 fn record(e: Result<Entry, ReadError>) -> v1::Record {

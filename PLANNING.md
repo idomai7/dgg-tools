@@ -41,7 +41,7 @@ The layout is flat: each crate is a direct child of the root.
 - **Days:** UTC.
 - **Line format:** explicit and hand-written, with no serde. The spec lives in the `journal` crate: each major version has its own module (`journal/src/record/v1.rs`) holding its structure, encoding and decoding, so several formats can coexist in the library.
   - Each file starts with `journal <major>.<minor>` (currently `1.0`). Readers accept any minor of their own major, so minor bumps may only add kinds, which old readers skip as unknown. Anything else is a major bump, which readers without that major's module refuse.
-  - Each line is `<recv> <inst> <conn> <kind> <data>`, separated by single spaces, with `data` verbatim to the end of the line.
+  - Each line is `<receive-time> <instance> <connection> <kind> <data>`, separated by single spaces, with `data` verbatim to the end of the line.
   - Kinds are `frame` (the exact text frame), `binary` (base64), `open` (the URL) and `close` (why).
   - Lines end at LF only, and a CR is ordinary data. Text containing an LF is written as `<kind>64` with the data in base64.
   - Unknown kinds are reported separately from malformed lines.

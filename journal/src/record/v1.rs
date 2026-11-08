@@ -3,13 +3,13 @@
 //! After the `journal 1.<minor>` header, each line is
 //!
 //! ```text
-//! <recv> <inst> <conn> <kind> <data>
+//! <receive-time> <instance> <connection> <kind> <data>
 //! ```
 //!
-//! separated by single spaces. `recv` (local receive time, unix ms) and
-//! `conn` are decimal digits, `inst` is `[A-Za-z0-9._-]+`, and `kind` is
-//! `[a-z0-9]+`. `data` is the rest of the line, verbatim; the space before it
-//! is omitted when it's empty. Kinds:
+//! separated by single spaces. `receive-time` (local receive time, unix ms)
+//! and `connection` are decimal digits, `instance` is `[A-Za-z0-9._-]+`, and
+//! `kind` is `[a-z0-9]+`. `data` is the rest of the line, verbatim; the space
+//! before it is omitted when it's empty. Kinds:
 //!
 //! - `frame`: a dgg text frame exactly as received (`EVENT payload`).
 //! - `binary`: a binary frame, base64.
@@ -35,11 +35,11 @@ pub const VERSION: Version = Version { major: 1, minor: 0 };
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Record {
   /// Local receive time, unix ms.
-  pub recv: i64,
+  pub receive_time: i64,
   /// Capture instance that wrote the line.
-  pub inst: String,
+  pub instance: String,
   /// Connection number within the instance, counting from 1.
-  pub conn: u64,
+  pub connection: u64,
   pub body: Body,
 }
 
@@ -56,11 +56,11 @@ pub enum Body {
   Close(String),
 }
 
-/// Whether `inst` is a valid instance id: one or more of `[A-Za-z0-9._-]`,
+/// Whether `instance` is a valid instance id: one or more of `[A-Za-z0-9._-]`,
 /// so it can't contain the field separator and is safe as a file name.
-pub fn valid_inst(inst: &str) -> bool {
-  !inst.is_empty()
-    && inst
+pub fn valid_instance(instance: &str) -> bool {
+  !instance.is_empty()
+    && instance
       .bytes()
       .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
 }
@@ -87,8 +87,10 @@ impl Record {
     let binary = matches!(self.body, Body::Binary(_));
     let text64 = !binary && data.contains(&b'\n');
     let suffix = if text64 { "64" } else { "" };
-    let header =
-      format!("{} {} {} {kind}{suffix}", self.recv, self.inst, self.conn);
+    let header = format!(
+      "{} {} {} {kind}{suffix}",
+      self.receive_time, self.instance, self.connection
+    );
     out.extend_from_slice(header.as_bytes());
     if !data.is_empty() {
       out.push(b' ');
@@ -107,19 +109,24 @@ impl Record {
     let line = ::std::str::from_utf8(line).map_err(|_| Bad("not utf-8"))?;
     let mut parts = line.splitn(5, ' ');
     let mut field = || parts.next().ok_or(Bad("too few fields"));
-    let (recv, inst, conn, kind) = (field()?, field()?, field()?, field()?);
+    let (receive_time, instance, connection, kind) =
+      (field()?, field()?, field()?, field()?);
     let data = parts.next().unwrap_or("");
-    if !digits(recv) || !digits(conn) {
-      return Err(Bad("recv/conn not decimal"));
+    if !digits(receive_time) || !digits(connection) {
+      return Err(Bad("receive_time/connection not decimal"));
     }
-    if !valid_inst(inst) {
-      return Err(Bad("bad inst"));
+    if !valid_instance(instance) {
+      return Err(Bad("bad instance"));
     }
     if !valid_kind(kind) {
       return Err(Bad("bad kind"));
     }
-    let recv = recv.parse().map_err(|_| Bad("recv out of range"))?;
-    let conn = conn.parse().map_err(|_| Bad("conn out of range"))?;
+    let receive_time = receive_time
+      .parse()
+      .map_err(|_| Bad("receive_time out of range"))?;
+    let connection = connection
+      .parse()
+      .map_err(|_| Bad("connection out of range"))?;
     let unbase64 = || BASE64.decode(data).map_err(|_| Bad("bad base64"));
     let text64 =
       || String::from_utf8(unbase64()?).map_err(|_| Bad("base64 not utf-8"));
@@ -134,9 +141,9 @@ impl Record {
       _ => return Err(DecodeError::Unknown(kind.into())),
     };
     Ok(Self {
-      recv,
-      inst: inst.into(),
-      conn,
+      receive_time,
+      instance: instance.into(),
+      connection,
       body,
     })
   }
