@@ -1,8 +1,8 @@
 // Probe: stream dgg chat through dgg_chat::Client and print what arrives.
 // Usage: cargo run -p dgg-chat --example probe -- [--no-origin]
-use dgg_chat::{Client, Item, Options};
+use ::dgg_chat::{Client, Item, Options};
 
-#[tokio::main]
+#[::tokio::main]
 async fn main() {
   let mut opts = Options::default();
   if std::env::args().any(|a| a == "--no-origin") {

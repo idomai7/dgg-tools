@@ -4,17 +4,20 @@
 //! yields every text frame plus connect/disconnect markers so callers can see
 //! gaps. `PING` frames are answered internally and not yielded.
 
-use std::time::Duration;
-
-use futures_util::{SinkExt, StreamExt};
-use tokio::net::TcpStream;
-use tokio::sync::mpsc;
-use tokio::task::JoinHandle;
-use tokio::time::{Instant, sleep, timeout};
-use tokio_tungstenite::tungstenite::{
-  Message, client::IntoClientRequest, http::HeaderValue,
+use {
+  ::futures_util::{SinkExt, StreamExt},
+  ::tokio::{
+    net::TcpStream,
+    sync::mpsc,
+    task::JoinHandle,
+    time::{Instant, sleep, timeout},
+  },
+  ::tokio_tungstenite::{
+    MaybeTlsStream, WebSocketStream,
+    tungstenite::{Message, client::IntoClientRequest, http::HeaderValue},
+  },
+  std::time::Duration,
 };
-use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
 pub const DEFAULT_URL: &str = "wss://chat.destiny.gg/ws";
 pub const DEFAULT_ORIGIN: &str = "https://www.destiny.gg";
@@ -97,9 +100,9 @@ pub struct Client {
 
 impl Client {
   pub fn spawn(opts: Options) -> Self {
-    let _ = rustls::crypto::ring::default_provider().install_default();
+    let _ = ::rustls::crypto::ring::default_provider().install_default();
     let (tx, rx) = mpsc::unbounded_channel();
-    let task = tokio::spawn(run(opts, tx));
+    let task = ::tokio::spawn(run(opts, tx));
     Self { rx, task }
   }
 
@@ -166,7 +169,8 @@ async fn connect(opts: &Options) -> Result<Ws, String> {
       headers.insert(name, value);
     }
   }
-  match timeout(opts.idle_timeout, tokio_tungstenite::connect_async(req)).await
+  match timeout(opts.idle_timeout, ::tokio_tungstenite::connect_async(req))
+    .await
   {
     Ok(Ok((ws, _))) => Ok(ws),
     Ok(Err(e)) => Err(e.to_string()),
@@ -182,11 +186,11 @@ async fn pump(
   opts: &Options,
   tx: &Tx,
 ) -> Option<String> {
-  let mut ping = tokio::time::interval(opts.idle_timeout / 3);
+  let mut ping = ::tokio::time::interval(opts.idle_timeout / 3);
   ping.tick().await;
   let mut last = Instant::now();
   loop {
-    tokio::select! {
+    ::tokio::select! {
       msg = ws.next() => {
         last = Instant::now();
         match msg {
@@ -224,8 +228,7 @@ async fn pump(
 
 #[cfg(test)]
 mod tests {
-  use super::*;
-  use tokio::net::TcpListener;
+  use {super::*, ::tokio::net::TcpListener};
 
   #[test]
   fn frame_split() {
@@ -239,14 +242,14 @@ mod tests {
 
   /// Local server: answers PING internally, forwards other frames, and
   /// reconnects after the server closes the socket.
-  #[tokio::test]
+  #[::tokio::test]
   async fn ping_and_reconnect() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("ws://{}", listener.local_addr().unwrap());
-    let server = tokio::spawn(async move {
+    let server = ::tokio::spawn(async move {
       for _ in 0..2 {
         let (tcp, _) = listener.accept().await.unwrap();
-        let mut ws = tokio_tungstenite::accept_async(tcp).await.unwrap();
+        let mut ws = ::tokio_tungstenite::accept_async(tcp).await.unwrap();
         ws.send(Message::text("PING 42")).await.unwrap();
         let Some(Ok(Message::Text(pong))) = ws.next().await else {
           panic!("no pong");

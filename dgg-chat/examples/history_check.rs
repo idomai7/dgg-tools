@@ -1,13 +1,13 @@
 // Check the logger's dedupe key: record live MSGs, then open a second
 // connection and compare its HISTORY against what was recorded.
 // Usage: cargo run -p dgg-chat --example history_check -- [seconds]
-use std::collections::HashMap;
-use std::time::Duration;
+use {
+  ::dgg_chat::{Client, Item, Options},
+  ::serde_json::Value,
+  std::{collections::HashMap, time::Duration},
+};
 
-use dgg_chat::{Client, Item, Options};
-use serde_json::Value;
-
-#[tokio::main]
+#[::tokio::main]
 async fn main() {
   let secs = std::env::args()
     .nth(1)
@@ -15,11 +15,11 @@ async fn main() {
     .unwrap_or(60);
   let mut live = Client::spawn(Options::default());
   let mut seen = Vec::new();
-  let deadline = tokio::time::sleep(Duration::from_secs(secs));
-  tokio::pin!(deadline);
+  let deadline = ::tokio::time::sleep(Duration::from_secs(secs));
+  ::tokio::pin!(deadline);
   println!("recording live MSGs for {secs}s...");
   loop {
-    tokio::select! {
+    ::tokio::select! {
       _ = &mut deadline => break,
       item = live.next() => {
         if let Some(Item::Frame(f)) = item
@@ -40,7 +40,7 @@ async fn main() {
       break f.payload().to_owned();
     }
   };
-  let history: Value = serde_json::from_str(&history).expect("HISTORY json");
+  let history: Value = ::serde_json::from_str(&history).expect("HISTORY json");
   let entries = history.as_array().expect("HISTORY is an array");
   println!(
     "HISTORY: {} entries; first: {:.120}",
@@ -57,7 +57,7 @@ async fn main() {
     })
     .collect();
   let key = |raw: &str| {
-    let v: Value = serde_json::from_str(raw).unwrap();
+    let v: Value = ::serde_json::from_str(raw).unwrap();
     (
       v["timestamp"].as_i64(),
       v["nick"].clone(),
