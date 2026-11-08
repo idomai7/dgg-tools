@@ -9,7 +9,9 @@ journal.workspace = true
 
 clap.workspace = true
 gethostname.workspace = true
+reqwest.workspace = true
 rusqlite.workspace = true
+rustls.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 

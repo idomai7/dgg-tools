@@ -95,7 +95,11 @@ The layout is flat: each crate is a direct child of the root.
 - **`logger capture`:** done, including local handoff.
 - **`logger index`:** done for live files, one-shot or `--follow` (polls every `--interval` seconds, default 1; prints a summary every `--report` seconds, default 60).
 - **`logger gaps`:** done. It reports stretches when no connection was open (a connection that never closed ends at its last line), and whether the next connection's `HISTORY` reached back far enough to cover each one.
-- **Next:** cross-host handoff (`--peer`), or `backfill` for gaps `HISTORY` didn't cover.
+- **`logger backfill`:** fetches uncovered gaps from rustlesearch into the journal.
+  - It writes one `fetched` line per message and a `fetchrange` per page.
+  - It's limited by `--max-requests` (default 50) and stops when the rate limit has fewer than `--reserve` (10) requests left.
+  - `--dry-run` lists the gaps it would fetch.
+- **Next:** index `fetched` and `fetchrange` lines (schema v3: native rows win, nick casing restored, gaps filled by backfill), then cross-host handoff (`--peer`).
 
 ## Deferred: Kick
 The Kick probe lives on the `kick` branch (`viewer/examples/kick.rs`, with `.env.example`). It compiles but hasn't been run.
