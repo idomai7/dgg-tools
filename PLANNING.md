@@ -85,7 +85,12 @@ The layout is flat: each crate is a direct child of the root.
   - **Rate limit:** 200 requests per day (`Ratelimit-Policy: 200;w=86400`).
   - **Matching:** a backfilled message matches a native one on exact timestamp plus case-insensitive nick. Native rows win.
   - Journaled as one `fetched` line per message, plus a `fetchrange` per page, in the backfill run's own `live/` file.
-- **compact:** merges a closed day into one archive file, dedupes and zstd-compresses it, and verifies the result before deleting the originals.
+- **compact:** merges each closed UTC day (ended over `--grace-hours` ago, default 1) into `archive/YYYY/MM/YYYY-MM-DD.journal.zst`.
+  - It merges the day's live files and any existing archive for that day, byte for byte, sorted by receive time.
+  - Each distinct line is kept as often as any one input has it: dgg does send identical frames twice in one millisecond.
+  - Torn tails are dropped.
+  - The archive is written to a temp file, fsynced and verified, then renamed and recorded in the monthly manifest. Only after that are the live files deleted, and only those that haven't grown since they were read.
+  - Real data: 5 overlapping instances, 1.67 MB, compressed 32x at level 19.
 
 ## destiny.gg chat (from chat-gui: https://github.com/destinygg/chat-gui)
 - **Socket:** `wss://chat.destiny.gg/ws`. Each frame is `EVENT {json}`, split on the first space (`assets/chat/js/source.js`).
@@ -117,7 +122,9 @@ The layout is flat: each crate is a direct child of the root.
   - Live test: after backfill, the index holds exactly a reference capture's 583 messages over the same span. 16 nicks stay lowercase because those users were never seen natively.
 - **Cross-host handoff:** done. Tested live: the old instance retired about 38 s after the new one started.
 - **`serve` / `sync`:** done.
-- **Next:** `compact` (closed days into zstd archives, plus the monthly manifests).
+- **`compact`:** done.
+  - **Don't run it on real data until `index` reads archives:** `index --rebuild` would lose archived days.
+- **Next:** `index` reads archives (schema v4).
 
 ## Deferred: Kick
 The Kick probe lives on the `kick` branch (`viewer/examples/kick.rs`, with `.env.example`). It compiles but hasn't been run.

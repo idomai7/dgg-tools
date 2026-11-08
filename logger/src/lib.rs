@@ -3,6 +3,7 @@
 
 pub mod backfill;
 pub mod capture;
+pub mod compact;
 pub mod control;
 pub mod gaps;
 pub mod index;
