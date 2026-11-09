@@ -1,11 +1,11 @@
-// Fetch assets: get chat's emotes and flairs from the CDN and summarise
-// them.
+// Fetch assets: get chat's emotes and flairs, and their stylesheets, from
+// the CDN and summarise them, checking the stylesheets against them.
 //
 // Usage: cargo run -p dgg-api --features http --example fetch_assets --
 //          [cache key]
 
 use {
-  ::dgg_api::assets::{DEFAULT_CDN, fetch, flair},
+  ::dgg_api::assets::{DEFAULT_CDN, css, fetch, flair},
   ::std::{collections::BTreeMap, env, process::ExitCode},
 };
 
@@ -15,11 +15,13 @@ async fn main() -> ExitCode {
   let _ = ::rustls::crypto::ring::default_provider().install_default();
   let client = ::reqwest::Client::new();
   let cache_key = cache_key.as_deref();
-  let (emotes, flairs) = match ::tokio::try_join!(
+  let (emotes, flairs, emotes_css, flairs_css) = match ::tokio::try_join!(
     fetch::emotes(&client, DEFAULT_CDN, cache_key),
     fetch::flairs(&client, DEFAULT_CDN, cache_key),
+    fetch::emotes_css(&client, DEFAULT_CDN, cache_key),
+    fetch::flairs_css(&client, DEFAULT_CDN, cache_key),
   ) {
-    Ok(both) => both,
+    Ok(all) => all,
     Err(e) => {
       eprintln!("{e}");
       return ExitCode::FAILURE;
@@ -44,5 +46,30 @@ async fn main() -> ExitCode {
       .map_or("missing", |flair| flair.label.as_str());
     println!("  tier {tier}: {name} {label:?}");
   }
+
+  let emotes_split = css::emotes(&emotes_css, &emotes.value);
+  let flairs_split = css::flairs(&flairs_css, &flairs.value);
+  let (emotes_split, flairs_split) = match (emotes_split, flairs_split) {
+    (Ok(emotes), Ok(flairs)) => (emotes, flairs),
+    (Err(e), _) => {
+      eprintln!("emotes.css doesn't match emotes.json: {e}");
+      return ExitCode::FAILURE;
+    }
+    (_, Err(e)) => {
+      eprintln!("flairs.css doesn't match flairs.json: {e}");
+      return ExitCode::FAILURE;
+    }
+  };
+  println!(
+    "emotes.css ({} bytes) matches: {} bytes of hand-written styles",
+    emotes_css.len(),
+    emotes_split.styles.len()
+  );
+  println!(
+    "flairs.css ({} bytes) matches: {} bytes of preamble, {} after",
+    flairs_css.len(),
+    flairs_split.preamble.len(),
+    flairs_split.rest.len()
+  );
   ExitCode::SUCCESS
 }
