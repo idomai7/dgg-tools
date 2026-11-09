@@ -464,8 +464,8 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "ctrlc",
- "journal",
  "logger",
+ "logger-journal",
  "ratatui",
  "sysinfo",
  "version-info",
@@ -502,7 +502,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "dgg-chat"
+name = "dgg-api"
 version = "0.1.0"
 dependencies = [
  "futures-util",
@@ -1093,14 +1093,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "journal"
-version = "0.1.0"
-dependencies = [
- "base64",
- "zstd",
-]
-
-[[package]]
 name = "js-sys"
 version = "0.3.107"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1193,10 +1185,10 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "clap",
- "dgg-chat",
+ "dgg-api",
  "futures-util",
  "gethostname",
- "journal",
+ "logger-journal",
  "reqwest",
  "rusqlite",
  "rustls",
@@ -1205,6 +1197,14 @@ dependencies = [
  "tokio",
  "tokio-tungstenite",
  "version-info",
+ "zstd",
+]
+
+[[package]]
+name = "logger-journal"
+version = "0.1.0"
+dependencies = [
+ "base64",
  "zstd",
 ]
 
