@@ -106,8 +106,8 @@ target\release\dgg-logger status --watch
 It finds the installed logger and shows:
 
 - the running programs: memory, CPU, and which build;
-- each capture's health: healthy, connecting, or STALE once its heartbeat
-  stops;
+- each capture's health (healthy, connecting, or STALE once its heartbeat
+  stops), and the frames in its files not yet compacted;
 - the journal: today's files and their last write, days waiting for
   compact, archives, backfill;
 - the index, free disk space, the peer it syncs from (and how the last

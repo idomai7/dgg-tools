@@ -157,7 +157,11 @@ pub fn draw(
             format!("{:<24} ", health(capture, now)),
             Style::new().fg(color),
           ),
-          Span::raw(capture.build.clone().unwrap_or_default()),
+          Span::raw(format!("{:>10} frames  ", format::count(capture.frames))),
+          Span::styled(
+            capture.build.clone().unwrap_or_default(),
+            Style::new().dark_gray(),
+          ),
         ])
       })
       .collect()

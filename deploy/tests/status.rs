@@ -67,6 +67,12 @@ fn reports_captures_and_the_journal() {
     &format!("{control}/a-3.status"),
     &status("a-3", now - 2000, now - 100, None),
   );
+  // Two frames, a connection opening, and a frame still being written.
+  dir.write(
+    &format!("data/journal/live/{today}/a-3.journal"),
+    "journal 0.1\n1 a-3 1 open wss://x\n2 a-3 1 frame MSG {}\n\
+     3 a-3 1 frame NAMES {}\n4 a-3 1 frame JO",
+  );
   dir.write(
     &format!("data/journal/live/{today}/a-1.journal"),
     "0123456789",
@@ -99,11 +105,10 @@ fn reports_captures_and_the_journal() {
       ("a-3", Health::Connecting),
     ]
   );
+  let frames: Vec<_> = report.captures.iter().map(|c| c.frames).collect();
+  assert_eq!(frames, [0, 0, 2]);
   let journal = &report.journal;
-  assert_eq!(
-    (journal.today_files.count, journal.today_files.bytes),
-    (1, 10)
-  );
+  assert_eq!(journal.today_files.count, 2);
   assert_eq!(journal.waiting, ["2026-01-02"]);
   assert_eq!(journal.archived.days, 2);
   assert_eq!(journal.archived.bytes, 150);
@@ -112,7 +117,7 @@ fn reports_captures_and_the_journal() {
   assert_eq!(report.index.map(|(bytes, _)| bytes), Some(1));
 
   let lines = journal_lines(&report);
-  assert!(lines[0].starts_with(&format!("today (UTC {today})  1 files  10 B")));
+  assert!(lines[0].starts_with(&format!("today (UTC {today})  2 files")));
   assert_eq!(lines[1], "waiting for compact  1 days from 2026-01-02  5 B");
   assert_eq!(
     lines[2],
@@ -127,8 +132,16 @@ fn reports_captures_and_the_journal() {
     &format!("data/journal/live/{today}/a-1.journal"),
     &"0".repeat(5000),
   );
+  // The frame being written was finished, and the connection closed.
+  dir.write(
+    &format!("data/journal/live/{today}/a-3.journal"),
+    "journal 0.1\n1 a-3 1 open wss://x\n2 a-3 1 frame MSG {}\n\
+     3 a-3 1 frame NAMES {}\n4 a-3 1 frame JOIN {}\n5 a-3 1 close bye\n",
+  );
   let report = watcher.gather(&paths).unwrap();
   assert!(report.journal.growth.is_some_and(|rate| rate > 0.0));
+  assert_eq!(report.captures[2].frames, 3);
+  assert!(text(&report).join("\n").contains("3 frames"));
 }
 
 #[test]
@@ -155,6 +168,9 @@ fn formats_ages_and_sizes() {
   assert_eq!(format::size(512.0), "512 B");
   assert_eq!(format::size(1536.0), "1.5 KB");
   assert_eq!(format::size(200.0 * 1024.0 * 1024.0), "200 MB");
+  assert_eq!(format::count(987), "987");
+  assert_eq!(format::count(14_987), "14,987");
+  assert_eq!(format::count(1_204_331), "1,204,331");
 }
 
 #[test]

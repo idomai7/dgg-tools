@@ -12,11 +12,12 @@ use {
   crate::{log::now_ms, paths::Paths, peer, processes},
   ::logger::control,
   ::logger_journal::{
-    archive,
+    Reader, Record, archive,
     layout::{backfill_files, backfill_root, live_files, utc_day},
+    record::v0,
   },
   ::std::{
-    collections::BTreeSet,
+    collections::{BTreeSet, HashMap},
     fs,
     io::{self, Read, Seek, SeekFrom},
     path::{Path, PathBuf},
@@ -67,6 +68,8 @@ pub struct Capture {
   pub health: Health,
   /// The build it runs, if it says.
   pub build: Option<String>,
+  /// Frames it has captured in its live files (those not yet compacted).
+  pub frames: u64,
 }
 
 /// A count of files and their size.
@@ -134,10 +137,18 @@ pub struct Sync {
 }
 
 /// Takes snapshots, remembering what it needs from the last one (CPU use,
-/// journal growth).
+/// journal growth, how far it has counted each live file's frames).
 pub struct Watcher {
   system: System,
   previous: Option<(String, i64, u64)>,
+  counted: HashMap<PathBuf, Counted>,
+}
+
+/// A live file's frames, counted up to `offset`.
+#[derive(Clone, Copy, Default)]
+struct Counted {
+  offset: u64,
+  frames: u64,
 }
 
 fn modified_ms(metadata: &fs::Metadata) -> Option<i64> {
@@ -170,6 +181,7 @@ impl Watcher {
     Ok(Self {
       system,
       previous: None,
+      counted: HashMap::new(),
     })
   }
 
@@ -180,7 +192,8 @@ impl Watcher {
       now,
       paths: paths.clone(),
       programs: self.programs(&paths.bin()),
-      captures: captures(&journal_root, now)?,
+      captures: self
+        .count_frames(&journal_root, captures(&journal_root, now)?)?,
       journal: self.journal(&journal_root, now)?,
       index: fs::metadata(paths.data.join("index.sqlite"))
         .ok()
@@ -224,6 +237,44 @@ impl Watcher {
       .collect();
     programs.sort_by(|a, b| (&a.name, a.started).cmp(&(&b.name, b.started)));
     programs
+  }
+
+  /// `captures`, with the frames in each one's live files: read from where
+  /// the last count left off.
+  fn count_frames(
+    &mut self,
+    root: &Path,
+    mut captures: Vec<Capture>,
+  ) -> io::Result<Vec<Capture>> {
+    let files = live_files(root)?;
+    // Compacted files are gone; so is their count.
+    self.counted.retain(|file, _| files.contains(file));
+    for file in files {
+      let Some(instance) = file.file_stem().map(|stem| stem.to_string_lossy())
+      else {
+        continue;
+      };
+      let Some(capture) = captures
+        .iter_mut()
+        .find(|capture| capture.instance == instance)
+      else {
+        continue;
+      };
+      let counted = self.counted.entry(file.clone()).or_default();
+      // Unreadable now (a newer format, say): counted as it was.
+      if let Ok(mut reader) = Reader::open(&file, counted.offset) {
+        for entry in reader.by_ref() {
+          let Ok(entry) = entry else { continue };
+          let Record::V0(record) = entry.record;
+          if matches!(record.body, v0::Body::Frame(_) | v0::Body::Binary(_)) {
+            counted.frames += 1;
+          }
+        }
+        counted.offset = reader.offset();
+      }
+      capture.frames += counted.frames;
+    }
+    Ok(captures)
   }
 
   fn journal(&mut self, root: &Path, now: i64) -> io::Result<Journal> {
@@ -296,6 +347,7 @@ fn captures(journal_root: &Path, now: i64) -> io::Result<Vec<Capture>> {
         instance: status.instance,
         started: status.started,
         build: status.build,
+        frames: 0,
       })
       .collect();
   captures.sort_by_key(|capture| capture.started);
@@ -393,10 +445,11 @@ pub fn text(report: &Report) -> Vec<String> {
   }
   for capture in &report.captures {
     out.push(format!(
-      "  {:<30} up {:<8} {:<24} {}",
+      "  {:<30} up {:<8} {:<24} {:>10} frames  {}",
       capture.instance,
       format::age(now - capture.started),
       health(capture, now),
+      format::count(capture.frames),
       capture.build.as_deref().unwrap_or("")
     ));
   }

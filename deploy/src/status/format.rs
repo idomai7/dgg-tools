@@ -1,4 +1,4 @@
-//! Short human forms of durations and sizes.
+//! Short human forms of durations, sizes and counts.
 
 /// `42s`, `3m 5s`, `2h 10m`, `3d 4h`.
 pub fn age(ms: i64) -> String {
@@ -31,4 +31,17 @@ pub fn size(bytes: f64) -> String {
     value /= 1024.0;
   }
   unreachable!()
+}
+
+/// `987`, `14,987`, `1,204,331`.
+pub fn count(n: u64) -> String {
+  let digits = n.to_string();
+  let mut out = String::new();
+  for (index, digit) in digits.chars().enumerate() {
+    if index > 0 && (digits.len() - index).is_multiple_of(3) {
+      out.push(',');
+    }
+    out.push(digit);
+  }
+  out
 }
