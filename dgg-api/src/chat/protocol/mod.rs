@@ -8,5 +8,6 @@
 
 pub mod command;
 pub mod event;
+pub mod vestaboard;
 
 pub use {command::Command, event::Event};

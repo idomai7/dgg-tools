@@ -51,3 +51,7 @@ required-features = ["protocol"]
 [[test]]
 name = "command"
 required-features = ["protocol"]
+
+[[test]]
+name = "vestaboard"
+required-features = ["protocol"]
