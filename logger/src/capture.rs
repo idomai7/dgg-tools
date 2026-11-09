@@ -175,11 +175,13 @@ pub async fn run(
           Item::Disconnected { connection, reason } => {
             connected = None;
             health = Health::default();
-            eprintln!("disconnected (#{connection}): {reason}");
+            eprintln!("{instance}: disconnected (#{connection}): {reason}");
             writer.write(now, connection, Body::Close(reason))?;
           }
           Item::ConnectFailed { error, retry_in } => {
-            eprintln!("connect failed: {error}; retrying in {retry_in:?}");
+            eprintln!(
+              "{instance}: connect failed: {error}; retrying in {retry_in:?}"
+            );
           }
         }
       }
@@ -197,7 +199,7 @@ pub async fn run(
         match check_handoff(&control, &me, &handoff) {
           Ok(Some(successor)) => break Exit::HandedOff(successor),
           Ok(None) => {}
-          Err(e) => eprintln!("control: {e}"),
+          Err(e) => eprintln!("{instance}: control: {e}"),
         }
       }
       () = &mut shutdown => break Exit::Shutdown,
@@ -212,7 +214,7 @@ pub async fn run(
   }
   writer.sync()?;
   if let Err(e) = control::remove(&control, &instance) {
-    eprintln!("control: {e}");
+    eprintln!("{instance}: control: {e}");
   }
   if let (Some(pusher), Some(peer)) = (pusher, peer) {
     pusher.abort();
@@ -265,11 +267,11 @@ async fn push_status(
     };
     match (&failing, error) {
       (None, Some(error)) => {
-        eprintln!("peer {}: {error}", peer.url);
+        eprintln!("{instance}: peer {}: {error}", peer.url);
         failing = Some(error);
       }
       (Some(_), None) => {
-        eprintln!("peer {}: pushing again", peer.url);
+        eprintln!("{instance}: peer {}: pushing again", peer.url);
         failing = None;
       }
       _ => {}
@@ -285,7 +287,7 @@ async fn withdraw_status(peer: &Peer, instance: &str) {
     .send()
     .await;
   if let Err(e) = sent {
-    eprintln!("peer {}: {e}", peer.url);
+    eprintln!("{instance}: peer {}: {e}", peer.url);
   }
 }
 

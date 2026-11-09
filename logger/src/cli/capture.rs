@@ -68,7 +68,7 @@ impl Capture {
     let config = Config {
       chat,
       journal_root,
-      instance,
+      instance: instance.clone(),
       started,
       handoff: Handoff {
         grace: Duration::from_secs(self.handoff_grace),
@@ -78,13 +78,16 @@ impl Capture {
       peer,
     };
     match run(config, shutdown()).await {
-      Ok(Exit::Shutdown) => ExitCode::SUCCESS,
+      Ok(Exit::Shutdown) => {
+        eprintln!("{instance}: stopped");
+        ExitCode::SUCCESS
+      }
       Ok(Exit::HandedOff(successor)) => {
-        eprintln!("handed off to {successor}");
+        eprintln!("{instance}: handed off to {successor}");
         ExitCode::SUCCESS
       }
       Err(e) => {
-        eprintln!("capture failed: {e}");
+        eprintln!("{instance}: capture failed: {e}");
         ExitCode::FAILURE
       }
     }
