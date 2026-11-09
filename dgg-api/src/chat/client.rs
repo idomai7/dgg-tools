@@ -6,6 +6,7 @@
 //! are yielded as-is.
 
 use {
+  super::{DEFAULT_ORIGIN, DEFAULT_URL},
   ::futures_util::{SinkExt, StreamExt},
   ::std::time::Duration,
   ::tokio::{
@@ -19,9 +20,6 @@ use {
     tungstenite::{Message, client::IntoClientRequest, http::HeaderValue},
   },
 };
-
-pub const DEFAULT_URL: &str = "wss://chat.destiny.gg/ws";
-pub const DEFAULT_ORIGIN: &str = "https://www.destiny.gg";
 
 /// A connection that stayed up this long resets the backoff.
 const STABLE_AFTER: Duration = Duration::from_secs(30);
