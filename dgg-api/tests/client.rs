@@ -1,5 +1,5 @@
 use {
-  ::dgg_api::chat::{Client, Frame, Item, Options},
+  ::dgg_api::chat::{Client, Frame, Item, NotConnected, Options},
   ::futures_util::{SinkExt, StreamExt},
   ::std::time::Duration,
   ::tokio::net::TcpListener,
@@ -68,5 +68,35 @@ async fn ping_and_reconnect() {
     };
     assert_eq!(closed, connection);
   }
+  server.await.unwrap();
+}
+
+/// Local server: what's sent arrives as given, and only while connected.
+#[::tokio::test]
+async fn sends_while_connected() {
+  let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+  let url = format!("ws://{}", listener.local_addr().unwrap());
+  let (received_tx, mut received) = ::tokio::sync::mpsc::unbounded_channel();
+  let server = ::tokio::spawn(async move {
+    let (tcp, _) = listener.accept().await.unwrap();
+    let mut ws = ::tokio_tungstenite::accept_async(tcp).await.unwrap();
+    while let Some(Ok(Message::Text(text))) = ws.next().await {
+      received_tx.send(text.as_str().to_owned()).unwrap();
+    }
+  });
+
+  let options = Options {
+    url,
+    origin: None,
+    ..Options::default()
+  };
+  let mut client = Client::spawn(options);
+  assert_eq!(client.send("MSG {}"), Err(NotConnected));
+  assert_eq!(client.next().await, Some(Item::Connected { connection: 1 }));
+  assert_eq!(client.send(r#"MSG {"data":"hi"}"#), Ok(1));
+  assert_eq!(client.send("STOPPOLL {}"), Ok(1));
+  assert_eq!(received.recv().await.unwrap(), r#"MSG {"data":"hi"}"#);
+  assert_eq!(received.recv().await.unwrap(), "STOPPOLL {}");
+  drop(client);
   server.await.unwrap();
 }

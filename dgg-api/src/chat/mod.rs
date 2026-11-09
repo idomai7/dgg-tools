@@ -8,7 +8,7 @@ pub mod client;
 pub mod protocol;
 
 #[cfg(feature = "client")]
-pub use client::{Client, Frame, Item, Options};
+pub use client::{Client, Frame, Item, NotConnected, Options};
 
 /// The chat socket's URL.
 pub const DEFAULT_URL: &str = "wss://chat.destiny.gg/ws";
