@@ -40,7 +40,8 @@ The layout is flat: each crate is a direct child of the root.
    - pinned messages (*chat*: `PIN`);
    - emotes: which are popular, each user's emotes and how often they use them, and rare emotes (*chat*: `MSG` text against the emote list);
     - Halloween and other special-event emotes are counted separately from the regular set. That means keeping a history of the emote list, so it's known which emotes existed when.
-    - Greentext (`>` lines) and orangetext are told apart from each other and from emotes.
+    - Greentext (`>` lines) and orangetext are told apart from each other and from emotes. Orangetext is greentext as shown during Halloween events.
+      - **Open question:** whether anything in the message marks it as orangetext, or the chat client just restyles greentext during the event. If it's only a client change, tag greentext by whether an event was running at that timestamp, using the emote-list history above or event dates.
    - user activity times (*chat*: `MSG`/`JOIN`/`QUIT`);
    - user subscription statuses (*chat*: `MSG`/`NAMES` carry `subscription` and `features`);
    - TTS messages (*probe*; may arrive as chat events);
