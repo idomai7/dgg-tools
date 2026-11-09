@@ -4,25 +4,29 @@ version = "0.1.0"
 edition.workspace = true
 description = "destiny.gg's APIs (chat, and more to come), shared by the dgg tools"
 
-# Each feature brings in the I/O for one kind of API, so a tool pulls in
-# only what it talks to; the types (and decoding them) need none.
+# Each feature brings in one part, so a tool pulls in only what it uses.
 [features]
-# The chat socket client, chat::Client.
+# The chat socket client, chat::Client: raw frames.
 client = [
   "dep:futures-util",
   "dep:rustls",
   "dep:tokio",
   "dep:tokio-tungstenite",
 ]
+# Decoding chat frames, chat::protocol.
+protocol = ["dep:serde", "dep:serde_json"]
 
 [dependencies]
-serde.workspace = true
-serde_json.workspace = true
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
 
 futures-util = { workspace = true, optional = true }
 rustls = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true }
 tokio-tungstenite = { workspace = true, optional = true }
+
+[dev-dependencies]
+serde_json.workspace = true
 
 [[example]]
 name = "probe"
@@ -32,6 +36,14 @@ required-features = ["client"]
 name = "history_check"
 required-features = ["client"]
 
+[[example]]
+name = "decode_journal"
+required-features = ["protocol"]
+
 [[test]]
 name = "client"
 required-features = ["client"]
+
+[[test]]
+name = "event"
+required-features = ["protocol"]

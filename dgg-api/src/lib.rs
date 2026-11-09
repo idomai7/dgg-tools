@@ -1,10 +1,9 @@
 //! destiny.gg's APIs, shared by the dgg tools: lightweight, so any tool can
 //! depend on it.
 //!
-//! - [`chat`]: the chat socket and its events; the client needs the
-//!   `client` feature.
+//! - [`chat`]: the chat socket. Its client (feature `client`) reads raw
+//!   frames; its protocol (feature `protocol`) decodes them.
 //!
-//! Each feature brings in the I/O for one kind of API, so a tool pulls in
-//! only what it talks to.
+//! Each feature brings in one part, so a tool pulls in only what it uses.
 
 pub mod chat;

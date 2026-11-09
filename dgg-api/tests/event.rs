@@ -1,4 +1,4 @@
-use ::dgg_api::chat::event::{Event, Subscription, User, Watching};
+use ::dgg_api::chat::protocol::event::{Event, Subscription, User, Watching};
 
 /// Frames dgg sent, anonymised: a few of each event seen.
 const FRAMES: &str = include_str!("fixtures/frames.txt");

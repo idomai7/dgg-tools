@@ -4,7 +4,7 @@
 // Usage: cargo run -p dgg-api --example decode_journal -- <journal dir>
 
 use {
-  ::dgg_api::chat::Event,
+  ::dgg_api::chat::protocol::Event,
   ::std::{
     collections::BTreeMap,
     env, fs,

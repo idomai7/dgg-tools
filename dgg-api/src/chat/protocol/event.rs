@@ -9,7 +9,7 @@
 //!
 //! Decoding never loses a frame: one that doesn't match its type is
 //! [`Event::Unreadable`], with the error. The frame itself, raw, is the
-//! caller's to keep (the client's [`Frame`](super::Frame) does).
+//! caller's to keep (the client's `Frame` does).
 
 use ::serde::{Deserialize, de::DeserializeOwned};
 

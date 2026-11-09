@@ -1,13 +1,14 @@
-//! dgg chat: its socket, at [`DEFAULT_URL`], and the [events](event) it
-//! sends.
+//! dgg chat: its socket, at [`DEFAULT_URL`]. The `client` reads raw frames
+//! off it; `protocol` decodes them. Each has a feature of its own, and
+//! neither needs the other.
 
 #[cfg(feature = "client")]
 pub mod client;
-pub mod event;
+#[cfg(feature = "protocol")]
+pub mod protocol;
 
 #[cfg(feature = "client")]
 pub use client::{Client, Frame, Item, Options};
-pub use event::Event;
 
 /// The chat socket's URL.
 pub const DEFAULT_URL: &str = "wss://chat.destiny.gg/ws";
