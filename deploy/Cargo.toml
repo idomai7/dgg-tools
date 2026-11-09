@@ -10,9 +10,11 @@ path = "src/main.rs"
 
 [dependencies]
 journal.workspace = true
+logger.workspace = true
 
 clap.workspace = true
 ctrlc.workspace = true
+ratatui.workspace = true
 sysinfo.workspace = true
 
 [build-dependencies]

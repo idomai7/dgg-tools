@@ -5,5 +5,7 @@
 pub mod legacy;
 pub mod lifeline;
 pub mod log;
+pub mod paths;
 pub mod processes;
+pub mod status;
 pub mod supervise;
