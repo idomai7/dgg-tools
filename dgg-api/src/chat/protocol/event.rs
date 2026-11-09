@@ -17,7 +17,10 @@
 //! [`Event::Unreadable`], with the error. The frame itself, raw, is the
 //! caller's to keep (the client's `Frame` does).
 
-use ::serde::{Deserialize, de::DeserializeOwned};
+use ::serde::{
+  Deserialize, Deserializer,
+  de::{DeserializeOwned, Error as _},
+};
 
 /// A chat user, as every event describes one. Seen with every field but
 /// `System`'s; only the nick is required.
@@ -406,6 +409,79 @@ pub struct Donation {
   pub audio: Option<String>,
 }
 
+/// `POLLSTART`: a poll, as it stands. Sent when one starts, and on
+/// connecting while one runs. From chat-gui.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+pub struct PollStart {
+  /// Who started it.
+  pub nick: String,
+  pub question: String,
+  pub options: Vec<String>,
+  /// Votes per option so far (zeros while hidden).
+  pub totals: Vec<u64>,
+  #[serde(rename = "totalvotes")]
+  pub total_votes: u64,
+  /// Votes count by subscription tier.
+  pub weighted: bool,
+  /// Results hidden until it ends.
+  #[serde(default)]
+  pub hidden: bool,
+  /// When it started, and the server's time now, as dgg writes them.
+  pub start: String,
+  pub now: String,
+  /// How long it runs, in ms.
+  pub time: u64,
+  /// Whether this connection's user can still vote.
+  #[serde(rename = "canvote")]
+  pub can_vote: bool,
+  /// Their vote: an option's number, from 1; 0 or less for none.
+  #[serde(rename = "myvote")]
+  pub my_vote: i64,
+}
+
+/// `POLLSTOP`: the poll ended; a hidden one's results come with it. From
+/// chat-gui.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+pub struct PollStop {
+  pub totals: Option<Vec<u64>>,
+  #[serde(rename = "totalvotes")]
+  pub total_votes: Option<u64>,
+}
+
+/// `VOTECAST`: someone voted, with the weight of `quantity` votes. A hidden
+/// poll's votes come without the option. From chat-gui.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+pub struct VoteCast {
+  #[serde(default, deserialize_with = "vote")]
+  pub vote: Option<u64>,
+  pub quantity: u64,
+}
+
+/// `VOTECOUNTED`: this connection's vote counted. From chat-gui.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+pub struct VoteCounted {
+  #[serde(default, deserialize_with = "vote")]
+  pub vote: Option<u64>,
+}
+
+/// An option's number, which chat-gui handles as either a number or a
+/// string of one (it's sent as a string).
+fn vote<'de, D: Deserializer<'de>>(
+  deserializer: D,
+) -> Result<Option<u64>, D::Error> {
+  #[derive(Deserialize)]
+  #[serde(untagged)]
+  enum Vote {
+    Number(u64),
+    Text(String),
+  }
+  match Option::<Vote>::deserialize(deserializer)? {
+    None => Ok(None),
+    Some(Vote::Number(number)) => Ok(Some(number)),
+    Some(Vote::Text(text)) => text.parse().map(Some).map_err(D::Error::custom),
+  }
+}
+
 /// One decoded frame.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
@@ -438,6 +514,10 @@ pub enum Event {
   GiftSub(GiftSub),
   MassGift(MassGift),
   Donation(Donation),
+  PollStart(PollStart),
+  PollStop(PollStop),
+  VoteCast(VoteCast),
+  VoteCounted(VoteCounted),
   /// An event this crate doesn't type (yet).
   Other {
     event: String,
@@ -492,6 +572,10 @@ impl Event {
       "GIFTSUB" => json(payload).map(Self::GiftSub),
       "MASSGIFT" => json(payload).map(Self::MassGift),
       "DONATION" => json(payload).map(Self::Donation),
+      "POLLSTART" => json(payload).map(Self::PollStart),
+      "POLLSTOP" => json(payload).map(Self::PollStop),
+      "VOTECAST" => json(payload).map(Self::VoteCast),
+      "VOTECOUNTED" => json(payload).map(Self::VoteCounted),
       _ => {
         return Self::Other {
           event: event.into(),
@@ -534,6 +618,10 @@ impl Event {
       Self::GiftSub(_) => "GIFTSUB",
       Self::MassGift(_) => "MASSGIFT",
       Self::Donation(_) => "DONATION",
+      Self::PollStart(_) => "POLLSTART",
+      Self::PollStop(_) => "POLLSTOP",
+      Self::VoteCast(_) => "VOTECAST",
+      Self::VoteCounted(_) => "VOTECOUNTED",
       Self::Other { event, .. } | Self::Unreadable { event, .. } => event,
     }
   }

@@ -254,3 +254,32 @@ fn paid_from_chat_gui() {
   };
   assert_eq!((donation.amount, donation.audio.as_deref()), (500, None));
 }
+
+#[test]
+fn polls_from_chat_gui() {
+  let Event::PollStart(poll) = &chat_gui("POLLSTART")[0] else {
+    panic!()
+  };
+  assert_eq!(
+    (poll.options.len(), poll.total_votes, poll.time, poll.hidden),
+    (2, 7, 30_000, false)
+  );
+  let stops = chat_gui("POLLSTOP");
+  let Event::PollStop(hidden) = &stops[1] else {
+    panic!()
+  };
+  assert_eq!(hidden.totals.as_deref(), Some(&[5, 4][..]));
+  let casts: Vec<_> = chat_gui("VOTECAST")
+    .iter()
+    .map(|event| match event {
+      Event::VoteCast(cast) => (cast.vote, cast.quantity),
+      _ => panic!(),
+    })
+    .collect();
+  assert_eq!(casts, [(Some(2), 1), (None, 3)]);
+  // Sent as a string, counted as a number.
+  let Event::VoteCounted(counted) = &chat_gui("VOTECOUNTED")[0] else {
+    panic!()
+  };
+  assert_eq!(counted.vote, Some(2));
+}

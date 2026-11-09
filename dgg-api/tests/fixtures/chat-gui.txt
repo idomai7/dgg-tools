@@ -16,3 +16,9 @@ REMOVEPHRASE {"data":"phrase 1","timestamp":1794203923846}
 GIFTSUB {"user":{"id":1000,"nick":"user1"},"recipient":{"id":1001,"nick":"user2"},"tier":2,"tierLabel":"Tier II","amount":1,"fromMassGift":false,"data":"","timestamp":1794203923846,"expirationTimestamp":1794204223846,"uuid":"00000000-0000-0000-0000-000000000003"}
 MASSGIFT {"user":{"id":1000,"nick":"user1"},"tier":1,"tierLabel":"Tier I","amount":1,"quantity":5,"data":"","timestamp":1794203923846,"expirationTimestamp":1794204223846,"uuid":"00000000-0000-0000-0000-000000000004"}
 DONATION {"user":{"id":1000,"nick":"user1"},"amount":500,"data":"donation 1","timestamp":1794203923846,"expirationTimestamp":1794204223846,"uuid":"00000000-0000-0000-0000-000000000005"}
+POLLSTART {"canvote":true,"myvote":-1,"weighted":false,"start":"2026-11-09T00:00:00.000Z","now":"2026-11-09T00:00:01.000Z","time":30000,"question":"question 1","options":["option 1","option 2"],"totals":[3,4],"totalvotes":7,"nick":"user1"}
+POLLSTOP {}
+POLLSTOP {"totals":[5,4],"totalvotes":9}
+VOTECAST {"vote":2,"quantity":1}
+VOTECAST {"quantity":3}
+VOTECOUNTED {"vote":"2"}
