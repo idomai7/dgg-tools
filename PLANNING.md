@@ -127,7 +127,7 @@ The layout is flat: each crate is a direct child of the root.
     - Stopping is safe, and re-running resumes from the fetched spans.
     - Smoke-tested on 20 minutes across linkers.ooo's archive boundary: 3 requests, 1,140 `linkers` and 274 `linkers-rustlesearch` messages. A re-run found nothing left to fetch.
   - A run holds `backfill/control/<instance>.lock` while it writes, so `compact` leaves its files alone until it's done.
-  - **Not yet:** `serve` and `sync` don't handle `backfill/`. Backfill files are re-fetchable, but a long import should be synced before it grows large.
+  - `serve` and `sync` carry `backfill/live/` like `live/`. **Not yet:** neither carries archives (`archive/` or `backfill/archive/`).
 - **compact:** merges each closed UTC day (ended over `--grace-hours` ago, default 1) into `archive/YYYY/MM/YYYY-MM-DD.journal.zst`; then the same for `backfill/`, skipping the files of runs still going.
   - It merges the day's live files and any existing archive for that day, byte for byte, sorted by receive time.
   - Each distinct line is kept as often as any one input has it: dgg does send identical frames twice in one millisecond.

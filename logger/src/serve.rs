@@ -9,10 +9,11 @@
 //! - `DELETE /control/<instance>`: it's stopping.
 //! - `GET /control`: `now <unix ms>`, a blank line, then every status here,
 //!   each followed by a blank line.
-//! - `GET /manifest`: every live journal file and its size
-//!   ([`manifest`](crate::manifest)).
-//! - `GET /files/live/<day>/<instance>.journal`: a file's bytes; with
-//!   `Range: bytes=<from>-`, from that offset on (`206`).
+//! - `GET /manifest`: every live journal file and backfill file, and its
+//!   size ([`manifest`](crate::manifest)).
+//! - `GET /files/live/<day>/<instance>.journal` (or `/files/backfill/live/
+//!   ...`): a file's bytes; with `Range: bytes=<from>-`, from that offset on
+//!   (`206`).
 //!
 //! Every request needs `Authorization: Bearer <token>`. The token travels
 //! in the clear over plain HTTP, so reach `serve` across hosts through

@@ -1,4 +1,5 @@
-//! Sync: pull another host's live journal files into this one's.
+//! Sync: pull another host's live journal files, and its backfill files,
+//! into this one's.
 //!
 //! Journal files are only ever appended to, so a local copy is always a
 //! prefix of the remote file. Each round fetches the [manifest](crate::

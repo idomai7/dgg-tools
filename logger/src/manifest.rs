@@ -3,11 +3,13 @@
 //! ```text
 //! journal-manifest 0.0
 //! live/<YYYY-MM-DD>/<instance>.journal <size in bytes>
+//! backfill/live/<YYYY-MM-DD>/<instance>.journal <size in bytes>
 //! ```
 //!
-//! One line per file after the format name and `<major>.<minor>` version.
-//! Paths are relative to the journal root, `/`-separated, and checked with
-//! [`valid_live_path`].
+//! One line per file after the format name and `<major>.<minor>` version:
+//! the live files, then the backfill journal's. Paths are relative to the
+//! journal root, `/`-separated, and checked with [`valid_live_path`]. (Older
+//! readers skip the backfill lines, as paths they don't accept.)
 //!
 //! While the major is 0 (pre-release) any minor may break, so readers accept
 //! only the exact header they write. From 1.0 on, readers will ignore lines
@@ -16,7 +18,7 @@
 
 use {
   ::journal::{
-    layout::{EXTENSION, live_files},
+    layout::{EXTENSION, backfill_files, live_files},
     record::v0::valid_instance,
   },
   ::std::{fs, io, path::Path},
@@ -34,8 +36,10 @@ pub struct File {
 }
 
 /// Whether `path` names a live journal file: `live/<YYYY-MM-DD>/<instance>
-/// .journal`, nothing more, so it can't reach outside the journal.
+/// .journal`, or the same under `backfill/`, nothing more, so it can't reach
+/// outside the journal.
 pub fn valid_live_path(path: &str) -> bool {
+  let path = path.strip_prefix("backfill/").unwrap_or(path);
   let mut parts = path.split('/');
   let (Some("live"), Some(day), Some(file), None) =
     (parts.next(), parts.next(), parts.next(), parts.next())
@@ -51,10 +55,14 @@ pub fn valid_live_path(path: &str) -> bool {
   day_ok && instance.is_some_and(valid_instance)
 }
 
-/// Every live file under `journal_root`, with its size.
+/// Every live file under `journal_root`, then every backfill one, with its
+/// size.
 pub fn list(journal_root: &Path) -> io::Result<Vec<File>> {
   let mut files = Vec::new();
-  for path in live_files(journal_root)? {
+  let paths = live_files(journal_root)?
+    .into_iter()
+    .chain(backfill_files(journal_root)?);
+  for path in paths {
     let relative = path.strip_prefix(journal_root).unwrap_or(&path);
     let relative = relative.to_string_lossy().replace('\\', "/");
     if valid_live_path(&relative) {

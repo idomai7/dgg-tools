@@ -48,7 +48,13 @@ async fn serve(root: &TempRoot) -> String {
 #[test]
 fn manifest_format() {
   assert!(valid_live_path("live/2026-11-08/a-1.journal"));
+  assert!(valid_live_path(
+    "backfill/live/2026-11-08/backfill-a.journal"
+  ));
   for bad in [
+    "backfill/archive/2026/11/x.journal",
+    "backfill/backfill/live/2026-11-08/a.journal",
+    "backfill/control/a.lock",
     "live/2026-11-08/../x.journal",
     "live/2026-11-08/a/b.journal",
     "live/2026-1-08/a.journal",
@@ -173,4 +179,28 @@ async fn pulls_only_what_is_missing() {
   let rewritten = sync(&peer, &local.0).await.unwrap();
   assert_eq!(rewritten.mismatched, [path]);
   assert_eq!(fs::read(local.0.join(path)).unwrap(), before);
+}
+
+#[::tokio::test]
+async fn pulls_backfill_files() {
+  let (remote, local) = (TempRoot::new(), TempRoot::new());
+  let peer = Peer {
+    url: serve(&remote).await,
+    token: "secret".into(),
+  };
+  let mut writer = Writer::backfill(remote.0.clone(), "backfill-a").unwrap();
+  let range = Body::FetchRange {
+    source: "x".into(),
+    from: 0,
+    to: 5,
+  };
+  writer.write_on(0, 10, 1, range).unwrap();
+  drop(writer);
+  let stats = sync(&peer, &local.0).await.unwrap();
+  assert_eq!((stats.files, stats.updated), (1, 1));
+  let path = "backfill/live/1970-01-01/backfill-a.journal";
+  assert_eq!(
+    fs::read(local.0.join(path)).unwrap(),
+    fs::read(remote.0.join(path)).unwrap()
+  );
 }
