@@ -1,11 +1,17 @@
 //! The events dgg chat sends, decoded from their frames (`EVENT payload`,
 //! the payload JSON).
 //!
-//! Typed from what dgg was seen sending (2026-11-09): every event below,
-//! with every field it had. Events not seen yet, or seen only empty (`ME`
-//! while logged out, `SPOTLIGHTS`), are [`Event::Other`] until there's a
-//! sample to type them from. Roles and features stay strings: dgg adds new
-//! ones freely.
+//! Two sources:
+//!
+//! - Seen: what dgg was seen sending (2026-11-09), with every field it had.
+//! - From chat-gui: events that only follow sending, or are rare, typed
+//!   from how destiny.gg's own client (github.com/destinygg/chat-gui,
+//!   2026-11-08) reads them. Only the fields it reads are required, so a
+//!   frame with more decodes; their types say so.
+//!
+//! Anything else is [`Event::Other`] until there's a source to type it
+//! from. Roles and features stay strings: dgg adds new ones freely. Like
+//! chat-gui, a [`User`] needs only its nick.
 //!
 //! Decoding never loses a frame: one that doesn't match its type is
 //! [`Event::Unreadable`], with the error. The frame itself, raw, is the
@@ -13,16 +19,19 @@
 
 use ::serde::{Deserialize, de::DeserializeOwned};
 
-/// A chat user, as every event describes one.
+/// A chat user, as every event describes one. Seen with every field but
+/// `System`'s; only the nick is required.
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct User {
   /// The account id; -1 for the `System` user broadcasts come from.
-  pub id: i64,
+  pub id: Option<i64>,
   pub nick: String,
   /// Such as `MODERATOR`, `PROTECTED`, `BOT`.
+  #[serde(default)]
   pub roles: Vec<String>,
   /// Flairs (`flair13`) and badges (`subscriber`, `moderator`, `bot`).
+  #[serde(default)]
   pub features: Vec<String>,
   /// When the account was made, as dgg writes it (`2020-01-01T00:00:00Z`);
   /// `None` for `System`.
@@ -160,6 +169,128 @@ pub struct XPost {
   pub uuid: String,
 }
 
+/// `ERR`: a command (or the connection) was refused. From chat-gui.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Error {
+  pub description: ErrorCode,
+  /// For [`ErrorCode::Muted`]: seconds until the mute ends.
+  pub mute_time_left: Option<u64>,
+  /// For [`ErrorCode::SubMode`]: the tier subscriber-only mode needs.
+  pub tier: Option<u8>,
+  /// For [`ErrorCode::BannedPhrase`]: the phrase that blocked the message.
+  pub filtered: Option<String>,
+}
+
+/// Why an [`Error`]: the codes chat-gui knows from the server.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(from = "String")]
+pub enum ErrorCode {
+  /// An internal problem.
+  Unknown,
+  NoPermission,
+  /// The command was badly formatted.
+  ProtocolError,
+  NeedLogin,
+  MsgEmpty,
+  /// Over 512 characters.
+  MsgTooLong,
+  InvalidMsg,
+  /// Sending too fast.
+  Throttled,
+  /// The same as the last message sent.
+  Duplicate,
+  /// Subscriber-only mode is on.
+  SubMode,
+  NeedBanReason,
+  PrivMsgBanned,
+  /// Over 5 connections at once; chat-gui stops reconnecting.
+  TooManyConnections,
+  PrivMsgAccountTooYoung,
+  /// No such user.
+  NotFound,
+  ActivePoll,
+  NoActivePoll,
+  AlreadyVoted,
+  /// No username yet, or chatting was disabled.
+  NoChatting,
+  DuplicatePhrase,
+  NoPhrase,
+  InvalidPhrase,
+  CantBanProtected,
+  Muted,
+  /// Banned; chat-gui stops reconnecting.
+  Banned,
+  BannedPhrase,
+  Other(String),
+}
+
+impl From<String> for ErrorCode {
+  fn from(code: String) -> Self {
+    match code.as_str() {
+      "unknown" => Self::Unknown,
+      "nopermission" => Self::NoPermission,
+      "protocolerror" => Self::ProtocolError,
+      "needlogin" => Self::NeedLogin,
+      "msgempty" => Self::MsgEmpty,
+      "msgtoolong" => Self::MsgTooLong,
+      "invalidmsg" => Self::InvalidMsg,
+      "throttled" => Self::Throttled,
+      "duplicate" => Self::Duplicate,
+      "submode" => Self::SubMode,
+      "needbanreason" => Self::NeedBanReason,
+      "privmsgbanned" => Self::PrivMsgBanned,
+      "toomanyconnections" => Self::TooManyConnections,
+      "privmsgaccounttooyoung" => Self::PrivMsgAccountTooYoung,
+      "notfound" => Self::NotFound,
+      "activepoll" => Self::ActivePoll,
+      "noactivepoll" => Self::NoActivePoll,
+      "alreadyvoted" => Self::AlreadyVoted,
+      "nochatting" => Self::NoChatting,
+      "duplicatephrase" => Self::DuplicatePhrase,
+      "nophrase" => Self::NoPhrase,
+      "invalidphrase" => Self::InvalidPhrase,
+      "cantbanprotected" => Self::CantBanProtected,
+      "muted" => Self::Muted,
+      "banned" => Self::Banned,
+      "bannedphrase" => Self::BannedPhrase,
+      _ => Self::Other(code),
+    }
+  }
+}
+
+impl ErrorCode {
+  /// Whether it refused a chat message just sent (which chat never echoes
+  /// back), as chat-gui counts them.
+  pub fn rejects_message(&self) -> bool {
+    matches!(
+      self,
+      Self::NeedLogin
+        | Self::NoChatting
+        | Self::MsgEmpty
+        | Self::MsgTooLong
+        | Self::InvalidMsg
+        | Self::Muted
+        | Self::SubMode
+        | Self::Throttled
+        | Self::BannedPhrase
+        | Self::Duplicate
+    )
+  }
+}
+
+/// `PRIVMSG`: a whisper to this connection's user. From chat-gui.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+pub struct PrivMsg {
+  pub nick: String,
+  pub data: String,
+  /// Unix ms.
+  pub timestamp: i64,
+  /// For marking it read through dgg's API.
+  #[serde(rename = "messageid")]
+  pub message_id: Option<i64>,
+}
+
 /// One decoded frame.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
@@ -178,6 +309,10 @@ pub enum Event {
   XPost(XPost),
   /// Paid events still showing (`XPOST`s), sent on connecting.
   PaidEvents(Vec<Event>),
+  Err(Error),
+  PrivMsg(PrivMsg),
+  /// The whisper just sent was delivered. From chat-gui.
+  PrivMsgSent,
   /// An event this crate doesn't type (yet).
   Other {
     event: String,
@@ -218,6 +353,10 @@ impl Event {
       "BROADCAST" => json(payload).map(Self::Broadcast),
       "XPOST" => json(payload).map(Self::XPost),
       "PAIDEVENTS" => frames(payload).map(Self::PaidEvents),
+      "ERR" => json(payload).map(Self::Err),
+      "PRIVMSG" => json(payload).map(Self::PrivMsg),
+      // chat-gui reads nothing from it.
+      "PRIVMSGSENT" => Ok(Self::PrivMsgSent),
       _ => {
         return Self::Other {
           event: event.into(),
@@ -247,6 +386,9 @@ impl Event {
       Self::Broadcast(_) => "BROADCAST",
       Self::XPost(_) => "XPOST",
       Self::PaidEvents(_) => "PAIDEVENTS",
+      Self::Err(_) => "ERR",
+      Self::PrivMsg(_) => "PRIVMSG",
+      Self::PrivMsgSent => "PRIVMSGSENT",
       Self::Other { event, .. } | Self::Unreadable { event, .. } => event,
     }
   }

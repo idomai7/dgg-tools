@@ -1,4 +1,6 @@
-use ::dgg_api::chat::protocol::event::{Event, Subscription, User, Watching};
+use ::dgg_api::chat::protocol::event::{
+  ErrorCode, Event, Subscription, User, Watching,
+};
 
 /// Frames dgg sent, anonymised: a few of each event seen.
 const FRAMES: &str = include_str!("fixtures/frames.txt");
@@ -35,7 +37,7 @@ fn messages() {
   assert_eq!(
     message.user,
     User {
-      id: 1011,
+      id: Some(1011),
       nick: "user13".into(),
       roles: vec![],
       features: vec!["flair13".into(), "subscriber".into()],
@@ -119,7 +121,7 @@ fn paid_and_system() {
     panic!()
   };
   // System's user leaves most fields out.
-  assert_eq!(broadcast.user.id, -1);
+  assert_eq!(broadcast.user.id, Some(-1));
   assert_eq!(broadcast.user.photo, None);
   assert!(!broadcast.user.patreon_member);
 }
@@ -144,4 +146,59 @@ fn keeps_what_it_cannot_type() {
   };
   assert!(matches!(frames[0], Event::Unreadable { .. }));
   assert!(matches!(frames[1], Event::Other { .. }));
+}
+
+/// Frames shaped as chat-gui reads them, for the events it types that
+/// weren't seen: names and text are placeholders.
+const CHAT_GUI: &str = include_str!("fixtures/chat-gui.txt");
+
+fn chat_gui(event: &str) -> Vec<Event> {
+  CHAT_GUI
+    .lines()
+    .filter(|line| line.split(' ').next() == Some(event))
+    .map(Event::parse)
+    .collect()
+}
+
+#[test]
+fn decodes_every_chat_gui_fixture() {
+  for line in CHAT_GUI.lines() {
+    let event = Event::parse(line);
+    assert_eq!(event.name(), line.split(' ').next().unwrap());
+    assert!(
+      !matches!(event, Event::Other { .. } | Event::Unreadable { .. }),
+      "{line}: {event:?}"
+    );
+  }
+}
+
+#[test]
+fn replies() {
+  let errors = chat_gui("ERR");
+  let Event::Err(throttled) = &errors[0] else {
+    panic!()
+  };
+  assert_eq!(throttled.description, ErrorCode::Throttled);
+  assert!(throttled.description.rejects_message());
+  let Event::Err(muted) = &errors[1] else {
+    panic!()
+  };
+  assert_eq!(
+    (&muted.description, muted.mute_time_left),
+    (&ErrorCode::Muted, Some(540))
+  );
+  let Event::Err(new) = Event::parse(r#"ERR {"description":"newcode"}"#) else {
+    panic!()
+  };
+  assert_eq!(new.description, ErrorCode::Other("newcode".into()));
+  assert!(!new.description.rejects_message());
+
+  let Event::PrivMsg(whisper) = &chat_gui("PRIVMSG")[0] else {
+    panic!()
+  };
+  assert_eq!(
+    (whisper.nick.as_str(), whisper.message_id),
+    ("user1", Some(42))
+  );
+  assert_eq!(chat_gui("PRIVMSGSENT"), [Event::PrivMsgSent]);
 }

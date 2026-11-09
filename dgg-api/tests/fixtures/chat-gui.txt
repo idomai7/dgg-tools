@@ -1,0 +1,6 @@
+ERR {"description":"throttled"}
+ERR {"description":"muted","muteTimeLeft":540}
+ERR {"description":"submode","tier":2}
+ERR {"description":"bannedphrase","filtered":"phrase 1"}
+PRIVMSG {"messageid":42,"timestamp":1794203923846,"nick":"user1","data":"whisper 1"}
+PRIVMSGSENT ""
