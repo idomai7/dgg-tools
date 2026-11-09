@@ -161,3 +161,75 @@ mod task {
     delete(&name).unwrap();
   }
 }
+
+#[cfg(windows)]
+mod service {
+  use {
+    ::deploy::install::{
+      service::{account, command_line, parse},
+      task::Task,
+    },
+    ::std::path::PathBuf,
+  };
+
+  #[test]
+  fn reads_back_its_command_line() {
+    let root = PathBuf::from(r"C:\ProgramData\dgg-tools");
+    let task = Task {
+      supervisor: root.join(r"bin\20261109-120000-0.1.0\dgg-supervisor.exe"),
+      data: PathBuf::from(r"D:\chat data"),
+      logs: root.join("logs"),
+    };
+    let line = command_line(&task);
+    assert_eq!(
+      line,
+      r#""C:\ProgramData\dgg-tools\bin\20261109-120000-0.1.0\dgg-supervisor.exe" --service --data "D:\chat data" --logs "C:\ProgramData\dgg-tools\logs""#
+    );
+    assert_eq!(parse(&line), Some(task));
+    assert_eq!(parse(&line.replace("--service ", "")), None);
+    assert_eq!(
+      parse(r#""C:\x\other.exe" --service --data "a" --logs "b""#),
+      None
+    );
+    assert_eq!(account("dgg-logger"), r"NT SERVICE\dgg-logger");
+  }
+}
+
+#[cfg(windows)]
+mod acl {
+  use {
+    super::TempDir,
+    ::deploy::install::acl::{elevated, links, owner},
+    ::std::{fs, process::Command},
+  };
+
+  #[test]
+  fn finds_links_without_following_them() {
+    let dir = TempDir::new("links");
+    fs::create_dir_all(dir.0.join(r"a\b")).unwrap();
+    fs::write(dir.0.join(r"a\file"), "").unwrap();
+    assert!(links(&dir.0).unwrap().is_empty());
+    // A junction (which needs no elevation) to somewhere big.
+    let junction = dir.0.join(r"a\b\elsewhere");
+    let made = Command::new("cmd.exe")
+      .args(["/c", "mklink", "/J"])
+      .arg(&junction)
+      .arg(r"C:\Windows")
+      .output()
+      .unwrap();
+    assert!(made.status.success());
+    assert_eq!(links(&dir.0).unwrap(), [junction.clone()]);
+    fs::remove_dir(&junction).unwrap();
+  }
+
+  #[test]
+  fn reads_owners() {
+    let dir = TempDir::new("owner");
+    // Made by this (unelevated) user, so owned by them, not Administrators.
+    let sid = owner(&dir.0).unwrap();
+    assert!(sid.starts_with("S-1-5-"), "{sid}");
+    if !elevated() {
+      assert_ne!(sid, "S-1-5-32-544");
+    }
+  }
+}

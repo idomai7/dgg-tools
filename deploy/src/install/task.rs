@@ -144,14 +144,21 @@ pub fn parse(xml: &str) -> Option<Task> {
   let named = supervisor
     .file_stem()
     .is_some_and(|stem| stem == "dgg-supervisor");
+  named
+    .then(|| parse_arguments(supervisor, &arguments))
+    .flatten()
+}
+
+/// `supervisor` run with `arguments` (as [`arguments`] writes them).
+pub fn parse_arguments(supervisor: PathBuf, arguments: &str) -> Option<Task> {
   let field = |name: &str| -> Option<PathBuf> {
     Some(PathBuf::from(between(
-      &arguments,
+      arguments,
       &format!("--{name} \""),
       "\"",
     )?))
   };
-  named.then_some(Task {
+  Some(Task {
     data: field("data")?,
     logs: field("logs")?,
     supervisor,

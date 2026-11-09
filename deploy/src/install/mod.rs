@@ -10,6 +10,10 @@
 //! PowerShell scripts is taken over the same way ([`legacy`]).
 
 #[cfg(windows)]
+pub mod acl;
+#[cfg(windows)]
+pub mod service;
+#[cfg(windows)]
 pub mod task;
 
 use {
