@@ -5,7 +5,7 @@ use {
     Config, Exit, Handoff, Peer, Say, instance_id, now_ms, run,
   },
   ::clap::Args,
-  ::dgg_api::{DEFAULT_URL, Options},
+  ::dgg_api::chat::{DEFAULT_URL, Options},
   ::std::{path::Path, process::ExitCode, time::Duration},
 };
 

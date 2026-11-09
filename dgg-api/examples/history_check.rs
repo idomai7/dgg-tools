@@ -2,7 +2,7 @@
 // connection and compare its HISTORY against what was recorded.
 // Usage: cargo run -p dgg-api --example history_check -- [seconds]
 use {
-  ::dgg_api::{Client, Item, Options},
+  ::dgg_api::chat::{Client, Item, Options},
   ::serde_json::Value,
   ::std::{collections::HashMap, time::Duration},
 };

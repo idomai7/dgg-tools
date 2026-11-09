@@ -1,5 +1,5 @@
 use {
-  ::dgg_api::Options,
+  ::dgg_api::chat::Options,
   ::futures_util::{SinkExt, StreamExt},
   ::logger::{
     capture::{

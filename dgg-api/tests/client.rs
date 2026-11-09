@@ -1,5 +1,5 @@
 use {
-  ::dgg_api::{Client, Frame, Item, Options},
+  ::dgg_api::chat::{Client, Frame, Item, Options},
   ::futures_util::{SinkExt, StreamExt},
   ::std::time::Duration,
   ::tokio::net::TcpListener,

@@ -9,7 +9,7 @@
 
 use {
   crate::control::{self, Status},
-  ::dgg_api::{Client, Item, Options},
+  ::dgg_api::chat::{Client, Item, Options},
   ::logger_journal::{
     Writer, layout::utc_day, record::v0::Body, writer::SYNC_INTERVAL,
   },
