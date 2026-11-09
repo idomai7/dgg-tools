@@ -80,3 +80,7 @@ required-features = ["assets"]
 [[test]]
 name = "fetch"
 required-features = ["http"]
+
+[[test]]
+name = "css"
+required-features = ["assets"]

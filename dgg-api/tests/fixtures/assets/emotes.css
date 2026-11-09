@@ -1,0 +1,92 @@
+.emote.Abathur {
+    background-image: url("66596c571d8e5.png");
+    height: 30px;
+    width: 82px;
+}
+.msg-chat .emote.Abathur {
+    margin-top: -30px;
+    top: 7.5px;
+}
+.emote.AbaW {
+    background-image: url("653c2c520b15b.png");
+    height: 32px;
+    width: 32px;
+}
+.msg-chat .emote.AbaW {
+    margin-top: -32px;
+    top: 8px;
+}
+.emote.DEATH {
+    background-image: url("5dbc29e70d5de.png");
+    height: 32px;
+    width: 30px;
+}
+.msg-chat .emote.DEATH {
+    margin-top: -32px;
+    top: 8px;
+}
+.emote.ACKSHUALLY {
+    background-image: url("65a4c5af3e8cb.png");
+    height: 33px;
+    width: 94px;
+}
+.msg-chat .emote.ACKSHUALLY {
+    margin-top: -33px;
+    top: 8.25px;
+}
+.emote.ALARMA {
+    background-image: url("6976cd604d448.gif");
+    height: 30px;
+    width: 67px;
+}
+.msg-chat .emote.ALARMA {
+    margin-top: -30px;
+    top: 7.5px;
+}
+.emote.BINGQILIN {
+    background-image: url("691926a52c4e6.avif");
+    height: 32px;
+    width: 6390px;
+}
+.msg-chat .emote.BINGQILIN {
+    margin-top: -32px;
+    top: 8px;
+}
+.emote.AlienPls {
+    background-image: url("6a00b50686524.gif");
+    height: 28px;
+    width: 28px;
+}
+.msg-chat .emote.AlienPls {
+    margin-top: -28px;
+    top: 7px;
+}
+.emote.BUTTSTINY {
+    background-image: url("694c8b665356e.png");
+    height: 36px;
+    width: 80px;
+}
+.msg-chat .emote.BUTTSTINY {
+    margin-top: -36px;
+    top: 9px;
+}
+.emote.ACKSHUALLY {
+    width: 47px;
+    height: 33px;
+    background-position: left center;
+}
+
+.msg-chat.msg-emote .emote.ACKSHUALLY {
+    background-position: right center;
+    transform: scale(1.1);
+}
+/* a comment */
+.emote.ALARMA {
+  vertical-align: -2px; 
+  display: inline-block;
+  animation: none;
+  transform: scale(0.95);
+  transform-origin: center center;
+  margin-left: -4px;   
+  margin-right: -4px;  
+}

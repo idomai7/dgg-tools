@@ -6,7 +6,8 @@
 //! the names has a default, so a file that drops one still decodes.
 //!
 //! Each has a stylesheet too (`emotes/emotes.css`, `flairs/flairs.css`):
-//! the pictures as CSS sprites, plus emotes' animations. Fetched raw.
+//! the pictures as CSS sprites, plus emotes' animations. Fetched raw;
+//! [`css`] splits off what the site wrote by hand.
 //!
 //! The CDN caches the files for hours. Chat announces new ones with
 //! `REFRESHCHATASSETS {"cacheKey":...}`; asking with that key (see
@@ -14,6 +15,7 @@
 //!
 //! With feature `http`, `fetch` gets them.
 
+pub mod css;
 pub mod emote;
 #[cfg(feature = "http")]
 pub mod fetch;
