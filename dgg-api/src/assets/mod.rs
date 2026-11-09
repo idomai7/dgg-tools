@@ -3,9 +3,10 @@
 //!
 //! Typed from what the CDN served (2026-11-09) and how chat-gui
 //! (github.com/destinygg/chat-gui, 2026-11-08) reads them. Every field but
-//! the names has a default, so a file that drops one still decodes. The
-//! sprites and animations are in matching `.css` files: rendering, not
-//! typed here.
+//! the names has a default, so a file that drops one still decodes.
+//!
+//! Each has a stylesheet too (`emotes/emotes.css`, `flairs/flairs.css`):
+//! the pictures as CSS sprites, plus emotes' animations. Fetched raw.
 //!
 //! The CDN caches the files for hours. Chat announces new ones with
 //! `REFRESHCHATASSETS {"cacheKey":...}`; asking with that key (see
@@ -34,6 +35,17 @@ pub fn emotes_url(cdn: &str, cache_key: Option<&str>) -> String {
 /// Where `cdn` serves the flairs; see [`emotes_url`].
 pub fn flairs_url(cdn: &str, cache_key: Option<&str>) -> String {
   url(cdn, "flairs/flairs.json", cache_key)
+}
+
+/// Where `cdn` serves the emotes' stylesheet; see [`emotes_url`]. Its
+/// pictures' `url(...)`s are relative to it.
+pub fn emotes_css_url(cdn: &str, cache_key: Option<&str>) -> String {
+  url(cdn, "emotes/emotes.css", cache_key)
+}
+
+/// Where `cdn` serves the flairs' stylesheet; see [`emotes_css_url`].
+pub fn flairs_css_url(cdn: &str, cache_key: Option<&str>) -> String {
+  url(cdn, "flairs/flairs.css", cache_key)
 }
 
 fn url(cdn: &str, path: &str, cache_key: Option<&str>) -> String {

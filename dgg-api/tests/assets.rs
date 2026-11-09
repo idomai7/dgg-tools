@@ -26,6 +26,14 @@ fn urls() {
     assets::flairs_url("http://localhost/cdn/", Some("1794203923")),
     "http://localhost/cdn/flairs/flairs.json?_=1794203923"
   );
+  assert_eq!(
+    assets::emotes_css_url(assets::DEFAULT_CDN, Some("k")),
+    "https://cdn.destiny.gg/emotes/emotes.css?_=k"
+  );
+  assert_eq!(
+    assets::flairs_css_url(assets::DEFAULT_CDN, None),
+    "https://cdn.destiny.gg/flairs/flairs.css"
+  );
 }
 
 #[test]

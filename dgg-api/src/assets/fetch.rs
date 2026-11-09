@@ -6,7 +6,10 @@
 //! and (with rustls) crypto provider.
 
 use {
-  super::{Emote, Flair, emote, emotes_url, flair, flairs_url},
+  super::{
+    Emote, Flair, emote, emotes_css_url, emotes_url, flair, flairs_css_url,
+    flairs_url,
+  },
   ::std::{error, fmt},
 };
 
@@ -65,20 +68,42 @@ pub async fn flairs(
   fetch(client, &flairs_url(cdn, cache_key), flair::parse).await
 }
 
+/// Fetches the emotes' stylesheet, as served.
+pub async fn emotes_css(
+  client: &::reqwest::Client,
+  cdn: &str,
+  cache_key: Option<&str>,
+) -> Result<String, Error> {
+  text(client, &emotes_css_url(cdn, cache_key)).await
+}
+
+/// Fetches the flairs' stylesheet, as served.
+pub async fn flairs_css(
+  client: &::reqwest::Client,
+  cdn: &str,
+  cache_key: Option<&str>,
+) -> Result<String, Error> {
+  text(client, &flairs_css_url(cdn, cache_key)).await
+}
+
 async fn fetch<T>(
   client: &::reqwest::Client,
   url: &str,
   parse: fn(&str) -> Result<T, ::serde_json::Error>,
 ) -> Result<Fetched<T>, Error> {
+  let raw = text(client, url).await?;
+  match parse(&raw) {
+    Ok(value) => Ok(Fetched { raw, value }),
+    Err(error) => Err(Error::Decode { raw, error }),
+  }
+}
+
+async fn text(client: &::reqwest::Client, url: &str) -> Result<String, Error> {
   let response = client
     .get(url)
     .send()
     .await
     .and_then(|response| response.error_for_status())
     .map_err(Error::Http)?;
-  let raw = response.text().await.map_err(Error::Http)?;
-  match parse(&raw) {
-    Ok(value) => Ok(Fetched { raw, value }),
-    Err(error) => Err(Error::Decode { raw, error }),
-  }
+  response.text().await.map_err(Error::Http)
 }

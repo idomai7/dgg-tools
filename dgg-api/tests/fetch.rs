@@ -65,3 +65,12 @@ async fn fails_on_an_error_status() {
   let result = fetch::emotes(&client, &cdn, None).await;
   assert!(matches!(result, Err(Error::Http(_))), "{result:?}");
 }
+
+#[::tokio::test]
+async fn stylesheets_come_as_served() {
+  let css = ".emote.A {\n  width: 1px;\n}\n";
+  let (cdn, server) = serve_once("200 OK", css).await;
+  let client = ::reqwest::Client::new();
+  assert_eq!(fetch::emotes_css(&client, &cdn, None).await.unwrap(), css);
+  assert_eq!(server.await.unwrap(), "GET /emotes/emotes.css HTTP/1.1");
+}
