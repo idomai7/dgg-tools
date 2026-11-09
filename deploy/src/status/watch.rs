@@ -152,7 +152,11 @@ pub fn draw(
             capture.instance,
             format::age(now - capture.started)
           )),
-          Span::styled(health(capture, now), Style::new().fg(color)),
+          Span::styled(
+            format!("{:<24} ", health(capture, now)),
+            Style::new().fg(color),
+          ),
+          Span::raw(capture.build.clone().unwrap_or_default()),
         ])
       })
       .collect()

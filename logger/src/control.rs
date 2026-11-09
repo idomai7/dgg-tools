@@ -9,11 +9,15 @@
 //! started <unix ms>
 //! heartbeat <unix ms>
 //! healthy-since <unix ms>
+//! build <version>+<commit>
 //! ```
 //!
 //! The first line is the format name and `<major>.<minor>` version. Each
 //! later line is `<key> <value>`. `healthy-since` is omitted while the
-//! instance isn't healthy.
+//! instance isn't healthy; `build` (the [`BUILD`](crate::BUILD) it runs) by
+//! instances from before it was added. It came without a version bump:
+//! readers have always skipped keys they don't know, and old instances must
+//! still read new ones' statuses to hand off to them.
 //!
 //! While the major is 0 (pre-release) any minor may break, so readers accept
 //! only the exact header they write. From 1.0 on, readers will ignore keys
@@ -51,6 +55,8 @@ pub struct Status {
   pub heartbeat: i64,
   /// Since when the instance has been healthy, unix ms, if it is.
   pub healthy_since: Option<i64>,
+  /// The build it runs, if it says.
+  pub build: Option<String>,
 }
 
 impl Status {
@@ -63,6 +69,9 @@ impl Status {
     if let Some(since) = self.healthy_since {
       text += &format!("healthy-since {since}\n");
     }
+    if let Some(build) = &self.build {
+      text += &format!("build {build}\n");
+    }
     text
   }
 
@@ -74,11 +83,18 @@ impl Status {
     }
     let (mut instance, mut started, mut heartbeat, mut healthy_since) =
       (None, None, None, None);
+    let mut build = None;
     for line in lines {
       let (key, value) = line.split_once(' ')?;
       let slot = match key {
         "instance" => {
           if instance.replace(value).is_some() {
+            return None;
+          }
+          continue;
+        }
+        "build" => {
+          if value.is_empty() || build.replace(value).is_some() {
             return None;
           }
           continue;
@@ -101,6 +117,7 @@ impl Status {
       started: started?,
       heartbeat: heartbeat?,
       healthy_since,
+      build: build.map(str::to_owned),
     })
   }
 

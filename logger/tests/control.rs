@@ -9,6 +9,7 @@ fn status(instance: &str, started: i64, healthy_since: Option<i64>) -> Status {
     started,
     heartbeat: 1_000,
     healthy_since,
+    build: None,
   }
 }
 
@@ -24,6 +25,13 @@ fn format() {
   assert_eq!(Status::decode(&text), Some(healthy));
   let unhealthy = status("a", 5, None);
   assert_eq!(Status::decode(&unhealthy.encode()), Some(unhealthy));
+  let built = Status {
+    build: Some("0.1.0+93b72b343555".into()),
+    ..status("a", 5, Some(7))
+  };
+  let text = built.encode();
+  assert!(text.ends_with("healthy-since 7\nbuild 0.1.0+93b72b343555\n"));
+  assert_eq!(Status::decode(&text), Some(built));
 }
 
 #[test]
@@ -42,6 +50,8 @@ fn decode_tolerance() {
     format!("capture-status 0.0\n{base}instance b\n"),
     format!("capture-status 0.0\n{base}healthy-since x\n"),
     format!("capture-status 0.0\n{base}novalue\n"),
+    format!("capture-status 0.0\n{base}build \n"),
+    format!("capture-status 0.0\n{base}build a\nbuild b\n"),
     "capture-status 0.0\ninstance a\nstarted 5\n".into(),
     "capture-status 0.0\ninstance a/b\nstarted 5\nheartbeat 1\n".into(),
     format!("capture-status 0.0\n{base}").trim_end().into(),

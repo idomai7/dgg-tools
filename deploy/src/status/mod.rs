@@ -63,6 +63,8 @@ pub struct Capture {
   /// Unix ms.
   pub started: i64,
   pub health: Health,
+  /// The build it runs, if it says.
+  pub build: Option<String>,
 }
 
 /// A count of files and their size.
@@ -267,6 +269,7 @@ fn captures(journal_root: &Path, now: i64) -> io::Result<Vec<Capture>> {
         },
         instance: status.instance,
         started: status.started,
+        build: status.build,
       })
       .collect();
   captures.sort_by_key(|capture| capture.started);
@@ -364,10 +367,11 @@ pub fn text(report: &Report) -> Vec<String> {
   }
   for capture in &report.captures {
     out.push(format!(
-      "  {:<30} up {:<8} {}",
+      "  {:<30} up {:<8} {:<24} {}",
       capture.instance,
       format::age(now - capture.started),
-      health(capture, now)
+      health(capture, now),
+      capture.build.as_deref().unwrap_or("")
     ));
   }
   out.push(String::new());
