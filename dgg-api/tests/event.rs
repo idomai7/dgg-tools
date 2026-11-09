@@ -19,13 +19,10 @@ fn decodes_every_fixture() {
     let event = Event::parse(line);
     let name = line.split(' ').next().unwrap();
     assert_eq!(event.name(), name);
-    match (&event, name) {
-      (Event::Other { .. }, "ME") => {}
-      (Event::Other { .. } | Event::Unreadable { .. }, _) => {
-        panic!("{line}: {event:?}")
-      }
-      _ => {}
-    }
+    assert!(
+      !matches!(event, Event::Other { .. } | Event::Unreadable { .. }),
+      "{line}: {event:?}"
+    );
   }
 }
 
@@ -140,7 +137,8 @@ fn keeps_what_it_cannot_type() {
   };
   assert_eq!((event.as_str(), payload.as_str()), ("MSG", "{}"));
   // A bad frame inside HISTORY spoils only itself.
-  let Event::History(frames) = Event::parse("HISTORY [\"MSG x\",\"ME null\"]")
+  let Event::History(frames) =
+    Event::parse("HISTORY [\"MSG x\",\"VESTABOARD_LEAD {}\"]")
   else {
     panic!()
   };
@@ -307,4 +305,24 @@ fn spotlights_from_chat_gui() {
     panic!()
   };
   assert_eq!(ended.key, "key1");
+}
+
+#[test]
+fn session_from_chat_gui() {
+  // As seen, logged out.
+  assert_eq!(Event::parse("ME null"), Event::Me(None));
+  let Event::Me(Some(me)) = &chat_gui("ME")[0] else {
+    panic!()
+  };
+  assert_eq!(me.nick, "user1");
+  let Event::UsersDelta(delta) = &chat_gui("USERSDELTA")[0] else {
+    panic!()
+  };
+  assert_eq!(delta.removed.len(), 2);
+  assert_eq!(chat_gui("RELOAD"), [Event::Reload]);
+  let Event::RefreshChatAssets(refresh) = &chat_gui("REFRESHCHATASSETS")[0]
+  else {
+    panic!()
+  };
+  assert_eq!(refresh.cache_key.as_deref(), Some("key2"));
 }

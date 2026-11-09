@@ -513,6 +513,22 @@ pub struct Unspotlight {
   pub key: String,
 }
 
+/// `USERSDELTA`: users who left, batched. From chat-gui, which reads only
+/// `removed`.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+pub struct UsersDelta {
+  #[serde(default)]
+  pub removed: Vec<User>,
+}
+
+/// `REFRESHCHATASSETS`: emotes, flairs or styles changed. From chat-gui.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RefreshChatAssets {
+  /// The assets' new version, for fetching them afresh.
+  pub cache_key: Option<String>,
+}
+
 /// One decoded frame.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
@@ -553,6 +569,13 @@ pub enum Event {
   Unspotlight(Unspotlight),
   /// Spotlights still showing, sent on connecting (seen, empty).
   Spotlights(Vec<Spotlight>),
+  /// This connection's user, sent first; `None` when not logged in (seen).
+  /// From chat-gui otherwise.
+  Me(Option<User>),
+  UsersDelta(UsersDelta),
+  /// Clients should reload. From chat-gui, which reads nothing from it.
+  Reload,
+  RefreshChatAssets(RefreshChatAssets),
   /// An event this crate doesn't type (yet).
   Other {
     event: String,
@@ -613,6 +636,10 @@ impl Event {
       "VOTECOUNTED" => json(payload).map(Self::VoteCounted),
       "SPOTLIGHT" => json(payload).map(Self::Spotlight),
       "UNSPOTLIGHT" => json(payload).map(Self::Unspotlight),
+      "ME" => json(payload).map(Self::Me),
+      "USERSDELTA" => json(payload).map(Self::UsersDelta),
+      "RELOAD" => Ok(Self::Reload),
+      "REFRESHCHATASSETS" => json(payload).map(Self::RefreshChatAssets),
       "SPOTLIGHTS" => json::<Option<Vec<Spotlight>>>(payload)
         .map(|list| Self::Spotlights(list.unwrap_or_default())),
       _ => {
@@ -664,6 +691,10 @@ impl Event {
       Self::Spotlight(_) => "SPOTLIGHT",
       Self::Unspotlight(_) => "UNSPOTLIGHT",
       Self::Spotlights(_) => "SPOTLIGHTS",
+      Self::Me(_) => "ME",
+      Self::UsersDelta(_) => "USERSDELTA",
+      Self::Reload => "RELOAD",
+      Self::RefreshChatAssets(_) => "REFRESHCHATASSETS",
       Self::Other { event, .. } | Self::Unreadable { event, .. } => event,
     }
   }
