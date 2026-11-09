@@ -31,7 +31,7 @@ pub struct Capture {
   /// instance's status to, so the capture there hands off to this one.
   #[arg(long)]
   peer: Option<String>,
-  /// Bearer token for `--peer`.
+  /// The control token of `--peer`'s `serve` (its `--control-token`).
   #[arg(long, env = "LOGGER_PEER_TOKEN", hide_env_values = true)]
   peer_token: Option<String>,
   /// Run as an install's bridge: lines are timestamped and marked, since

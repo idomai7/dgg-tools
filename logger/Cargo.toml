@@ -13,6 +13,7 @@ logger-journal.workspace = true
 
 axum.workspace = true
 clap.workspace = true
+futures-util.workspace = true
 gethostname.workspace = true
 reqwest.workspace = true
 rusqlite.workspace = true

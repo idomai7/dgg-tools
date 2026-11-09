@@ -225,7 +225,11 @@ async fn hands_off_to_an_instance_on_another_host() {
   let (old_host, new_host) = (TempRoot::new(), TempRoot::new());
   let serve = TcpListener::bind("127.0.0.1:0").await.unwrap();
   let serve_url = format!("http://{}", serve.local_addr().unwrap());
-  let router = ::logger::serve::router(old_host.0.clone(), "secret".into());
+  let tokens = ::logger::serve::Tokens {
+    read: "reader".into(),
+    control: Some("secret".into()),
+  };
+  let router = ::logger::serve::router(old_host.0.clone(), tokens);
   let serving =
     ::tokio::spawn(async move { ::axum::serve(serve, router).await.unwrap() });
 

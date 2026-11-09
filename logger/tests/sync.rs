@@ -3,7 +3,7 @@ use {
     capture::Peer,
     compact::compact_day,
     manifest::{self, File, archive_path, valid_live_path},
-    serve::router,
+    serve::{Tokens, router},
     sync::{MAX_FILE, TAKEN, sync, unpack},
   },
   ::logger_journal::{Writer, record::v0::Body},
@@ -41,7 +41,11 @@ async fn serve(root: &TempRoot) -> String {
     .await
     .unwrap();
   let url = format!("http://{}", listener.local_addr().unwrap());
-  let app = router(root.0.clone(), "secret".into());
+  let tokens = Tokens {
+    read: "secret".into(),
+    control: None,
+  };
+  let app = router(root.0.clone(), tokens);
   ::tokio::spawn(async move { ::axum::serve(listener, app).await.unwrap() });
   url
 }

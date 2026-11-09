@@ -2,8 +2,9 @@ use {
   ::logger::{
     capture::now_ms,
     control::{self, Status, parse_push, push_body},
-    serve::router,
+    serve::{CONCURRENT, Tokens, router},
   },
+  ::logger_journal::{Writer, record::v0::Body},
   ::std::{
     fs,
     path::PathBuf,
@@ -54,16 +55,40 @@ fn pushed_statuses_move_onto_the_receivers_clock() {
   assert_eq!(parse_push(&status("a").encode(), 0), None);
 }
 
-#[::tokio::test]
-async fn control_endpoints() {
-  let root = TempRoot::new();
+#[test]
+fn tokens_must_be_long_and_differ() {
+  let long = |c: char| c.to_string().repeat(32);
+  let tokens = |read: String, control: Option<String>| Tokens { read, control };
+  assert!(tokens(long('a'), None).check().is_ok());
+  assert!(tokens(long('a'), Some(long('b'))).check().is_ok());
+  for bad in [
+    tokens("a".repeat(31), None),
+    tokens(long('a'), Some("b".repeat(31))),
+    tokens(long('a'), Some(long('a'))),
+  ] {
+    assert!(bad.check().is_err(), "{bad:?}");
+  }
+}
+
+/// Serves `root` with `tokens` on a free port; returns its URL.
+async fn serve(root: &TempRoot, tokens: Tokens) -> String {
   let listener = ::tokio::net::TcpListener::bind("127.0.0.1:0")
     .await
     .unwrap();
   let base = format!("http://{}", listener.local_addr().unwrap());
-  let app = router(root.0.clone(), "secret".into());
-  let server =
-    ::tokio::spawn(async move { ::axum::serve(listener, app).await.unwrap() });
+  let app = router(root.0.clone(), tokens);
+  ::tokio::spawn(async move { ::axum::serve(listener, app).await.unwrap() });
+  base
+}
+
+#[::tokio::test]
+async fn control_endpoints() {
+  let root = TempRoot::new();
+  let tokens = Tokens {
+    read: "reader".into(),
+    control: Some("secret".into()),
+  };
+  let base = serve(&root, tokens).await;
   let client = ::reqwest::Client::new();
   let url = |path: &str| format!("{base}{path}");
   let body = push_body(&status("remote").encode(), now_ms());
@@ -78,6 +103,17 @@ async fn control_endpoints() {
   );
   let unauthenticated = client.get(url("/control")).send().await.unwrap();
   assert_eq!(code(unauthenticated), 401);
+  // The read token reads, but can't push.
+  assert_eq!(
+    code(
+      put("/control/remote", "reader", body.clone())
+        .await
+        .unwrap()
+    ),
+    403
+  );
+  let read = client.get(url("/control")).bearer_auth("reader").send();
+  assert_eq!(code(read.await.unwrap()), 200);
   assert_eq!(
     code(put("/control/other", "secret", body.clone()).await.unwrap()),
     400
@@ -120,5 +156,62 @@ async fn control_endpoints() {
     .unwrap();
   assert_eq!(code(deleted), 204);
   assert_eq!(control::read_all(&control).unwrap(), []);
-  server.abort();
+}
+
+#[::tokio::test]
+async fn without_a_control_token_nothing_pushes() {
+  let root = TempRoot::new();
+  let tokens = Tokens {
+    read: "reader".into(),
+    control: None,
+  };
+  let base = serve(&root, tokens).await;
+  let client = ::reqwest::Client::new();
+  let body = push_body(&status("remote").encode(), now_ms());
+  for token in ["reader", ""] {
+    let pushed = client
+      .put(format!("{base}/control/remote"))
+      .bearer_auth(token)
+      .body(body.clone())
+      .send()
+      .await
+      .unwrap();
+    assert!([401, 403].contains(&pushed.status().as_u16()), "{token:?}");
+  }
+  assert_eq!(control::read_all(&control::dir(&root.0)).unwrap(), []);
+}
+
+#[::tokio::test]
+async fn serves_a_few_requests_at_once() {
+  let root = TempRoot::new();
+  // Big enough that sending it stalls until it's read.
+  let mut writer = Writer::new(root.0.clone(), "a");
+  let frame = "x".repeat(1 << 20);
+  for _ in 0..64 {
+    writer.write(0, 1, Body::Frame(frame.clone())).unwrap();
+  }
+  drop(writer);
+  let tokens = Tokens {
+    read: "reader".into(),
+    control: None,
+  };
+  let base = serve(&root, tokens).await;
+  let client = ::reqwest::Client::new();
+  let get = || {
+    client
+      .get(format!("{base}/files/live/1970-01-01/a.journal"))
+      .bearer_auth("reader")
+      .send()
+  };
+  let mut held = Vec::new();
+  for _ in 0..CONCURRENT {
+    let response = get().await.unwrap();
+    assert_eq!(response.status().as_u16(), 200);
+    held.push(response);
+  }
+  assert_eq!(get().await.unwrap().status().as_u16(), 503);
+  // One finished, there's room again.
+  let size = held.pop().unwrap().bytes().await.unwrap().len();
+  assert!(size > 64 << 20);
+  assert_eq!(get().await.unwrap().status().as_u16(), 200);
 }
