@@ -1,9 +1,9 @@
 use {
-  ::journal::{Writer, record::v0::Body},
   ::logger::{
     gaps::{Gap, coverage, format_duration, format_utc, unfetched},
     index::{index, open},
   },
+  ::logger_journal::{Writer, record::v0::Body},
   ::std::{
     fs,
     path::PathBuf,

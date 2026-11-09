@@ -1,7 +1,7 @@
 //! Writer and Reader against real files.
 
 use {
-  ::journal::{
+  ::logger_journal::{
     DecodeError, Entry, ReadError, Reader, Record, Version, Writer,
     layout::{backfill_files, live_dir, live_files},
     record::v0::{self, Body},

@@ -2,8 +2,8 @@
 //! the one the index uses.
 
 use {
-  ::journal::Version,
   ::logger::index::{SCHEMA_VERSION, open},
+  ::logger_journal::Version,
   ::rusqlite::Connection,
   ::std::{fs, path::PathBuf},
 };

@@ -22,7 +22,7 @@
 //! be merged once it's done.
 
 use {
-  ::journal::{
+  ::logger_journal::{
     archive::{self, Archive, valid_day},
     layout::{EXTENSION, archive_file, live_day_dir, live_dir},
     record::{Version, v0},

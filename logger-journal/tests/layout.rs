@@ -1,4 +1,4 @@
-use ::journal::layout::utc_day;
+use ::logger_journal::layout::utc_day;
 
 #[test]
 fn utc_days() {

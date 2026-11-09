@@ -26,7 +26,7 @@
 //! native messages, whenever those are indexed.
 
 use {
-  ::journal::{
+  ::logger_journal::{
     ReadError, Reader, Record, Version, archive,
     layout::{backfill_files, backfill_root, live_files},
     record::v0::Body,

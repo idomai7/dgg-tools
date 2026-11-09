@@ -17,7 +17,7 @@ pub mod rustlesearch;
 
 use {
   crate::{capture::now_ms, gaps::format_utc},
-  ::journal::{
+  ::logger_journal::{
     Writer,
     record::v0::{Body, valid_token},
   },

@@ -1,4 +1,4 @@
-use ::journal::{
+use ::logger_journal::{
   DecodeError,
   record::v0::{Body, Record},
 };

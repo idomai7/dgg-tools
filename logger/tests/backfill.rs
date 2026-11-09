@@ -1,12 +1,12 @@
 use {
-  ::journal::{
-    Reader, Record,
-    layout::{backfill_files, live_files},
-    record::v0::{self, Body},
-  },
   ::logger::backfill::{
     Message, Options, Page, Source, linkers, run,
     rustlesearch::{parse, parse_timestamp, remaining},
+  },
+  ::logger_journal::{
+    Reader, Record,
+    layout::{backfill_files, live_files},
+    record::v0::{self, Body},
   },
   ::std::{
     fs,

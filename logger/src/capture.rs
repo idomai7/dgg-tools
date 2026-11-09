@@ -9,8 +9,8 @@
 
 use {
   crate::control::{self, Status},
-  ::dgg_chat::{Client, Item, Options},
-  ::journal::{
+  ::dgg_api::{Client, Item, Options},
+  ::logger_journal::{
     Writer, layout::utc_day, record::v0::Body, writer::SYNC_INTERVAL,
   },
   ::std::{

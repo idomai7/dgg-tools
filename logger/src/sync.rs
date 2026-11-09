@@ -23,7 +23,7 @@ use {
     capture::Peer,
     manifest::{self, archive_path},
   },
-  ::journal::{
+  ::logger_journal::{
     archive::{self, Archive},
     layout::{EXTENSION, archive_file, backfill_root, live_day_dir},
     record::Version,

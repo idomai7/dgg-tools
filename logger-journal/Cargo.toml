@@ -1,5 +1,5 @@
 [package]
-name = "journal"
+name = "logger-journal"
 version = "0.1.0"
 edition.workspace = true
 description = "The logger's journal: append-only files of captured dgg chat"

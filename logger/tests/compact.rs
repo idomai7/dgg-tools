@@ -1,11 +1,11 @@
 use {
-  ::journal::{
+  ::logger::compact::{closed_days, compact_day},
+  ::logger_journal::{
     Reader, Writer,
     archive::{self},
     layout::{archive_file, backfill_root, live_day_dir, lock_file},
     record::v0::Body,
   },
-  ::logger::compact::{closed_days, compact_day},
   ::sha2::{Digest, Sha256},
   ::std::{
     fs,

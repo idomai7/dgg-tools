@@ -7,7 +7,7 @@ use {
     compact::{closed_days, compact_day},
   },
   ::clap::Args,
-  ::journal::layout::backfill_root,
+  ::logger_journal::layout::backfill_root,
   ::std::{path::Path, process::ExitCode, time::Duration},
 };
 

@@ -1,14 +1,14 @@
 [workspace]
 resolver = "3"
-members = ["deploy", "dgg-chat", "journal", "logger", "version-info", "viewer"]
+members = ["deploy", "dgg-api", "logger", "logger-journal", "version-info", "viewer"]
 
 [workspace.package]
 edition = "2024"
 
 [workspace.dependencies]
-dgg-chat = { path = "dgg-chat" }
-journal = { path = "journal" }
+dgg-api = { path = "dgg-api" }
 logger = { path = "logger" }
+logger-journal = { path = "logger-journal" }
 version-info = { path = "version-info" }
 
 axum = "0.8.9"

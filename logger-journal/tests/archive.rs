@@ -1,5 +1,5 @@
 use {
-  ::journal::{
+  ::logger_journal::{
     Reader, Record,
     archive::{self, Archive},
     layout::{archive_file, archive_month_dir},

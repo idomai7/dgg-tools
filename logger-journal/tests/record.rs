@@ -1,4 +1,4 @@
-use ::journal::record::{Version, v0};
+use ::logger_journal::record::{Version, v0};
 
 fn version(major: u32, minor: u32) -> Version {
   Version { major, minor }

@@ -21,7 +21,7 @@
 //! else will be a major bump.
 
 use {
-  ::journal::{
+  ::logger_journal::{
     archive::{self, valid_day},
     layout::{
       ARCHIVE_SUFFIX, EXTENSION, backfill_files, backfill_root, live_files,

@@ -13,7 +13,7 @@
 //! coverage is only as exact as the two clocks agree.
 
 use {
-  ::journal::layout::utc_day,
+  ::logger_journal::layout::utc_day,
   ::rusqlite::{Connection, params},
 };
 

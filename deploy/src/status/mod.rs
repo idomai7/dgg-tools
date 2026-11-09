@@ -9,11 +9,11 @@ pub mod watch;
 
 use {
   crate::{log::now_ms, paths::Paths, processes},
-  ::journal::{
+  ::logger::control,
+  ::logger_journal::{
     archive,
     layout::{backfill_files, backfill_root, live_files, utc_day},
   },
-  ::logger::control,
   ::std::{
     collections::BTreeSet,
     fs,

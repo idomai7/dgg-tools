@@ -1,16 +1,16 @@
 use {
-  ::dgg_chat::Options,
+  ::dgg_api::Options,
   ::futures_util::{SinkExt, StreamExt},
-  ::journal::{
-    Reader, Record,
-    layout::live_files,
-    record::v0::{self, Body},
-  },
   ::logger::{
     capture::{
       Config, Exit, HANDOFF, Handoff, Peer, SHUTDOWN, instance_id, run,
     },
     control,
+  },
+  ::logger_journal::{
+    Reader, Record,
+    layout::live_files,
+    record::v0::{self, Body},
   },
   ::std::{
     fs,

@@ -1,5 +1,4 @@
 use {
-  ::journal::{Writer, record::v0::Body},
   ::logger::{
     capture::Peer,
     compact::compact_day,
@@ -7,6 +6,7 @@ use {
     serve::router,
     sync::{TAKEN, sync},
   },
+  ::logger_journal::{Writer, record::v0::Body},
   ::std::{
     fs::{self, OpenOptions},
     io::Write,
@@ -265,8 +265,8 @@ async fn takes_archives_without_overwriting() {
     fs::read(remote.0.join(path)).unwrap()
   );
   assert_eq!(
-    ::journal::archive::all(&local.0).unwrap(),
-    ::journal::archive::all(&remote.0).unwrap()
+    ::logger_journal::archive::all(&local.0).unwrap(),
+    ::logger_journal::archive::all(&remote.0).unwrap()
   );
   let stats = sync(&peer, &local.0).await.unwrap();
   assert_eq!((stats.installed, stats.merging, stats.bytes), (0, 0, 0));
@@ -284,7 +284,10 @@ async fn takes_archives_without_overwriting() {
   let day = local.0.join("live/1970-01-01");
   assert_eq!(fs::read_dir(&day).unwrap().count(), 1);
   compact(&local.0);
-  assert_eq!(::journal::archive::all(&local.0).unwrap()[0].lines, 2);
+  assert_eq!(
+    ::logger_journal::archive::all(&local.0).unwrap()[0].lines,
+    2
+  );
   let taken = fs::read_to_string(local.0.join(TAKEN)).unwrap();
   assert_eq!(taken.lines().count(), 2);
   let stats = sync(&peer, &local.0).await.unwrap();

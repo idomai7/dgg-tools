@@ -6,7 +6,7 @@ use {
     paths::Paths,
     status::{Health, Watcher, format, journal_lines, tail, text},
   },
-  ::journal::layout::utc_day,
+  ::logger_journal::layout::utc_day,
   ::std::{fs, path::PathBuf},
 };
 

@@ -1,4 +1,4 @@
-//! Shared destiny.gg chat client.
+//! destiny.gg's APIs, shared by the dgg tools. So far, the chat client.
 //!
 //! [`Client`] keeps a socket to dgg chat open, reconnecting with backoff, and
 //! yields every text frame plus connect/disconnect markers so callers can see

@@ -35,7 +35,7 @@ use {
     },
     routing::{get, put},
   },
-  ::journal::record::v0::valid_instance,
+  ::logger_journal::record::v0::valid_instance,
   ::std::{io::SeekFrom, path::PathBuf, sync::Arc},
   ::tokio::io::{AsyncReadExt, AsyncSeekExt},
 };

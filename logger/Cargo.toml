@@ -8,8 +8,8 @@ description = "Captures dgg chat to a journal; indexes, compacts and syncs it"
 version-info.workspace = true
 
 [dependencies]
-dgg-chat.workspace = true
-journal.workspace = true
+dgg-api.workspace = true
+logger-journal.workspace = true
 
 axum.workspace = true
 clap.workspace = true

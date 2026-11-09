@@ -30,7 +30,7 @@
 //! any other.
 
 use {
-  ::journal::record::v0::valid_instance,
+  ::logger_journal::record::v0::valid_instance,
   ::std::{
     fs, io,
     path::{Path, PathBuf},

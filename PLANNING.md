@@ -1,11 +1,11 @@
 # dgg-tools planning
 
-A Cargo workspace of tools built around destiny.gg chat and its endpoints. Every tool that talks to dgg chat goes through the shared `dgg-chat` crate.
+A Cargo workspace of tools built around destiny.gg chat and its endpoints. Every tool that talks to dgg goes through the shared `dgg-api` crate.
 
 ## Layout
 The layout is flat: each crate is a direct child of the root.
-- `dgg-chat/`: the shared socket client and event types.
-- `journal/`: the journal file format, with a writer and a reader.
+- `dgg-api/`: destiny.gg's APIs, kept lightweight for any tool to depend on: the chat socket client and event types, and more of dgg's endpoints to come.
+- `logger-journal/`: the logger's journal file format, with a writer and a reader.
 - `logger/`: the logger as a library: capture, index, serve, sync, backfill, compact and gaps, each with its command-line arguments in `logger::cli`. They run as `dgg-logger` subcommands, so the parts of an install can't be from different builds.
 - `deploy/`: `dgg-logger` (the logger's commands, plus install, uninstall, status and supervise) and `dgg-supervisor`, which keeps the logger running as a logon task or a Windows service. See `deploy/README.md`.
 - `version-info/`: a build helper embedding version information in the Windows binaries.
@@ -62,7 +62,7 @@ The layout is flat: each crate is a direct child of the root.
   - `data/journal/backfill/YYYY-MM-DD/<instance>.journal`: what was fetched from other archives, one file per backfill run per day. It's filed by the day of the messages inside, not when they were fetched. Nothing here is canonical, so it never mixes with `live/` or `archive/`.
   - Hot paths only ever list `live/`.
 - **Days:** UTC.
-- **Line format:** explicit and hand-written, with no serde. The spec lives in the `journal` crate: each major version has its own module (`journal/src/record/v0.rs`) holding its structure, encoding and decoding, so several formats can coexist in the library.
+- **Line format:** explicit and hand-written, with no serde. The spec lives in the `logger-journal` crate: each major version has its own module (`logger-journal/src/record/v0.rs`) holding its structure, encoding and decoding, so several formats can coexist in the library.
   - Each file starts with `journal <major>.<minor>` (currently `0.1`).
   - **Versioning, for every format** (journal, `capture-status`, `journal-archive`, `journal-manifest` and the index schema): like cargo's semver.
     - While the major is 0 (pre-release, where we are now), any minor may break. Readers accept only the exact minor they know, and existing files are rewritten rather than read across versions.
@@ -75,7 +75,7 @@ The layout is flat: each crate is a direct child of the root.
   - Unknown kinds are reported separately from malformed lines.
 
   Event names are never interpreted at this layer, so dgg adding or removing events can't break the journal.
-- **capture:** dgg-chat into the journal, and nothing else, so it stays tiny and rarely changes.
+- **capture:** dgg chat into the journal, and nothing else, so it stays tiny and rarely changes.
   - **In-place upgrade:** start the new binary.
     - An instance is healthy once its current connection has delivered `HISTORY` and a `MSG`.
     - An older instance retires once a later-started one has a fresh heartbeat (under 5 s old) and has been healthy for the grace period (`--handoff-grace`, default 30 s). Its journal ends with `close handoff to <instance>`.
@@ -86,7 +86,7 @@ The layout is flat: each crate is a direct child of the root.
     - The old instance retires by the same rule as a local handoff, and needs no flags or restart.
     - Use a VPN or SSH tunnel between hosts: the bearer token isn't encrypted over plain HTTP.
 - **index:** journal into `data/index.sqlite` (schema in `logger/schemas/index/v<major>.<minor>.sql`, currently 0.4, every past version kept there; stored in `user_version` as `major << 16 | minor`).
-  - The dedupe key is `(timestamp, nick, data)`. It was verified with `dgg-chat/examples/history_check.rs`: `HISTORY` is a JSON array of the last 150 `"MSG {...}"` frames, byte-identical to the live frames.
+  - The dedupe key is `(timestamp, nick, data)`. It was verified with `dgg-api/examples/history_check.rs`: `HISTORY` is a JSON array of the last 150 `"MSG {...}"` frames, byte-identical to the live frames.
   - A message seen both live and in `HISTORY` is kept with `source = live` and the earliest live receive time.
   - Tables: `messages` (with an FTS5 table, `messages_fts`), `connections` (open, close and last-seen times, close reasons, and the oldest timestamp in each connection's `HISTORY`), `unparsed` and `files` (per-file checkpoints).
   - Each file's checkpoint commits in the same transaction as its rows, so an interrupted run resumes exactly where it stopped.
@@ -148,10 +148,10 @@ The layout is flat: each crate is a direct child of the root.
 
 ## Status
 - **Workspace restructure:** done.
-  - The dgg probe is at `dgg-chat/examples/probe.rs`.
+  - The dgg probe is at `dgg-api/examples/probe.rs`.
   - `viewer` is a placeholder stub.
-- **`dgg-chat`:** a minimal client (reconnect with backoff, PING/PONG, idle timeout). The typed events and assets are still to do.
-- **`journal`:** live files, plus a writer and a reader. The `.zst` archives and manifests come with `compact`.
+- **`dgg-api`:** a minimal chat client (reconnect with backoff, PING/PONG, idle timeout). The typed events and assets are still to do.
+- **`logger-journal`:** live files, plus a writer and a reader. The `.zst` archives and manifests come with `compact`.
 - **`logger capture`:** done, including local handoff.
 - **`logger index`:** done for live files, one-shot or `--follow` (polls every `--interval` seconds, default 1; prints a summary every `--report` seconds, default 60).
 - **`logger gaps`:** done. It reports stretches when no connection was open (a connection that never closed ends at its last line), and whether the next connection's `HISTORY` reached back far enough to cover each one.

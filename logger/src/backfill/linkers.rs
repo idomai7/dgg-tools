@@ -23,7 +23,7 @@
 
 use {
   super::{Message, Page, Source, rustlesearch::parse_timestamp},
-  ::journal::{layout::utc_day, record::v0::valid_instance},
+  ::logger_journal::{layout::utc_day, record::v0::valid_instance},
   ::serde_json::Value,
 };
 

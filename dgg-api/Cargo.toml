@@ -1,8 +1,8 @@
 [package]
-name = "dgg-chat"
+name = "dgg-api"
 version = "0.1.0"
 edition.workspace = true
-description = "A destiny.gg chat client, shared by the dgg tools"
+description = "destiny.gg's APIs (chat, and more to come), shared by the dgg tools"
 
 [dependencies]
 futures-util.workspace = true

@@ -1,8 +1,8 @@
 use {
-  ::journal::{Version, Writer, record::v0::Body},
   ::logger::index::{
     Error, SCHEMA_VERSION, follow, index, open, rebuild, user_version,
   },
+  ::logger_journal::{Version, Writer, record::v0::Body},
   ::rusqlite::Connection,
   ::std::{
     fs,
