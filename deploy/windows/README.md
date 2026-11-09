@@ -158,7 +158,12 @@ powershell -ExecutionPolicy Bypass -File deploy\windows\install.ps1
 
 If a shell capture is running when you install, the task's capture takes
 over from it and the shell one exits on its own. Stop the shell index
-yourself. `uninstall.ps1` removes the tasks and keeps the data.
+yourself.
+
+Run the same command again to upgrade: the new capture starts beside the
+old one, which hands off and exits, so nothing is missed.
+
+### A machine install
 
 `-Scope Machine` (from an administrator PowerShell) runs the tasks as
 SYSTEM from startup instead, whether or not anyone is logged on, in
@@ -167,3 +172,36 @@ Administrators and SYSTEM, because anyone who could change it could run code
 as SYSTEM. Your account can still read the data and logs, but running
 `backfill`, `gaps` or `index` by hand against it needs an administrator
 shell.
+
+### Switching between the two
+
+Run `install.ps1` with the scope you want, from an administrator
+PowerShell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File deploy\windows\install.ps1 -Scope Machine
+powershell -ExecutionPolicy Bypass -File deploy\windows\install.ps1 -Scope User
+```
+
+It stops the old install, moves its data and logs to the new one's folder,
+deletes the old binaries and starts the new tasks. Capture is stopped for
+the few seconds that takes, and the history dgg sends on reconnect covers
+that. Data from shell runs in `%LOCALAPPDATA%\dgg-tools\data` moves the
+same way; stop any shell runs that weren't started from `bin\` first.
+
+If a move fails partway, the old tasks are already gone: fix what the error
+says and run it again, or run it with the old scope to go back.
+
+### Uninstalling
+
+```powershell
+powershell -ExecutionPolicy Bypass -File deploy\windows\uninstall.ps1
+```
+
+It stops everything running from the install's `bin\` (shell runs from
+there too), removes the scheduled tasks and their `\dgg-tools\` folder in
+Task Scheduler, and deletes the binaries. Only the data, `logs\` and the
+folder holding them are left. For a machine install (which needs an
+administrator PowerShell) they get ordinary permissions back, owned by you,
+so you can move or delete them without elevation. Delete them by hand to
+remove everything.

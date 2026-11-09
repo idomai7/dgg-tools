@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-Installs or upgrades the logger as scheduled tasks.
+Installs, upgrades or moves the logger, as scheduled tasks.
 
 .DESCRIPTION
 Builds the logger, copies the binaries to a new versioned directory under
@@ -20,10 +20,18 @@ who could change them could run code as SYSTEM; running the tools that
 write there by hand then takes an elevated shell. The install refuses a
 <Root> someone else created, or one containing links.
 
-Running it again is an upgrade: it starts a second capture from the new
-binaries, and the old one retires once the new one has been healthy for the
-handoff grace (30 s). The index is stopped and restarted, which is safe at
-any point. Data is never touched.
+Running it again with the same scope is an upgrade: it starts a second
+capture from the new binaries, and the old one retires once the new one has
+been healthy for the handoff grace (30 s). The index is stopped and
+restarted, which is safe at any point. Data is never touched.
+
+Running it with the other scope (or another -Root or -Data) moves the
+install: the old tasks are removed, the data and logs are moved to the new
+place (the data keeps its own place if it was outside the old root), the
+old binaries are deleted, and the new tasks start. Capture stops for the
+few seconds that takes; the history dgg sends on reconnect covers it. A
+shell run's data in the user root (see README.md) is moved the same way.
+Moving to or from a machine install needs an elevated PowerShell.
 
   powershell -ExecutionPolicy Bypass -File deploy\windows\install.ps1
   powershell -ExecutionPolicy Bypass -File deploy\windows\install.ps1 `
@@ -42,24 +50,42 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. "$PSScriptRoot\common.ps1"
 
 $machine = $Scope -eq "Machine"
-if (-not $Root) {
-  $Root = if ($machine) { "$env:ProgramData\dgg-tools" }
-  else { "$env:LOCALAPPDATA\dgg-tools" }
+$admin = Test-Admin
+$existing = Get-Install
+if (-not $existing -and -not $admin -and
+  (Test-Path -LiteralPath "$(Get-DefaultRoot Machine)\bin")) {
+  throw "There seems to be a machine install, which only an " +
+    "administrator can see. Run this from an elevated PowerShell."
 }
-if (-not $Data) { $Data = "$Root\data" }
-$user = "$env:USERDOMAIN\$env:USERNAME"
-
-$admin = [Security.Principal.WindowsPrincipal]::new(
-  [Security.Principal.WindowsIdentity]::GetCurrent()
-).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-if ($machine -and -not $admin) {
-  throw "-Scope Machine needs an elevated (administrator) PowerShell."
+$same = $existing -and $existing.Scope -eq $Scope
+if (-not $Root) {
+  $Root = if ($same) { $existing.Root } else { Get-DefaultRoot $Scope }
+}
+if (-not $Data) {
+  $Data = if ($same) { $existing.Data }
+  elseif ($existing -and -not (Test-Within $existing.Data $existing.Root)) {
+    $existing.Data
+  } else { "$Root\data" }
+}
+$logs = "$Root\logs"
+$moving = $existing -and -not ($same -and
+  (Test-Within $existing.Root $Root) -and (Test-Within $Root $existing.Root) -and
+  (Test-Within $existing.Data $Data) -and (Test-Within $Data $existing.Data))
+if (($machine -or ($existing -and $existing.Scope -eq "Machine")) -and
+  -not $admin) {
+  throw "Installing or moving a machine install needs an elevated " +
+    "(administrator) PowerShell."
+}
+if ($moving -and -not (Test-Within $Data $existing.Data) -and
+  -not (Test-Empty $Data)) {
+  throw "$Data already has files, so the data at $($existing.Data) can't " +
+    "move there. Move or delete them, then try again."
 }
 
 $repo = (Resolve-Path "$PSScriptRoot\..\..").Path
-$taskPath = "\dgg-tools\"
 
 Write-Host "building the logger"
 cargo build --release -p logger --manifest-path "$repo\Cargo.toml"
@@ -68,62 +94,34 @@ if ($LASTEXITCODE -ne 0) { throw "cargo build failed" }
 $commit = git -C $repo describe --always --dirty
 $stamp = "$(Get-Date -Format yyyyMMdd-HHmmss)-$commit"
 $bin = "$Root\bin\$stamp"
-$logs = "$Root\logs"
-
-$system = [Security.Principal.SecurityIdentifier]"S-1-5-18"
-$administrators = [Security.Principal.SecurityIdentifier]"S-1-5-32-544"
-
-# Junctions and symlinks under `$path`, without following them.
-function Find-Links($path) {
-  foreach ($entry in [IO.Directory]::EnumerateFileSystemEntries($path)) {
-    $attributes = [IO.File]::GetAttributes($entry)
-    if ($attributes -band [IO.FileAttributes]::ReparsePoint) {
-      $entry
-    } elseif ($attributes -band [IO.FileAttributes]::Directory) {
-      Find-Links $entry
-    }
-  }
-}
-
-# Makes `$path` writable only by SYSTEM and Administrators, readable by
-# everyone else. Whatever SYSTEM runs or writes to must not be changeable by
-# anyone less: a replaced binary runs as SYSTEM, and a directory swapped for
-# a junction sends SYSTEM's writes anywhere.
-function Protect-Directory($path) {
-  if (Test-Path -LiteralPath $path) {
-    $owner = (Get-Item -LiteralPath $path -Force).GetAccessControl(
-      "Owner").GetOwner([Security.Principal.SecurityIdentifier])
-    if ($owner -ne $system -and $owner -ne $administrators) {
-      throw "$path exists and isn't owned by Administrators or SYSTEM, " +
-        "so someone else may have prepared it. Check it, then delete or " +
-        "take ownership of it, and install again."
-    }
-    $links = @(Find-Links $path)
-    if ($links) {
-      throw "$path contains links, which SYSTEM would follow: " +
-        ($links -join ", ")
-    }
-  } else {
-    New-Item -ItemType Directory $path | Out-Null
-  }
-  icacls $path /inheritance:r /grant:r "*S-1-5-18:(OI)(CI)F" `
-    "*S-1-5-32-544:(OI)(CI)F" "*S-1-5-32-545:(OI)(CI)RX" /Q | Out-Null
-  if ($LASTEXITCODE -ne 0) { throw "icacls failed on $path" }
-  if (Get-ChildItem -LiteralPath $path -Force) {
-    # Earlier installs granted this user write access; drop every explicit
-    # entry and owner below, leaving only what's inherited from `$path`.
-    icacls "$path\*" /reset /T /C /Q | Out-Null
-    icacls "$path\*" /setowner "*S-1-5-32-544" /T /C /Q | Out-Null
-  }
-}
 
 if ($machine) {
+  # Before anything moves in: refuses a root someone else prepared.
   Protect-Directory $Root
-  $inRoot = [IO.Path]::GetFullPath($Data).StartsWith(
-    [IO.Path]::GetFullPath($Root) + "\", "OrdinalIgnoreCase")
-  if (-not $inRoot) { Protect-Directory $Data }
+}
+if ($moving) {
+  Write-Host ("moving the $($existing.Scope.ToLower()) install from " +
+    "$($existing.Root)")
+  Remove-Tasks $existing.Root
+  try {
+    Move-Directory $existing.Data $Data
+    Move-Logs $existing.Logs $logs
+  } catch {
+    throw "Moving failed, and the old install's tasks are already " +
+      "removed: $_`nFix the cause and run this again, or run it with " +
+      "-Scope $($existing.Scope) to go back."
+  }
+  if (-not (Test-Within $existing.Root $Root)) { Remove-Root $existing.Root }
+  if (-not $machine) {
+    Unprotect-Directory $Data
+    Unprotect-Directory $logs
+  }
 }
 New-Item -ItemType Directory -Force $bin, $logs, $Data | Out-Null
+if ($machine) {
+  Protect-Directory $Root
+  if (-not (Test-Within $Data $Root)) { Protect-Directory $Data -Adopt }
+}
 foreach ($name in "capture", "index", "compact", "serve", "sync",
   "backfill", "gaps") {
   Copy-Item "$repo\target\release\$name.exe" $bin
@@ -136,9 +134,9 @@ if ($machine) {
     -LogonType ServiceAccount -RunLevel Highest
   $start = New-ScheduledTaskTrigger -AtStartup
 } else {
-  $principal = New-ScheduledTaskPrincipal -UserId $user `
+  $principal = New-ScheduledTaskPrincipal -UserId $User `
     -LogonType Interactive -RunLevel Limited
-  $start = New-ScheduledTaskTrigger -AtLogOn -User $user
+  $start = New-ScheduledTaskTrigger -AtLogOn -User $User
 }
 
 $always = @{
@@ -151,6 +149,7 @@ $always = @{
   Priority = 4
 }
 
+# Get-Install reads -Program, -Log and -Data back from these arguments.
 function Supervised($name, [string]$flags) {
   # Hidden, though a user-scope task's console may still flash at start.
   New-ScheduledTaskAction -Execute "powershell.exe" -WorkingDirectory $bin `
@@ -163,30 +162,29 @@ function Supervised($name, [string]$flags) {
 # Parallel, so an upgrade's new capture runs beside the old until the
 # handoff.
 $settings = New-ScheduledTaskSettingsSet @always -MultipleInstances Parallel
-Register-ScheduledTask -TaskPath $taskPath -TaskName capture -Force `
+Register-ScheduledTask -TaskPath $TaskPath -TaskName capture -Force `
   -Action (Supervised capture) -Trigger $start `
   -Principal $principal -Settings $settings | Out-Null
 
 $settings = New-ScheduledTaskSettingsSet @always -MultipleInstances IgnoreNew
-Register-ScheduledTask -TaskPath $taskPath -TaskName index -Force `
+Register-ScheduledTask -TaskPath $TaskPath -TaskName index -Force `
   -Action (Supervised index "-Follow") -Trigger $start `
   -Principal $principal -Settings $settings | Out-Null
 
 $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable `
   -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
   -ExecutionTimeLimit (New-TimeSpan -Hours 4) -MultipleInstances IgnoreNew
-Register-ScheduledTask -TaskPath $taskPath -TaskName compact -Force `
+Register-ScheduledTask -TaskPath $TaskPath -TaskName compact -Force `
   -Action (Supervised compact "-Once") `
   -Trigger (New-ScheduledTaskTrigger -Daily -At $CompactAt) `
   -Principal $principal -Settings $settings | Out-Null
 
 # The old index (if any) is stopped outright; the old capture is left to
 # hand off.
-Stop-ScheduledTask -TaskPath $taskPath -TaskName index
-Get-Process index -ErrorAction SilentlyContinue |
-  Where-Object { $_.Path -like "$Root\bin\*" } | Stop-Process -Force
-Start-ScheduledTask -TaskPath $taskPath -TaskName index
-Start-ScheduledTask -TaskPath $taskPath -TaskName capture
+Stop-ScheduledTask -TaskPath $TaskPath -TaskName index
+Stop-Running $Root index
+Start-ScheduledTask -TaskPath $TaskPath -TaskName index
+Start-ScheduledTask -TaskPath $TaskPath -TaskName capture
 Write-Host "started capture and index; logs in $logs"
 
 # Older builds go, unless something still runs from them.

@@ -4,17 +4,22 @@ Shows the logger's tasks, running processes, capture heartbeats and the end
 of each log. Needs no elevation.
 #>
 param(
-  [ValidateSet("Machine", "User")] [string]$Scope = "User",
+  # Found from the installed tasks if not given.
   [string]$Root,
   [string]$Data,
   [int]$Lines = 5
 )
 
+. "$PSScriptRoot\common.ps1"
+
+$install = Get-Install
 if (-not $Root) {
-  $Root = if ($Scope -eq "Machine") { "$env:ProgramData\dgg-tools" }
-  else { "$env:LOCALAPPDATA\dgg-tools" }
+  $Root = if ($install) { $install.Root } else { Get-DefaultRoot User }
 }
-if (-not $Data) { $Data = "$Root\data" }
+if (-not $Data) { $Data = if ($install) { $install.Data } else { "$Root\data" } }
+if ($install) {
+  Write-Host "$($install.Scope.ToLower()) install in $Root, data in $Data"
+}
 
 Get-ScheduledTask -TaskPath "\dgg-tools\" -ErrorAction SilentlyContinue |
   ForEach-Object {
