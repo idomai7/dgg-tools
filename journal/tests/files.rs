@@ -98,7 +98,7 @@ fn write_read_and_rollover() {
 #[test]
 fn backfill_files_by_the_given_day() {
   let root = TempRoot::new();
-  let mut writer = Writer::backfill(&root.0, "backfill-x");
+  let mut writer = Writer::backfill(&root.0, "backfill-x").unwrap();
   let fetched = |timestamp| Body::Fetched {
     source: "linkers".into(),
     timestamp,

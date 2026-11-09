@@ -2,13 +2,13 @@
 
 use {
   crate::{
-    layout::{backfill_file, live_file, utc_day},
+    layout::{backfill_file, backfill_root, live_file, lock_file, utc_day},
     record::v0::{self, Body},
   },
   ::std::{
-    fs::{self, File, OpenOptions},
+    fs::{self, File, OpenOptions, TryLockError},
     io::{self, Read, Seek, SeekFrom, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
     time::{Duration, Instant},
   },
 };
@@ -27,6 +27,8 @@ pub struct Writer {
   root: PathBuf,
   instance: String,
   backfill: bool,
+  /// For backfill: the held [`lock_file`], and its path.
+  lock: Option<(PathBuf, File)>,
   open: Option<(String, File)>,
   dirty: bool,
   last_sync: Instant,
@@ -49,6 +51,7 @@ impl Writer {
       root: root.into(),
       instance,
       backfill: false,
+      lock: None,
       open: None,
       dirty: false,
       last_sync: Instant::now(),
@@ -58,16 +61,25 @@ impl Writer {
   /// A writer for `instance`'s backfill files under journal `root`, filed
   /// with [`Writer::write_on`] by the day of what they hold.
   ///
+  /// Those days are usually closed already, so it holds `instance`'s
+  /// [`lock_file`] until dropped: compaction leaves the files of a held
+  /// instance alone (see [`writing`]). Fails if the lock is already held.
+  ///
   /// # Panics
   ///
   /// If `instance` isn't [`v0::valid_instance`].
   pub fn backfill(
     root: impl Into<PathBuf>,
     instance: impl Into<String>,
-  ) -> Self {
+  ) -> io::Result<Self> {
     let mut writer = Self::new(root, instance);
     writer.backfill = true;
-    writer
+    let path = lock_file(&backfill_root(&writer.root), &writer.instance);
+    fs::create_dir_all(path.parent().unwrap())?;
+    let file = File::create(&path)?;
+    file.try_lock()?;
+    writer.lock = Some((path, file));
+    Ok(writer)
   }
 
   /// The instance id written on every line.
@@ -172,5 +184,25 @@ impl Writer {
 impl Drop for Writer {
   fn drop(&mut self) {
     let _ = self.sync();
+    if let Some((path, file)) = self.lock.take() {
+      drop(file);
+      let _ = fs::remove_file(path);
+    }
+  }
+}
+
+/// Whether a [backfill](Writer::backfill) writer holds `instance`'s
+/// [`lock_file`] under journal `root` (a backfill root), so may still write
+/// that instance's files.
+pub fn writing(root: &Path, instance: &str) -> io::Result<bool> {
+  let file = match File::open(lock_file(root, instance)) {
+    Ok(file) => file,
+    Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
+    Err(e) => return Err(e),
+  };
+  match file.try_lock_shared() {
+    Ok(()) => Ok(false),
+    Err(TryLockError::WouldBlock) => Ok(true),
+    Err(TryLockError::Error(e)) => Err(e),
   }
 }

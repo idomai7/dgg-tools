@@ -87,6 +87,14 @@ pub fn backfill_files(root: &Path) -> io::Result<Vec<PathBuf>> {
   live_files(&backfill_root(root))
 }
 
+/// The lock a writer holds on `instance` under journal `root` for as long
+/// as it may write that instance's files: `control/<instance>.lock`. Only
+/// backfill runs take one (see [`Writer::backfill`](crate::Writer::backfill)),
+/// since only they write to days that are already closed.
+pub fn lock_file(root: &Path, instance: &str) -> PathBuf {
+  root.join("control").join(format!("{instance}.lock"))
+}
+
 /// The directory holding archived days under journal `root`.
 pub fn archive_dir(root: &Path) -> PathBuf {
   root.join("archive")

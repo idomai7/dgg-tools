@@ -1,8 +1,9 @@
 use {
   ::journal::{
-    Reader,
+    Reader, Writer,
     archive::{self},
-    layout::{archive_file, live_day_dir},
+    layout::{archive_file, backfill_root, live_day_dir, lock_file},
+    record::v0::Body,
   },
   ::logger::compact::{closed_days, compact_day},
   ::sha2::{Digest, Sha256},
@@ -166,4 +167,40 @@ fn keeps_lines_repeated_within_one_file() {
   let again = compact_day(&root.0, DAY, 3).unwrap().unwrap();
   assert_eq!(again.duplicates, 2);
   assert_eq!(root.archived(), twice);
+}
+
+#[test]
+fn leaves_the_files_of_a_running_backfill() {
+  let root = TempRoot::new();
+  let backfill = backfill_root(&root.0);
+  let dir = live_day_dir(&backfill, DAY);
+  fs::create_dir_all(&dir).unwrap();
+  fs::write(
+    dir.join("backfill-done.journal"),
+    "journal 0.1
+5 backfill-done 1 fetchrange x 0 5
+",
+  )
+  .unwrap();
+  let mut running = Writer::backfill(&root.0, "backfill-running").unwrap();
+  let range = Body::FetchRange {
+    source: "x".into(),
+    from: 5,
+    to: 10,
+  };
+  running.write_on(5, 10, 1, range).unwrap();
+  running.sync().unwrap();
+
+  // Only the finished run's file is compacted.
+  let done = compact_day(&backfill, DAY, 3).unwrap().unwrap();
+  assert_eq!((done.files, done.busy, done.archive.lines), (1, 1, 1));
+  assert!(dir.join("backfill-running.journal").exists());
+
+  // Once the run is over, its file is merged in, and its lock is gone.
+  drop(running);
+  assert!(!lock_file(&backfill, "backfill-running").exists());
+  let done = compact_day(&backfill, DAY, 3).unwrap().unwrap();
+  assert_eq!((done.files, done.busy, done.remerged), (1, 0, true));
+  assert_eq!(done.archive.lines, 2);
+  assert!(!dir.exists());
 }

@@ -15,12 +15,18 @@
 //! last, and only if they haven't grown since they were read; a file that
 //! did is merged again next time. A crash at any point leaves the live files
 //! or a verified archive (or both, which the next run merges again).
+//!
+//! The backfill journal is compacted the same way, as a journal root of its
+//! own. Backfill runs write to days that are already closed, so the files of
+//! a run still going (holding its lock, see [`writing`]) are left alone, to
+//! be merged once it's done.
 
 use {
   ::journal::{
     archive::{self, Archive, valid_day},
     layout::{EXTENSION, archive_file, live_day_dir, live_dir},
     record::{Version, v0},
+    writer::writing,
   },
   ::sha2::{Digest, Sha256},
   ::std::{
@@ -42,6 +48,8 @@ pub struct Day {
   pub files: u64,
   /// Live files left in place because they grew while being compacted.
   pub grown: u64,
+  /// Live files left in place because a backfill run still writes them.
+  pub busy: u64,
   /// Whether an existing archive for the day was merged in.
   pub remerged: bool,
   /// Copies of lines dropped because they came from merging the same file
@@ -146,7 +154,8 @@ fn hex(bytes: &[u8]) -> String {
 }
 
 /// Compacts `day`'s live files (and existing archive) under `journal_root`
-/// into its archive, at zstd `level`. `None` if it has no live files.
+/// into its archive, at zstd `level`. `None` if it has no live files that
+/// aren't [busy](Day::busy).
 pub fn compact_day(
   journal_root: &Path,
   day: &str,
@@ -165,7 +174,7 @@ pub fn compact_day(
       live: None,
     });
   }
-  let mut live = Vec::new();
+  let (mut live, mut busy) = (Vec::new(), 0);
   let entries = match fs::read_dir(live_day_dir(journal_root, day)) {
     Ok(entries) => entries,
     Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
@@ -173,10 +182,16 @@ pub fn compact_day(
   };
   for entry in entries {
     let path = entry?.path();
-    if path
+    if !path
       .extension()
       .is_some_and(|extension| extension == EXTENSION)
     {
+      continue;
+    }
+    let instance = path.file_stem().unwrap().to_string_lossy();
+    if writing(journal_root, &instance)? {
+      busy += 1;
+    } else {
       live.push(path);
     }
   }
@@ -279,6 +294,7 @@ pub fn compact_day(
     day: day.into(),
     files,
     grown,
+    busy,
     remerged,
     duplicates: (total - lines.len()) as u64,
     torn: inputs.iter().filter(|input| input.torn).count() as u64,

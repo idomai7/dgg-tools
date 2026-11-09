@@ -11,7 +11,9 @@
 //! journal of its own at `<root>/backfill`, laid out the same way:
 //! `backfill/live/YYYY-MM-DD/<instance>.journal`, filed by the day of the
 //! messages inside ([`Writer::backfill`]), compacted into `backfill/archive/
-//! YYYY/MM/`. So non-canonical data never mixes with live capture.
+//! YYYY/MM/`. So non-canonical data never mixes with live capture. A
+//! backfill run holds `backfill/control/<instance>.lock` while it writes, so
+//! its files aren't compacted from under it.
 //!
 //! # Versions
 //!

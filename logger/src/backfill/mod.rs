@@ -106,7 +106,7 @@ pub async fn run(
 ) -> io::Result<Stats> {
   assert!(valid_token(source.name()), "source name must be a token");
   let mut writer =
-    Writer::backfill(options.journal_root.clone(), options.instance.clone());
+    Writer::backfill(options.journal_root.clone(), options.instance.clone())?;
   let mut stats = Stats::default();
   let mut failures = 0;
   let mut last_report = ::std::time::Instant::now();

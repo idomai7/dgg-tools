@@ -134,7 +134,7 @@ fn fetched_spans_fill_gaps() {
   drop(a);
   // Two touching spans cover 2000..5000; 6000..8000 is only half fetched.
   // Read from the backfill directory.
-  let mut backfill = Writer::backfill(&journal, "backfill-x");
+  let mut backfill = Writer::backfill(&journal, "backfill-x").unwrap();
   for (from, to) in [(1900, 3000), (3000, 5100), (7000, 8100)] {
     let range = Body::FetchRange {
       source: "rustlesearch".into(),
@@ -162,7 +162,7 @@ fn fetched_spans_fill_gaps() {
 fn unfetched_ranges_resume_a_history_import() {
   let root = TempRoot::new();
   let journal = root.0.join("journal");
-  let mut backfill = Writer::backfill(&journal, "backfill-x");
+  let mut backfill = Writer::backfill(&journal, "backfill-x").unwrap();
   let spans = [
     ("linkers", 2000, 3000),
     ("linkers", 3000, 4000),
