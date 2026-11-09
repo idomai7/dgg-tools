@@ -231,3 +231,26 @@ fn moderation_from_chat_gui() {
   };
   assert_eq!(phrase.phrase, "phrase 1");
 }
+
+#[test]
+fn paid_from_chat_gui() {
+  let Event::GiftSub(gift) = &chat_gui("GIFTSUB")[0] else {
+    panic!()
+  };
+  assert_eq!(
+    (
+      gift.user.nick.as_str(),
+      gift.recipient.nick.as_str(),
+      gift.tier
+    ),
+    ("user1", "user2", 2)
+  );
+  let Event::MassGift(mass) = &chat_gui("MASSGIFT")[0] else {
+    panic!()
+  };
+  assert_eq!(mass.quantity, 5);
+  let Event::Donation(donation) = &chat_gui("DONATION")[0] else {
+    panic!()
+  };
+  assert_eq!((donation.amount, donation.audio.as_deref()), (500, None));
+}

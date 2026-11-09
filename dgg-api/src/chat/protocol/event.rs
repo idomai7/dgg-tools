@@ -344,6 +344,68 @@ pub struct Phrase {
   pub timestamp: i64,
 }
 
+/// `GIFTSUB`: `user` gifted `recipient` a subscription, shown in chat until
+/// `expiration_timestamp`. From chat-gui.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GiftSub {
+  pub user: User,
+  pub recipient: User,
+  pub tier: u8,
+  /// Such as `Tier I`.
+  pub tier_label: String,
+  /// Months.
+  pub amount: u64,
+  /// Whether it's one of a [`MassGift`]'s.
+  #[serde(default)]
+  pub from_mass_gift: bool,
+  /// Their message with it; often empty.
+  pub data: String,
+  /// Unix ms.
+  pub timestamp: i64,
+  /// Unix ms.
+  pub expiration_timestamp: i64,
+  pub uuid: String,
+}
+
+/// `MASSGIFT`: `user` gifted `quantity` subscriptions to whoever was in
+/// chat. From chat-gui.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MassGift {
+  pub user: User,
+  pub tier: u8,
+  /// Such as `Tier I`.
+  pub tier_label: String,
+  /// Months each.
+  pub amount: u64,
+  pub quantity: u64,
+  pub data: String,
+  /// Unix ms.
+  pub timestamp: i64,
+  /// Unix ms.
+  pub expiration_timestamp: i64,
+  pub uuid: String,
+}
+
+/// `DONATION`: shown in chat until `expiration_timestamp`. From chat-gui.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Donation {
+  pub user: User,
+  /// In cents.
+  pub amount: u64,
+  /// Their message with it.
+  pub data: String,
+  /// Unix ms.
+  pub timestamp: i64,
+  /// Unix ms.
+  pub expiration_timestamp: i64,
+  pub uuid: String,
+  /// A URL of audio played with it, if any.
+  pub audio: Option<String>,
+}
+
 /// One decoded frame.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
@@ -373,6 +435,9 @@ pub enum Event {
   Pin(Pin),
   AddPhrase(Phrase),
   RemovePhrase(Phrase),
+  GiftSub(GiftSub),
+  MassGift(MassGift),
+  Donation(Donation),
   /// An event this crate doesn't type (yet).
   Other {
     event: String,
@@ -424,6 +489,9 @@ impl Event {
       "PIN" => json(payload).map(Self::Pin),
       "ADDPHRASE" => json(payload).map(Self::AddPhrase),
       "REMOVEPHRASE" => json(payload).map(Self::RemovePhrase),
+      "GIFTSUB" => json(payload).map(Self::GiftSub),
+      "MASSGIFT" => json(payload).map(Self::MassGift),
+      "DONATION" => json(payload).map(Self::Donation),
       _ => {
         return Self::Other {
           event: event.into(),
@@ -463,6 +531,9 @@ impl Event {
       Self::Pin(_) => "PIN",
       Self::AddPhrase(_) => "ADDPHRASE",
       Self::RemovePhrase(_) => "REMOVEPHRASE",
+      Self::GiftSub(_) => "GIFTSUB",
+      Self::MassGift(_) => "MASSGIFT",
+      Self::Donation(_) => "DONATION",
       Self::Other { event, .. } | Self::Unreadable { event, .. } => event,
     }
   }
