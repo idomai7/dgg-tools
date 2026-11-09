@@ -5,3 +5,10 @@ edition.workspace = true
 description = "A read-only viewer for dgg chat (placeholder)"
 
 [dependencies]
+dgg-api = { workspace = true, features = ["http"] }
+image.workspace = true
+ratatui.workspace = true
+ratatui-image.workspace = true
+reqwest.workspace = true
+rustls.workspace = true
+tokio.workspace = true
