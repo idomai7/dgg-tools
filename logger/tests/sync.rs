@@ -4,7 +4,7 @@ use {
     compact::compact_day,
     manifest::{self, File, archive_path, valid_live_path},
     serve::router,
-    sync::{TAKEN, sync},
+    sync::{MAX_FILE, TAKEN, sync, unpack},
   },
   ::logger_journal::{Writer, record::v0::Body},
   ::std::{
@@ -316,5 +316,94 @@ async fn takes_backfill_archives() {
   assert_eq!(
     fs::read(local.0.join(path)).unwrap(),
     fs::read(remote.0.join(path)).unwrap()
+  );
+}
+
+/// Serves `routes` on a free port; returns its URL.
+async fn serve_routes(routes: ::axum::Router) -> String {
+  let listener = ::tokio::net::TcpListener::bind("127.0.0.1:0")
+    .await
+    .unwrap();
+  let url = format!("http://{}", listener.local_addr().unwrap());
+  ::tokio::spawn(async move { ::axum::serve(listener, routes).await.unwrap() });
+  url
+}
+
+#[::tokio::test]
+async fn takes_no_more_than_the_manifest_says() {
+  use ::axum::{http::StatusCode, response::Redirect, routing::get};
+  let local = TempRoot::new();
+  let sync_from = |routes: ::axum::Router| async {
+    let peer = Peer {
+      url: serve_routes(routes).await,
+      token: "secret".into(),
+    };
+    sync(&peer, &local.0).await
+  };
+  let manifest = |text: String| {
+    let text = format!("journal-manifest 0.0\n{text}");
+    ::axum::Router::new().route("/manifest", get(move || async { text }))
+  };
+
+  // A file sent longer than listed: only what was listed is taken.
+  let routes = manifest("live/2026-11-08/a.journal 5\n".into()).route(
+    "/files/{*path}",
+    get(|| async { (StatusCode::PARTIAL_CONTENT, "x".repeat(100_000)) }),
+  );
+  let stats = sync_from(routes).await.unwrap();
+  assert_eq!((stats.updated, stats.bytes), (1, 5));
+  let path = local.0.join("live/2026-11-08/a.journal");
+  assert_eq!(fs::read(path).unwrap(), b"xxxxx");
+
+  // A file listed as too big to take.
+  let huge = MAX_FILE + 1;
+  let error =
+    sync_from(manifest(format!("live/2026-11-09/a.journal {huge}\n")))
+      .await
+      .unwrap_err();
+  assert!(error.contains("listed as over"), "{error}");
+
+  // An archive that isn't what the manifest says: nothing is kept.
+  let sha = "ab".repeat(32);
+  let routes =
+    manifest(format!("archive/2026/11/2026-11-07.journal.zst 3 {sha}\n"))
+      .route("/files/{*path}", get(|| async { "abc" }));
+  let error = sync_from(routes).await.unwrap_err();
+  assert!(error.contains("doesn't match"), "{error}");
+  assert_eq!(fs::read_dir(local.0.join("control")).unwrap().count(), 0);
+  assert!(!local.0.join("archive").exists());
+
+  // A redirect isn't followed: the token would go with it.
+  let routes = ::axum::Router::new().route(
+    "/manifest",
+    get(|| async { Redirect::temporary("/elsewhere") }),
+  );
+  let error = sync_from(routes).await.unwrap_err();
+  assert!(error.contains("307"), "{error}");
+}
+
+#[test]
+fn refuses_a_decompression_bomb() {
+  // Zeros compress about 30,000 to one: a readable header, then more than
+  // the limit of them, makes a tiny archive.
+  let mut encoder = ::zstd::Encoder::new(Vec::new(), 3).unwrap();
+  encoder
+    .write_all(
+      b"journal 0.1
+",
+    )
+    .unwrap();
+  encoder.write_all(&vec![0; 8 << 20]).unwrap();
+  let bomb = encoder.finish().unwrap();
+  assert!(bomb.len() < 4 << 10, "{}", bomb.len());
+  let root = TempRoot::new();
+  fs::create_dir_all(&root.0).unwrap();
+  let download = root.0.join("bomb.zst");
+  fs::write(&download, &bomb).unwrap();
+  let error = unpack(&download, None, 1 << 20).unwrap_err();
+  assert!(error.to_string().contains("over 1048576 bytes"), "{error}");
+  assert_eq!(
+    unpack(&download, None, 16 << 20).unwrap(),
+    ((8 << 20) + 12, 0)
   );
 }
