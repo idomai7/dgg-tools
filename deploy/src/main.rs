@@ -8,6 +8,7 @@ use {
     status::{self, LOGS, Watcher},
     supervise::{self, Config, Exit, Stop},
   },
+  ::logger::cli,
   ::std::{path::PathBuf, process::ExitCode, time::Duration},
 };
 
@@ -94,6 +95,36 @@ enum Command {
     #[arg(long, default_value_t = 5)]
     lines: usize,
   },
+  Capture(WithData<cli::Capture>),
+  Index(WithData<cli::Index>),
+  Compact(WithData<cli::Compact>),
+  Serve(WithData<cli::Serve>),
+  Sync(WithData<cli::Sync>),
+  Backfill(WithData<cli::Backfill>),
+  Gaps(WithData<cli::Gaps>),
+}
+
+// One of the logger's own commands, with the data directory it works on
+// (not a doc comment, which would replace the command's own).
+#[derive(::clap::Args)]
+struct WithData<T: ::clap::Args> {
+  /// Data directory, holding the journal and the index (default: the
+  /// installed logger's).
+  #[arg(long)]
+  data: Option<PathBuf>,
+  #[command(flatten)]
+  command: T,
+}
+
+impl<T: ::clap::Args> WithData<T> {
+  /// `run` on the data directory.
+  fn run(
+    self,
+    run: impl FnOnce(T, &::std::path::Path) -> ExitCode,
+  ) -> ExitCode {
+    let data = self.data.unwrap_or_else(|| installed().data);
+    run(self.command, &data)
+  }
 }
 
 fn main() -> ExitCode {
@@ -152,6 +183,13 @@ fn main() -> ExitCode {
         }
       }
     }
+    Command::Capture(command) => command.run(cli::Capture::run),
+    Command::Index(command) => command.run(cli::Index::run),
+    Command::Compact(command) => command.run(cli::Compact::run),
+    Command::Serve(command) => command.run(cli::Serve::run),
+    Command::Sync(command) => command.run(cli::Sync::run),
+    Command::Backfill(command) => command.run(cli::Backfill::run),
+    Command::Gaps(command) => command.run(cli::Gaps::run),
   }
 }
 
