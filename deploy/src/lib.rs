@@ -2,6 +2,7 @@
 //! programs running, and (to come) installing it as a scheduled task or a
 //! Windows service, and showing its status.
 
+pub mod install;
 pub mod legacy;
 pub mod lifeline;
 pub mod log;

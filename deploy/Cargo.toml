@@ -8,6 +8,10 @@ description = "Runs, installs and inspects the dgg logger as a service"
 name = "dgg-logger"
 path = "src/main.rs"
 
+[[bin]]
+name = "dgg-supervisor"
+path = "src/bin/supervisor.rs"
+
 [dependencies]
 journal.workspace = true
 logger.workspace = true

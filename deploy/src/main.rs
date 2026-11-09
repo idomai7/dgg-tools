@@ -3,6 +3,7 @@
 use {
   ::clap::{Parser, Subcommand},
   ::deploy::{
+    install,
     paths::{Paths, user_root},
     status::{self, LOGS, Watcher},
     supervise::{self, Config, Exit, Stop},
@@ -36,6 +37,34 @@ enum Command {
     #[arg(long, default_value_t = 60)]
     compact_every: u64,
   },
+  /// Install the logger for this user, from the build this program is in,
+  /// as a scheduled task that starts at logon; or upgrade the installed
+  /// one, without missing a message. Takes over an install made by the
+  /// PowerShell scripts.
+  #[cfg(windows)]
+  Install {
+    /// Where the install goes (default: the installed one's, else
+    /// `%LOCALAPPDATA%\dgg-tools`).
+    #[arg(long)]
+    root: Option<PathBuf>,
+    /// The data directory, if not `<root>\data`.
+    #[arg(long)]
+    data: Option<PathBuf>,
+    /// The logs directory, if not `<root>\logs`.
+    #[arg(long)]
+    logs: Option<PathBuf>,
+    /// Builds to keep in `<root>\bin`.
+    #[arg(long, default_value_t = 3)]
+    keep: usize,
+  },
+  /// Remove the install: its task, programs and binaries. The data and
+  /// logs stay.
+  #[cfg(windows)]
+  Uninstall {
+    /// Where to clean up if nothing is installed (after shell runs).
+    #[arg(long)]
+    root: Option<PathBuf>,
+  },
   /// Show what the logger is doing: its programs, each capture's health,
   /// the journal, the index, free space and the ends of the logs.
   Status {
@@ -68,6 +97,21 @@ fn main() -> ExitCode {
       bin_dir,
       compact_every,
     } => supervise(data, logs, bin_dir, compact_every),
+    #[cfg(windows)]
+    Command::Install {
+      root,
+      data,
+      logs,
+      keep,
+    } => install(&install::Options {
+      root,
+      data,
+      logs,
+      keep: keep.max(1),
+      ..install::Options::default()
+    }),
+    #[cfg(windows)]
+    Command::Uninstall { root } => uninstall(root),
     Command::Status {
       root,
       data,
@@ -98,18 +142,64 @@ fn main() -> ExitCode {
   }
 }
 
-/// The installed logger's directories: the PowerShell-era install's if
-/// there is one, else the user install's.
+/// The installed logger's directories, else a user install's.
 fn installed() -> Paths {
-  #[cfg(windows)]
-  if let Ok(Some(legacy)) = ::deploy::legacy::find(::deploy::legacy::FOLDER) {
-    return Paths {
-      root: legacy.root,
-      data: legacy.data,
-      logs: legacy.logs,
-    };
+  match install::installed() {
+    Ok(Some(installed)) => installed.paths(),
+    _ => Paths::under(user_root()),
   }
-  Paths::under(user_root())
+}
+
+#[cfg(windows)]
+fn install(options: &install::Options) -> ExitCode {
+  eprintln!("installing; waiting for the new capture to be healthy");
+  match install::install(options) {
+    Ok(done) => {
+      match &done.replaced {
+        Some(install::Installed::Task(_)) => eprintln!("upgraded"),
+        Some(install::Installed::Legacy(_)) => {
+          eprintln!("took over from the PowerShell install")
+        }
+        None => eprintln!("installed"),
+      }
+      eprintln!("  build    {}", done.build.display());
+      eprintln!("  data     {}", done.paths.data.display());
+      eprintln!("  logs     {}", done.paths.logs.display());
+      eprintln!("  capture  {} (healthy)", done.capture);
+      eprintln!("starts at logon; `dgg-logger status --watch` to see it");
+      for build in done.left {
+        eprintln!("still in use, left for next time: {}", build.display());
+      }
+      ExitCode::SUCCESS
+    }
+    Err(e) => {
+      eprintln!("install failed: {e}");
+      ExitCode::FAILURE
+    }
+  }
+}
+
+#[cfg(windows)]
+fn uninstall(root: Option<PathBuf>) -> ExitCode {
+  match install::uninstall(root) {
+    Ok(removed) => {
+      match removed.paths {
+        Some(paths) => eprintln!(
+          "removed the task and the binaries in {}",
+          paths.bin().display()
+        ),
+        None => eprintln!("nothing installed"),
+      }
+      for path in removed.kept {
+        eprintln!("kept {}", path.display());
+      }
+      ExitCode::SUCCESS
+    }
+    Err(e) => {
+      eprintln!("uninstall failed: {e}");
+      ExitCode::FAILURE
+    }
+  }
 }
 
 fn print_status(paths: &Paths, lines: usize) -> ::std::io::Result<()> {

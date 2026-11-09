@@ -104,3 +104,31 @@ pub fn kill_scripts(
   }
   Ok(())
 }
+
+/// How many processes run from anywhere under `dir`.
+pub fn count_under(dir: &Path) -> io::Result<usize> {
+  Ok(
+    system()?
+      .processes()
+      .values()
+      .filter(|process| process.exe().is_some_and(|exe| exe.starts_with(dir)))
+      .count(),
+  )
+}
+
+/// Kills every process running from under `dir`, `first` names first (a
+/// supervisor, whose programs then die with it), and waits (briefly) for
+/// them to go.
+pub fn kill_under(dir: &Path, first: &[&str]) -> io::Result<()> {
+  kill_from(dir, first)?;
+  for process in system()?.processes().values() {
+    if process.exe().is_some_and(|exe| exe.starts_with(dir)) {
+      process.kill();
+    }
+  }
+  let until = Instant::now() + Duration::from_secs(10);
+  while count_under(dir)? > 0 && Instant::now() < until {
+    thread::sleep(Duration::from_millis(200));
+  }
+  Ok(())
+}

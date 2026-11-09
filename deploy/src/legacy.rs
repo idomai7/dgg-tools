@@ -84,7 +84,7 @@ fn unescape(text: &str) -> String {
 }
 
 /// Runs a PowerShell command, its output read as UTF-8; `None` if it fails.
-fn powershell(command: &str) -> io::Result<Option<String>> {
+pub(crate) fn powershell(command: &str) -> io::Result<Option<String>> {
   let output = Command::new("powershell.exe")
     .args(["-NoProfile", "-NonInteractive", "-Command"])
     .arg(format!(
