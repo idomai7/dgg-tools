@@ -18,6 +18,7 @@ logger.workspace = true
 
 clap.workspace = true
 ctrlc.workspace = true
+dotenvy.workspace = true
 ratatui.workspace = true
 sysinfo.workspace = true
 

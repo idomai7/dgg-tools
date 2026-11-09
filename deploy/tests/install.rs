@@ -212,7 +212,7 @@ mod service {
 mod acl {
   use {
     super::TempDir,
-    ::deploy::install::acl::{elevated, links, owner},
+    ::deploy::install::acl::{elevated, links, owner, secret},
     ::std::{fs, process::Command},
   };
 
@@ -233,6 +233,24 @@ mod acl {
     assert!(made.status.success());
     assert_eq!(links(&dir.0).unwrap(), ::std::slice::from_ref(&junction));
     fs::remove_dir(&junction).unwrap();
+  }
+
+  /// Needs an elevated prompt (taking ownership for Administrators), so
+  /// skipped without one.
+  #[test]
+  fn keeps_secrets_from_users() {
+    if !elevated() {
+      return;
+    }
+    let dir = TempDir::new("secret");
+    let file = dir.0.join("peer.env");
+    fs::write(&file, "").unwrap();
+    secret(&file, &[r"NT AUTHORITY\LOCAL SERVICE"]).unwrap();
+    let shown = Command::new("icacls.exe").arg(&file).output().unwrap();
+    let shown = String::from_utf8_lossy(&shown.stdout);
+    assert!(shown.contains(r"NT AUTHORITY\LOCAL SERVICE:(R)"), "{shown}");
+    assert!(!shown.contains(r"BUILTIN\Users"), "{shown}");
+    assert!(!shown.contains("(I)"), "inherits: {shown}");
   }
 
   #[test]

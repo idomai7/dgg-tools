@@ -10,14 +10,14 @@ directory:
 | `compact` | Packs each finished day into one compressed archive | every hour |
 | `gaps` | Lists when no capture was connected | when you want |
 | `backfill` | Fetches missed messages from public logs | after an outage |
-| `sync`, `serve` | Copy the journal between hosts | when moving hosts |
+| `sync`, `serve` | Copy the journal between hosts | when moving hosts, or every 15 minutes from a peer |
 | `install`, `uninstall`, `status`, `supervise` | Run, install and inspect the rest | when you want |
 
 `dgg-supervisor` keeps capture and index running, restarts them after
-failures, and runs compact; it's `dgg-logger supervise` without a window,
-for the logon task and the service. In Task Manager, both show as
-"dgg-tools: ..."; the Details tab's Command line column tells the commands
-apart.
+failures, and runs compact (and sync, given a peer); it's `dgg-logger
+supervise` without a window, for the logon task and the service. In Task
+Manager, both show as "dgg-tools: ..."; the Details tab's Command line
+column tells the commands apart.
 
 The commands that work on the data (`capture` to `serve`) take `--data`,
 which defaults to the installed logger's.
@@ -34,7 +34,9 @@ An install lives in one folder:
       backfill\            messages fetched from other logs, kept apart
       control\             each running capture's status
     index.sqlite           the searchable index; can be rebuilt from the journal
-  logs\                    capture.log, index.log, compact.log, supervisor.log
+  logs\                    capture.log, index.log, compact.log, supervisor.log,
+                           sync.log
+  peer.env                 the peer to sync from, if any (holds its token)
 ```
 
 The journal is the record. The index can always be deleted and rebuilt with
@@ -149,6 +151,23 @@ limited to 200 requests a day.
 Don't start a history import (`backfill --from`) by hand yet: it's
 meant to run for weeks and comes later.
 
+## Syncing from another host
+
+An install can also pull another host's journal every 15 minutes, so it
+has whatever that host captured while this one was off. The other host
+runs `dgg-logger serve` with a token; then, here:
+
+```powershell
+$env:LOGGER_PEER_TOKEN = "<the token>"   # or LOGGER_PEER_TOKEN=... in .env
+target\release\dgg-logger install --peer http://other-host:8788
+```
+
+That writes `peer.env` in the install's folder, which the supervisor reads
+before each round, so it can be edited by hand too. In a machine install
+only administrators and the service can read it. The next `install` keeps
+it; `install --no-peer` removes it, and so does `uninstall`. Each round's
+output is in `sync.log`; the index picks up what arrives.
+
 ## Keeping the PC awake
 
 A user install only runs while you're logged on, and nothing runs while the
@@ -165,7 +184,8 @@ target\release\dgg-logger uninstall
 ```
 
 It stops everything running from the install's `bin\`, removes the task or
-service, and deletes the binaries. Only the data and logs are left, and the
+service, and deletes the binaries and `peer.env`. Only the data and logs
+are left, and the
 folder holding them; a machine install's get ordinary permissions back,
 owned by you, so you can move or delete them without elevation. A machine
 install needs an administrator prompt to remove. Delete the data and logs

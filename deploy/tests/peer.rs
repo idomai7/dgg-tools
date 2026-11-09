@@ -50,3 +50,25 @@ fn rejects_incomplete_files() {
     fs::remove_file(path).unwrap();
   }
 }
+
+#[test]
+fn reads_back_what_it_writes() {
+  let path = file(
+    "write", "OLD=1
+",
+  );
+  let peer = Peer {
+    url: "https://host:8788".into(),
+    token: "abc".into(),
+  };
+  peer::write(&path, &peer).unwrap();
+  assert_eq!(peer::read(&path).unwrap(), Some(peer.clone()));
+  let broken = Peer {
+    token: "a
+b"
+    .into(),
+    ..peer
+  };
+  assert!(peer::write(&path, &broken).is_err());
+  fs::remove_file(path).unwrap();
+}

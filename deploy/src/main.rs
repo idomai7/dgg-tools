@@ -71,6 +71,17 @@ enum Command {
     /// Builds to keep in `<root>\bin`.
     #[arg(long, default_value_t = 3)]
     keep: usize,
+    /// Sync from this host's `serve` every 15 minutes (e.g.
+    /// `http://old-host:8788`), with its token from `--peer-token`. Kept
+    /// in `<root>\peer.env` until changed or removed.
+    #[arg(long)]
+    peer: Option<String>,
+    /// The token for `--peer`.
+    #[arg(long, env = "LOGGER_PEER_TOKEN", hide_env_values = true)]
+    peer_token: Option<String>,
+    /// Stop syncing from a peer.
+    #[arg(long, conflicts_with = "peer")]
+    no_peer: bool,
   },
   /// Remove the install: its task or service, programs and binaries. The
   /// data and logs stay (a machine install's get ordinary permissions,
@@ -136,6 +147,8 @@ impl<T: ::clap::Args> WithData<T> {
 }
 
 fn main() -> ExitCode {
+  // A peer token, for `install --peer`, may be in .env.
+  let _ = ::dotenvy::dotenv();
   match Args::parse().command {
     Command::Supervise {
       data,
@@ -161,18 +174,44 @@ fn main() -> ExitCode {
       data,
       logs,
       keep,
-    } => install(&install::Options {
-      scope: if machine {
-        install::Scope::Machine
-      } else {
-        install::Scope::User
-      },
-      root,
-      data,
-      logs,
-      keep: keep.max(1),
-      ..install::Options::default()
-    }),
+      peer,
+      peer_token,
+      no_peer,
+    } => {
+      let peer = match (peer, peer_token, no_peer) {
+        (Some(url), _, _)
+          if !url.starts_with("http://") && !url.starts_with("https://") =>
+        {
+          eprintln!("--peer is a URL: http://host:port");
+          return ExitCode::FAILURE;
+        }
+        (Some(url), Some(token), _) => {
+          install::PeerChange::Set(::deploy::peer::Peer { url, token })
+        }
+        (Some(_), None, _) => {
+          eprintln!(
+            "--peer needs --peer-token (or LOGGER_PEER_TOKEN, in the \
+             environment or .env)"
+          );
+          return ExitCode::FAILURE;
+        }
+        (None, _, true) => install::PeerChange::Remove,
+        (None, _, false) => install::PeerChange::Keep,
+      };
+      install(&install::Options {
+        scope: if machine {
+          install::Scope::Machine
+        } else {
+          install::Scope::User
+        },
+        root,
+        data,
+        logs,
+        keep: keep.max(1),
+        peer,
+        ..install::Options::default()
+      })
+    }
     #[cfg(windows)]
     Command::Uninstall { root } => uninstall(root),
     Command::Status {
@@ -240,6 +279,9 @@ fn install(options: &install::Options) -> ExitCode {
       eprintln!("  data     {}", done.paths.data.display());
       eprintln!("  logs     {}", done.paths.logs.display());
       eprintln!("  capture  {} (healthy)", done.capture);
+      if let Some(peer) = &done.peer {
+        eprintln!("  syncs    from {peer} every 15 minutes");
+      }
       eprintln!("`dgg-logger status --watch` to see it");
       for build in done.left {
         eprintln!("still in use, left for next time: {}", build.display());

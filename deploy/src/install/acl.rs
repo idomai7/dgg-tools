@@ -145,6 +145,24 @@ pub fn protect(root: &Path) -> io::Result<()> {
   Ok(())
 }
 
+/// Makes the file `path` readable only by administrators, SYSTEM and
+/// `readers`, inheriting nothing: for secrets in a root [`protect`] lets
+/// every user read.
+pub fn secret(path: &Path, readers: &[&str]) -> io::Result<()> {
+  let text = path.to_string_lossy();
+  icacls(&[&text, "/setowner", &format!("*{ADMINISTRATORS}"), "/Q"])?;
+  let mut args = vec![
+    text.to_string(),
+    "/inheritance:r".into(),
+    "/grant:r".into(),
+    format!("*{SYSTEM}:F"),
+    format!("*{ADMINISTRATORS}:F"),
+  ];
+  args.extend(readers.iter().map(|reader| format!("{reader}:R")));
+  args.push("/Q".into());
+  icacls(&args.iter().map(String::as_str).collect::<Vec<_>>())
+}
+
 /// Lets `account` change `path` and everything under it.
 pub fn grant(path: &Path, account: &str) -> io::Result<()> {
   icacls(&[

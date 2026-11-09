@@ -19,6 +19,23 @@ pub struct Peer {
   pub token: String,
 }
 
+/// Writes `peer` to `path`, replacing what's there. An existing file keeps
+/// its permissions.
+pub fn write(path: &Path, peer: &Peer) -> io::Result<()> {
+  for value in [&peer.url, &peer.token] {
+    if value.is_empty() || value.contains(['\n', '\r']) {
+      return Err(io::Error::new(
+        io::ErrorKind::InvalidInput,
+        "the peer's URL and token must be one non-empty line each",
+      ));
+    }
+  }
+  fs::write(
+    path,
+    format!("{URL}={}\n{TOKEN}={}\n", peer.url, peer.token),
+  )
+}
+
 /// The peer in `path`; `None` if there's no file.
 pub fn read(path: &Path) -> io::Result<Option<Peer>> {
   let text = match fs::read_to_string(path) {

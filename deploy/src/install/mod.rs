@@ -22,6 +22,11 @@
 //!    [moved](moving) in.
 //! 4. The new task or service starts. Its capture, the newest, takes over
 //!    from the bridge, which exits.
+//!
+//! An install syncs from a peer once `<root>\peer.env` exists (see
+//! [`crate::peer`]): [`Options::peer`] sets or removes it. It moves with
+//! the root, and in a machine install only administrators and the service
+//! can read it, as it holds the peer's token.
 
 #[cfg(windows)]
 pub mod acl;
@@ -36,6 +41,7 @@ use {
   crate::{
     log::{now_ms, timestamp},
     paths::{Paths, user_root},
+    peer::{self, Peer},
     processes,
   },
   ::logger::control,
@@ -137,6 +143,19 @@ pub struct Options {
   pub healthy_within: Duration,
   /// How long an old capture may take to hand off and exit.
   pub handoff_within: Duration,
+  pub peer: PeerChange,
+}
+
+/// What an install does to the peer it syncs from.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum PeerChange {
+  /// Keeps whatever there is (moving it, if the root moves).
+  #[default]
+  Keep,
+  /// Syncs from this one.
+  Set(Peer),
+  /// Stops syncing.
+  Remove,
 }
 
 impl Default for Options {
@@ -149,6 +168,7 @@ impl Default for Options {
       keep: 3,
       healthy_within: Duration::from_secs(120),
       handoff_within: Duration::from_secs(120),
+      peer: PeerChange::Keep,
     }
   }
 }
@@ -165,6 +185,8 @@ pub struct Done {
   pub capture: String,
   /// Old builds still in use, left for next time.
   pub left: Vec<PathBuf>,
+  /// The URL it syncs from, if any.
+  pub peer: Option<String>,
 }
 
 /// `YYYYMMDD-HHMMSS-<build>` for a build made now (see [`crate::BUILD`]).
@@ -323,6 +345,9 @@ pub fn install(options: &Options) -> io::Result<Done> {
   // 1. The build, and a bridge capture from it.
   if options.scope == Scope::Machine {
     acl::protect(&paths.root)?;
+    // Protecting opened it to every user; until the service exists, only
+    // administrators.
+    secure_peer(&paths, &[])?;
   }
   let build = copy_build(&from, &paths.bin(), &build_name(now_ms()))?;
   fs::create_dir_all(&paths.data)?;
@@ -372,6 +397,10 @@ pub fn install(options: &Options) -> io::Result<Done> {
     }
     moving::merge_logs(&old.logs, &paths.logs)?;
     if !moving::same(&old.root, &paths.root) {
+      move_peer(&old, &paths)?;
+      if options.scope == Scope::Machine {
+        allow_service(&paths)?;
+      }
       remove_root(&old)?;
     }
     match options.scope {
@@ -383,6 +412,12 @@ pub fn install(options: &Options) -> io::Result<Done> {
       }
       Scope::User => {}
     }
+  }
+
+  match &options.peer {
+    PeerChange::Keep => {}
+    PeerChange::Set(peer) => set_peer(&paths, options.scope, peer)?,
+    PeerChange::Remove => remove_peer(&paths)?,
   }
 
   // 4. The new install starts, and takes over from the bridge.
@@ -407,6 +442,7 @@ pub fn install(options: &Options) -> io::Result<Done> {
   };
   bridge::wait_gone(&mut bridge, options.handoff_within);
   let left = prune(&paths.bin(), options.keep)?;
+  let peer = peer::read(&paths.peer_file())?.map(|peer| peer.url);
   Ok(Done {
     scope: options.scope,
     paths,
@@ -414,6 +450,7 @@ pub fn install(options: &Options) -> io::Result<Done> {
     replaced: current,
     capture,
     left,
+    peer,
   })
 }
 
@@ -429,7 +466,48 @@ fn allow_service(paths: &Paths) -> io::Result<()> {
     }
     acl::grant(dir, &account)?;
   }
-  Ok(())
+  secure_peer(paths, &[&account])
+}
+
+/// In a machine install, the peer file readable only by administrators,
+/// SYSTEM and `readers`.
+#[cfg(windows)]
+fn secure_peer(paths: &Paths, readers: &[&str]) -> io::Result<()> {
+  let file = paths.peer_file();
+  match file.exists() {
+    true => acl::secret(&file, readers),
+    false => Ok(()),
+  }
+}
+
+/// Syncs from `peer`: in a machine install, the file is made secret before
+/// the token goes in.
+#[cfg(windows)]
+fn set_peer(paths: &Paths, scope: Scope, peer: &Peer) -> io::Result<()> {
+  let file = paths.peer_file();
+  if scope == Scope::Machine {
+    fs::write(&file, "")?;
+    secure_peer(paths, &[&service::account(service::NAME)])?;
+  }
+  peer::write(&file, peer)
+}
+
+/// Stops syncing.
+fn remove_peer(paths: &Paths) -> io::Result<()> {
+  match fs::remove_file(paths.peer_file()) {
+    Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
+    _ => Ok(()),
+  }
+}
+
+/// Brings the old root's peer file along, unless the new one has its own.
+/// Copied, it takes the new root's permissions.
+fn move_peer(old: &Paths, new: &Paths) -> io::Result<()> {
+  let (from, to) = (old.peer_file(), new.peer_file());
+  if from.exists() && !to.exists() {
+    fs::copy(&from, &to)?;
+  }
+  remove_peer(old)
 }
 
 /// Stops `current` and everything it runs, except from `keep` (the new
@@ -497,6 +575,8 @@ pub fn uninstall(root: Option<PathBuf>) -> io::Result<Removed> {
     None => {}
   }
   processes::kill_under(&paths.bin(), &["dgg-supervisor"])?;
+  // It holds a token; nothing's left to use it.
+  remove_peer(&paths)?;
   remove_root(&paths)?;
   if machine {
     let user = task::user();
