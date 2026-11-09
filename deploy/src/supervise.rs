@@ -9,6 +9,10 @@
 //!   new one waits for the old one to exit.
 //! - `dgg-logger compact` runs every `compact_every` (the first time a minute after
 //!   start), by whichever supervisor holds `compact.lock`.
+//! - With a peer file (see [`crate::peer`]), `dgg-logger sync` pulls from
+//!   the peer every `sync_every` (the first time two minutes after start),
+//!   by whichever supervisor holds `sync.lock`. The file is read before
+//!   each round; without one, there's nothing to sync.
 //!
 //! Each program's stdout and stderr go, line by line, to `<name>.log` in the
 //! logs directory; the supervisor's own lines to `supervisor.log`. Restarts
@@ -16,7 +20,7 @@
 //! `reset_after`.
 
 use {
-  crate::{lifeline::Lifeline, log::Log},
+  crate::{lifeline::Lifeline, log::Log, peer},
   ::std::{
     ffi::OsString,
     fs::{self, File, TryLockError},
@@ -32,11 +36,13 @@ use {
   },
 };
 
-/// A program to run: its path and arguments.
-#[derive(Clone, Debug)]
+/// A program to run: its path and arguments, and variables to add to its
+/// environment.
+#[derive(Clone, Debug, Default)]
 pub struct Program {
   pub path: PathBuf,
   pub args: Vec<OsString>,
+  pub env: Vec<(OsString, OsString)>,
 }
 
 impl Program {
@@ -45,6 +51,7 @@ impl Program {
     Self {
       path: bin_dir.join(format!("{name}{}", ::std::env::consts::EXE_SUFFIX)),
       args: args.iter().map(|arg| arg.as_os_str().to_owned()).collect(),
+      env: Vec::new(),
     }
   }
 }
@@ -71,11 +78,17 @@ pub struct Config {
   pub capture: Program,
   pub index: Program,
   pub compact: Program,
-  /// Holds `index.lock` and `compact.lock`.
+  /// `sync`, without its peer: that's added from `peer_file`.
+  pub sync: Program,
+  /// The peer to sync from, if any (see [`crate::peer`]).
+  pub peer_file: Option<PathBuf>,
+  /// Holds `index.lock`, `compact.lock` and `sync.lock`.
   pub lock_dir: PathBuf,
   pub logs: PathBuf,
   pub compact_first: Duration,
   pub compact_every: Duration,
+  pub sync_first: Duration,
+  pub sync_every: Duration,
   pub backoff: Backoff,
   pub log_size: u64,
   pub log_keep: u32,
@@ -93,10 +106,14 @@ impl Config {
       capture: command(&["capture"]),
       index: command(&["index", "--follow"]),
       compact: command(&["compact"]),
+      sync: command(&["sync"]),
+      peer_file: None,
       lock_dir: data.to_owned(),
       logs: logs.to_owned(),
       compact_first: Duration::from_secs(60),
       compact_every: Duration::from_secs(3600),
+      sync_first: Duration::from_secs(120),
+      sync_every: Duration::from_secs(15 * 60),
       backoff: Backoff::default(),
       log_size: 10 << 20,
       log_keep: 5,
@@ -160,6 +177,10 @@ pub fn run(config: &Config, stop: &Stop) -> io::Result<Exit> {
   };
   let supervisor = open("supervisor")?;
   let logs = [open("capture")?, open("index")?, open("compact")?];
+  let sync_log = match &config.peer_file {
+    Some(_) => Some(open("sync")?),
+    None => None,
+  };
   fs::create_dir_all(&config.lock_dir)?;
   log_line(
     &supervisor,
@@ -211,21 +232,47 @@ pub fn run(config: &Config, stop: &Stop) -> io::Result<Exit> {
       );
     });
     scope.spawn(|| {
-      let lock = config.lock_dir.join("compact.lock");
-      let mut wait = config.compact_first;
-      while !programs.wait(wait) {
-        wait = config.compact_every;
-        match try_hold(&lock) {
-          Ok(Some(_lock)) => {
-            run_once(&config.compact, "compact", compact_log, &context);
-          }
-          Ok(None) => {
-            log_line(&supervisor, "compact: another supervisor has it");
-          }
-          Err(e) => log_line(&supervisor, &format!("compact: {e}")),
-        }
-      }
+      let schedule = Schedule {
+        name: "compact",
+        lock: config.lock_dir.join("compact.lock"),
+        first: config.compact_first,
+        every: config.compact_every,
+      };
+      periodically(&schedule, compact_log, &context, || {
+        Some(config.compact.clone())
+      });
     });
+    if let (Some(peer_file), Some(sync_log)) = (&config.peer_file, &sync_log) {
+      scope.spawn(|| {
+        let schedule = Schedule {
+          name: "sync",
+          lock: config.lock_dir.join("sync.lock"),
+          first: config.sync_first,
+          every: config.sync_every,
+        };
+        // What the peer file said last round, to report only changes.
+        let last = Mutex::new(None::<String>);
+        periodically(&schedule, sync_log, &context, || {
+          let (program, said) = match peer::read(peer_file) {
+            Ok(Some(peer)) => (
+              Some(sync_from(&config.sync, &peer)),
+              format!("sync: from {}", peer.url),
+            ),
+            Ok(None) => (
+              None,
+              format!("sync: no peer file at {}", peer_file.display()),
+            ),
+            Err(e) => (None, format!("sync: {e}")),
+          };
+          let mut last = last.lock().unwrap();
+          if last.as_ref() != Some(&said) {
+            log_line(&supervisor, &said);
+            *last = Some(said);
+          }
+          program
+        });
+      });
+    }
     while !programs.wait(Duration::from_millis(200)) {
       if stop.requested() {
         log_line(&supervisor, "stopping");
@@ -240,6 +287,58 @@ pub fn run(config: &Config, stop: &Stop) -> io::Result<Exit> {
   };
   log_line(&supervisor, &format!("supervisor exiting: {exit:?}"));
   Ok(exit)
+}
+
+/// `sync` pulling from `peer`, its token in the environment.
+fn sync_from(sync: &Program, peer: &peer::Peer) -> Program {
+  let mut program = sync.clone();
+  program
+    .args
+    .extend(["--peer".into(), peer.url.clone().into()]);
+  program
+    .env
+    .push((peer::TOKEN.into(), peer.token.clone().into()));
+  program
+}
+
+/// When to run a program over and over, and the lock that keeps it to one
+/// supervisor at a time.
+struct Schedule {
+  name: &'static str,
+  lock: PathBuf,
+  first: Duration,
+  every: Duration,
+}
+
+/// Runs the program `program` gives (if any) on `schedule`, until stopped.
+fn periodically(
+  schedule: &Schedule,
+  log: &SharedLog,
+  context: &Context,
+  program: impl Fn() -> Option<Program>,
+) {
+  let Schedule {
+    name,
+    lock,
+    first,
+    every,
+  } = schedule;
+  let mut wait = *first;
+  while !context.stop.wait(wait) {
+    wait = *every;
+    match try_hold(lock) {
+      Ok(Some(_lock)) => {
+        if let Some(program) = program() {
+          run_once(&program, name, log, context);
+        }
+      }
+      Ok(None) => log_line(
+        context.supervisor,
+        &format!("{name}: another supervisor has it"),
+      ),
+      Err(e) => log_line(context.supervisor, &format!("{name}: {e}")),
+    }
+  }
 }
 
 /// Takes `path`'s lock if it's free.
@@ -335,6 +434,7 @@ fn run_once(
   let mut command = Command::new(&program.path);
   command
     .args(&program.args)
+    .envs(program.env.iter().map(|(key, value)| (key, value)))
     .stdin(Stdio::null())
     .stdout(Stdio::piped())
     .stderr(Stdio::piped());

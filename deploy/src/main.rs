@@ -22,8 +22,9 @@ struct Args {
 #[derive(Subcommand)]
 enum Command {
   /// Keep capture and `index --follow` running against a data directory,
-  /// compacting every hour, until stopped (Ctrl-C) or until capture hands
-  /// off to a newer instance.
+  /// compacting every hour and (with `--peer-file`) syncing every 15
+  /// minutes, until stopped (Ctrl-C) or until capture hands off to a newer
+  /// instance.
   Supervise {
     /// Data directory: the journal and the index.
     #[arg(long)]
@@ -38,6 +39,13 @@ enum Command {
     /// Minutes between compactions.
     #[arg(long, default_value_t = 60)]
     compact_every: u64,
+    /// The peer to sync from: a file of `LOGGER_PEER_URL=` and
+    /// `LOGGER_PEER_TOKEN=` lines, read before each round.
+    #[arg(long)]
+    peer_file: Option<PathBuf>,
+    /// Minutes between syncs.
+    #[arg(long, default_value_t = 15)]
+    sync_every: u64,
   },
   /// Install the logger from the build this program is in: for this user,
   /// as a scheduled task started at logon, or with `--machine` as a
@@ -134,7 +142,18 @@ fn main() -> ExitCode {
       logs,
       bin_dir,
       compact_every,
-    } => supervise(data, logs, bin_dir, compact_every),
+      peer_file,
+      sync_every,
+    } => supervise(
+      data,
+      logs,
+      bin_dir,
+      Schedule {
+        compact_every,
+        peer_file,
+        sync_every,
+      },
+    ),
     #[cfg(windows)]
     Command::Install {
       machine,
@@ -275,11 +294,18 @@ fn print_status(paths: &Paths, lines: usize) -> ::std::io::Result<()> {
   Ok(())
 }
 
+/// What `supervise` runs on a schedule, in minutes.
+struct Schedule {
+  compact_every: u64,
+  peer_file: Option<PathBuf>,
+  sync_every: u64,
+}
+
 fn supervise(
   data: PathBuf,
   logs: PathBuf,
   bin_dir: Option<PathBuf>,
-  compact_every: u64,
+  schedule: Schedule,
 ) -> ExitCode {
   let bin_dir = match bin_dir {
     Some(bin_dir) => bin_dir,
@@ -292,7 +318,9 @@ fn supervise(
     },
   };
   let mut config = Config::new(&bin_dir, &data, &logs);
-  config.compact_every = Duration::from_secs(compact_every * 60);
+  config.compact_every = Duration::from_secs(schedule.compact_every * 60);
+  config.peer_file = schedule.peer_file;
+  config.sync_every = Duration::from_secs(schedule.sync_every * 60);
   let stop = Stop::new();
   let on_signal = stop.clone();
   if let Err(e) = ::ctrlc::set_handler(move || on_signal.request()) {

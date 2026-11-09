@@ -39,6 +39,8 @@ enum Step<'a> {
   Sleep(u32),
   /// Exits 0 if `marker` exists, else creates it and exits 1.
   FailOnce(&'a str),
+  /// Says its arguments, then the variable `name`.
+  SayArgsAnd(&'a str),
   Exit(u32),
 }
 
@@ -59,6 +61,7 @@ fn script(dir: &Path, name: &str, steps: &[Step]) -> Program {
           "if exist \"{0}\" exit /b 0\r\ntype nul > \"{0}\"\r\nexit /b 1\r\n",
           dir.join(marker).display()
         ),
+        Step::SayArgsAnd(name) => format!("echo %* %{name}%\r\n"),
         Step::Exit(code) => format!("exit /b {code}\r\n"),
       };
     }
@@ -74,6 +77,7 @@ fn script(dir: &Path, name: &str, steps: &[Step]) -> Program {
           "[ -e '{0}' ] && exit 0\ntouch '{0}'\nexit 1\n",
           dir.join(marker).display()
         ),
+        Step::SayArgsAnd(name) => format!("echo \"$@\" \"${name}\"\n"),
         Step::Exit(code) => format!("exit {code}\n"),
       };
     }
@@ -88,7 +92,7 @@ fn script(dir: &Path, name: &str, steps: &[Step]) -> Program {
   }
   Program {
     path,
-    args: Vec::new(),
+    ..Program::default()
   }
 }
 
@@ -220,4 +224,60 @@ fn runs_the_loggers_commands() {
   assert_eq!(args(&config.capture), "capture --data data");
   assert_eq!(args(&config.index), "index --follow --data data");
   assert_eq!(args(&config.compact), "compact --data data");
+  assert_eq!(args(&config.sync), "sync --data data");
+  assert_eq!(config.peer_file, None);
+}
+
+/// Runs `run` with a capture that hands off after a few seconds, and a sync
+/// that says how it was called, due soon after start.
+fn run_with_sync(dir: &TempDir, peer_file: Option<PathBuf>) {
+  let capture = script(&dir.0, "capture", &[Step::Sleep(3), Step::Exit(0)]);
+  let index = script(&dir.0, "index", &[Step::Sleep(20)]);
+  let mut config = config(dir, capture, index);
+  let mut sync =
+    script(&dir.0, "sync", &[Step::SayArgsAnd("LOGGER_PEER_TOKEN")]);
+  sync.args = vec!["sync".into()];
+  config.sync = sync;
+  config.peer_file = peer_file;
+  config.sync_first = Duration::from_millis(100);
+  let exit = run(&config, &Stop::new()).unwrap();
+  assert_eq!(exit, Exit::HandedOff);
+}
+
+#[test]
+fn syncs_from_the_peer_file() {
+  let dir = TempDir::new("sync");
+  let peer_file = dir.0.join("peer.env");
+  fs::write(
+    &peer_file,
+    "# the old host\nLOGGER_PEER_URL=http://peer:8788\n\
+     LOGGER_PEER_TOKEN=\"secret\"\n",
+  )
+  .unwrap();
+  run_with_sync(&dir, Some(peer_file));
+  let sync = dir.log("sync");
+  // The URL as an argument; the token only in its environment.
+  assert!(
+    sync.contains(" sync --peer http://peer:8788 secret"),
+    "{sync}"
+  );
+  let supervisor = dir.log("supervisor");
+  assert!(
+    supervisor.contains("sync: from http://peer:8788"),
+    "{supervisor}"
+  );
+  assert!(!supervisor.contains("secret"), "{supervisor}");
+}
+
+#[test]
+fn skips_sync_without_a_peer() {
+  let dir = TempDir::new("no-peer");
+  let peer_file = dir.0.join("peer.env");
+  run_with_sync(&dir, Some(peer_file));
+  assert!(dir.log("sync").is_empty());
+  assert!(dir.log("supervisor").contains("sync: no peer file at"));
+  // Without a peer file configured, no sync at all.
+  let dir = TempDir::new("no-peer-file");
+  run_with_sync(&dir, None);
+  assert!(!dir.0.join("logs").join("sync.log").exists());
 }

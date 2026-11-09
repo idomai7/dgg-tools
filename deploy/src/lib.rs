@@ -10,6 +10,7 @@ pub mod install;
 pub mod lifeline;
 pub mod log;
 pub mod paths;
+pub mod peer;
 #[cfg(windows)]
 mod powershell;
 pub mod processes;
