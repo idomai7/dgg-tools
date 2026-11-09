@@ -13,3 +13,6 @@ journal.workspace = true
 clap.workspace = true
 ctrlc.workspace = true
 sysinfo.workspace = true
+
+[build-dependencies]
+version-info.workspace = true

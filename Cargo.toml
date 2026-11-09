@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["deploy", "dgg-chat", "journal", "logger", "viewer"]
+members = ["deploy", "dgg-chat", "journal", "logger", "version-info", "viewer"]
 
 [workspace.package]
 edition = "2024"
@@ -8,11 +8,13 @@ edition = "2024"
 [workspace.dependencies]
 dgg-chat = { path = "dgg-chat" }
 journal = { path = "journal" }
+version-info = { path = "version-info" }
 
 axum = "0.8.9"
 base64 = "0.23.1"
 clap = { version = "4.6.7", features = ["derive", "env"] }
 ctrlc = "3.5.2"
+embed-resource = "3.0.12"
 dotenvy = "0.15.7"
 futures-util = "0.3.34"
 gethostname = "1.1.0"

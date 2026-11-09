@@ -55,3 +55,6 @@ tokio-tungstenite.workspace = true
 sha2.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 zstd.workspace = true
+
+[build-dependencies]
+version-info.workspace = true
