@@ -8,7 +8,7 @@
 
 use {
   super::task::{Task, arguments, parse_arguments},
-  crate::legacy::powershell,
+  crate::powershell,
   ::std::{
     io,
     path::PathBuf,
@@ -53,7 +53,7 @@ fn quote(text: &str) -> String {
 
 /// The service `name`, if it's installed.
 pub fn find(name: &str) -> io::Result<Option<Task>> {
-  let path = powershell(&format!(
+  let path = powershell::run(&format!(
     "(Get-CimInstance Win32_Service -Filter \"Name = {}\").PathName",
     quote(name)
   ))?;
@@ -62,7 +62,7 @@ pub fn find(name: &str) -> io::Result<Option<Task>> {
 
 /// Its state (`Running`, `Stopped`, ...), if it's installed.
 pub fn state(name: &str) -> io::Result<Option<String>> {
-  let state = powershell(&format!(
+  let state = powershell::run(&format!(
     "(Get-Service -Name {} -ErrorAction Stop).Status.ToString()",
     quote(name)
   ))?;

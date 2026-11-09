@@ -11,8 +11,8 @@
 //!   only administrators may change ([`acl`]).
 //!
 //! Every install goes the same way, so that whatever was there before (an
-//! older build, the other kind of install, the PowerShell scripts' install)
-//! hands over without a message missed:
+//! older build, or the other kind of install) hands over without a message
+//! missed:
 //!
 //! 1. The new build is copied in, and a [`bridge`] capture from it started
 //!    against the new data directory, and waited on until it's healthy.
@@ -34,7 +34,6 @@ pub mod task;
 
 use {
   crate::{
-    legacy::{self, Legacy},
     log::{now_ms, timestamp},
     paths::{Paths, user_root},
     processes,
@@ -79,19 +78,12 @@ pub enum Installed {
   Task(Paths),
   /// A machine install: this crate's service.
   Service(Paths),
-  /// The PowerShell scripts' tasks.
-  Legacy(Legacy),
 }
 
 impl Installed {
   pub fn paths(&self) -> Paths {
     match self {
       Self::Task(paths) | Self::Service(paths) => paths.clone(),
-      Self::Legacy(legacy) => Paths {
-        root: legacy.root.clone(),
-        data: legacy.data.clone(),
-        logs: legacy.logs.clone(),
-      },
     }
   }
 
@@ -99,8 +91,6 @@ impl Installed {
     match self {
       Self::Task(_) => Scope::User,
       Self::Service(_) => Scope::Machine,
-      Self::Legacy(legacy) if legacy.machine => Scope::Machine,
-      Self::Legacy(_) => Scope::User,
     }
   }
 }
@@ -121,8 +111,7 @@ fn paths_of(task: task::Task) -> Paths {
   }
 }
 
-/// The installed logger, if any: this crate's service, then its task, then
-/// the PowerShell scripts' tasks.
+/// The installed logger, if any: the service, then the task.
 pub fn installed() -> io::Result<Option<Installed>> {
   #[cfg(windows)]
   {
@@ -131,9 +120,6 @@ pub fn installed() -> io::Result<Option<Installed>> {
     }
     if let Some(found) = task::find(task::NAME)? {
       return Ok(Some(Installed::Task(paths_of(found))));
-    }
-    if let Some(legacy) = legacy::find(legacy::FOLDER)? {
-      return Ok(Some(Installed::Legacy(legacy)));
     }
   }
   Ok(None)
@@ -377,10 +363,8 @@ pub fn install(options: &Options) -> io::Result<Done> {
       // Sharing the data, its capture hands off to the bridge.
       processes::wait_gone_except(
         &old.bin(),
-        // As run now, by the Rust install before that, and by the
-        // PowerShell one.
-        &["dgg-logger capture", "dgg-capture", "capture"],
-        Some(&build),
+        &["dgg-logger capture"],
+        &build,
         options.handoff_within,
       )?;
     }
@@ -464,10 +448,6 @@ fn stop(current: &Installed, scope: Scope, keep: &Path) -> io::Result<()> {
       service::stop(service::NAME, Duration::from_secs(60))?;
     }
     Installed::Service(_) => service::delete(service::NAME)?,
-    Installed::Legacy(legacy) => {
-      legacy::stop_index(legacy)?;
-      legacy::retire(legacy, Duration::ZERO, Some(keep))?;
-    }
   }
   processes::kill_under_except(&current.paths().bin(), keep)
 }
@@ -518,10 +498,6 @@ pub fn uninstall(root: Option<PathBuf>) -> io::Result<Removed> {
   match &found {
     Some(Installed::Task(_)) => task::delete(task::NAME)?,
     Some(Installed::Service(_)) => service::delete(service::NAME)?,
-    Some(Installed::Legacy(legacy)) => {
-      legacy::stop_index(legacy)?;
-      legacy::retire(legacy, Duration::ZERO, None)?;
-    }
     None => {}
   }
   processes::kill_under(&paths.bin(), &["dgg-supervisor"])?;

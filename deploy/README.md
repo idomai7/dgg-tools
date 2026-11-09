@@ -79,7 +79,7 @@ install's data needs an administrator prompt.
 
 `--root`, `--data` and `--logs` put things elsewhere.
 
-### Upgrading, switching, and the old scripts
+### Upgrading and switching
 
 Build, then run `install` again, the same way. Nothing is missed: a capture
 from the new build starts first (the "bridge", logging to `bridge.log`),
@@ -89,9 +89,6 @@ and takes over from the bridge. Old builds are pruned, keeping three.
 Running `install` with the other kind (with or without `--machine`)
 switches to it the same way, moving the data and logs to the new folder.
 Anything involving a machine install needs an administrator prompt.
-
-An install made by the PowerShell scripts that came before (`install.ps1`)
-is taken over the same way, its tasks and old builds removed.
 
 If anything goes wrong, `install` says what, and the capture that was
 running (or the bridge) keeps running.

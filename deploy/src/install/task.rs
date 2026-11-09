@@ -8,7 +8,7 @@
 //! leaves once its capture has handed off.
 
 use {
-  crate::legacy::powershell,
+  crate::powershell,
   ::std::{
     env, fs, io,
     path::{Path, PathBuf},
@@ -167,7 +167,7 @@ pub fn parse_arguments(supervisor: PathBuf, arguments: &str) -> Option<Task> {
 
 /// The task `name` (normally [`NAME`]), if it's installed.
 pub fn find(name: &str) -> io::Result<Option<Task>> {
-  let xml = powershell(&format!(
+  let xml = powershell::run(&format!(
     r"Export-ScheduledTask -TaskPath '\' -TaskName '{}'",
     name.replace('\'', "''")
   ))?;

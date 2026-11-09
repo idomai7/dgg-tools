@@ -41,9 +41,8 @@ enum Command {
   /// Install the logger from the build this program is in: for this user,
   /// as a scheduled task started at logon, or with `--machine` as a
   /// Windows service started with the system. Installing again upgrades;
-  /// installing the other kind switches to it, moving the data. Takes over
-  /// an install made by the PowerShell scripts. Nothing is missed on the
-  /// way: a capture from the new build bridges the change.
+  /// installing the other kind switches to it, moving the data. Nothing is
+  /// missed on the way: a capture from the new build bridges the change.
   #[cfg(windows)]
   Install {
     /// A machine install (a service): needs an elevated prompt.
@@ -212,9 +211,6 @@ fn install(options: &install::Options) -> ExitCode {
       };
       match &done.replaced {
         None => eprintln!("installed: {kind}"),
-        Some(install::Installed::Legacy(_)) => {
-          eprintln!("took over from the PowerShell install: {kind}")
-        }
         Some(replaced) if replaced.scope() == done.scope => {
           eprintln!("upgraded: {kind}")
         }

@@ -93,33 +93,6 @@ pub fn wait_gone(
   }
 }
 
-/// Kills every PowerShell running `script` from under `dir` for one of
-/// `names`: one whose command line also names `<name>.exe`.
-pub fn kill_scripts(
-  dir: &Path,
-  script: &str,
-  names: &[&str],
-) -> io::Result<()> {
-  let dir = dir.to_string_lossy().to_lowercase();
-  let script = script.to_lowercase();
-  for process in system()?.processes().values() {
-    let powershell = process.name().eq_ignore_ascii_case("powershell.exe");
-    let line = process
-      .cmd()
-      .iter()
-      .map(|arg| arg.to_string_lossy().to_lowercase())
-      .collect::<Vec<_>>()
-      .join(" ");
-    let named = names
-      .iter()
-      .any(|name| line.contains(&format!("\\{}.exe", name.to_lowercase())));
-    if powershell && named && line.contains(&dir) && line.contains(&script) {
-      process.kill();
-    }
-  }
-  Ok(())
-}
-
 /// How many processes run from anywhere under `dir`.
 pub fn count_under(dir: &Path) -> io::Result<usize> {
   Ok(
@@ -172,42 +145,12 @@ pub fn kill_under_except(dir: &Path, except: &Path) -> io::Result<()> {
   Ok(())
 }
 
-/// Whether `process` runs one of `names` from under `dir`, but not from
-/// under `except`.
-fn runs_from_except(
-  process: &Process,
-  dir: &Path,
-  names: &[&str],
-  except: Option<&Path>,
-) -> bool {
-  runs_from(process, dir, names)
-    && !except.is_some_and(|except| {
-      process.exe().is_some_and(|exe| exe.starts_with(except))
-    })
-}
-
-/// Kills every process running one of `names` from under `dir`, but not
-/// from under `except`, and waits (briefly) for them to go.
-pub fn kill_from_except(
-  dir: &Path,
-  names: &[&str],
-  except: Option<&Path>,
-) -> io::Result<()> {
-  for process in system()?.processes().values() {
-    if runs_from_except(process, dir, names, except) {
-      process.kill();
-    }
-  }
-  wait_gone_except(dir, names, except, Duration::from_secs(10))?;
-  Ok(())
-}
-
 /// Waits up to `patience` for every process running one of `names` from
 /// under `dir`, but not from under `except`, to exit; whether they did.
 pub fn wait_gone_except(
   dir: &Path,
   names: &[&str],
-  except: Option<&Path>,
+  except: &Path,
   patience: Duration,
 ) -> io::Result<bool> {
   let until = Instant::now() + patience;
@@ -215,7 +158,10 @@ pub fn wait_gone_except(
     let left = system()?
       .processes()
       .values()
-      .filter(|process| runs_from_except(process, dir, names, except))
+      .filter(|process| {
+        runs_from(process, dir, names)
+          && !process.exe().is_some_and(|exe| exe.starts_with(except))
+      })
       .count();
     if left == 0 {
       return Ok(true);

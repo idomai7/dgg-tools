@@ -195,7 +195,7 @@ impl Watcher {
         let exe = process.exe().map(Path::to_owned);
         let ours = exe.as_ref().is_some_and(|exe| exe.starts_with(bin));
         let name = processes::program(process);
-        // Its own name, or (before the rename) anything run from the bin.
+        // Any of the logger's programs, or anything run from the bin.
         (name.starts_with("dgg-") || ours).then(|| Program {
           name,
           pid: process.pid().as_u32(),

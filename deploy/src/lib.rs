@@ -3,10 +3,11 @@
 //! Windows service, and showing its status.
 
 pub mod install;
-pub mod legacy;
 pub mod lifeline;
 pub mod log;
 pub mod paths;
+#[cfg(windows)]
+mod powershell;
 pub mod processes;
 pub mod status;
 pub mod supervise;

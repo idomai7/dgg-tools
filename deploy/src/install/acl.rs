@@ -11,7 +11,7 @@
 //! Permissions are set with `icacls`, owners read through PowerShell.
 
 use {
-  crate::legacy::powershell,
+  crate::powershell,
   ::std::{
     fs, io,
     path::{Path, PathBuf},
@@ -55,7 +55,7 @@ fn icacls(args: &[&str]) -> io::Result<()> {
 /// The SID owning `path`.
 pub fn owner(path: &Path) -> io::Result<String> {
   let text = path.to_string_lossy().replace('\'', "''");
-  powershell(&format!(
+  powershell::run(&format!(
     "(Get-Item -LiteralPath '{text}' -Force).GetAccessControl('Owner')\
      .GetOwner([Security.Principal.SecurityIdentifier]).Value"
   ))?
