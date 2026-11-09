@@ -6,7 +6,7 @@
 //! are yielded as-is.
 
 use {
-  super::{DEFAULT_ORIGIN, DEFAULT_URL},
+  super::{DEFAULT_ORIGIN, DEFAULT_URL, Event},
   ::futures_util::{SinkExt, StreamExt},
   ::std::time::Duration,
   ::tokio::{
@@ -84,6 +84,11 @@ impl Frame {
 
   pub fn into_raw(self) -> String {
     self.raw
+  }
+
+  /// The frame [decoded](Event::parse).
+  pub fn decode(&self) -> Event {
+    Event::parse(&self.raw)
   }
 }
 

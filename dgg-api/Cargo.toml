@@ -5,7 +5,7 @@ edition.workspace = true
 description = "destiny.gg's APIs (chat, and more to come), shared by the dgg tools"
 
 # Each feature brings in the I/O for one kind of API, so a tool pulls in
-# only what it talks to; types without I/O need none.
+# only what it talks to; the types (and decoding them) need none.
 [features]
 # The chat socket client, chat::Client.
 chat = [
@@ -16,13 +16,13 @@ chat = [
 ]
 
 [dependencies]
+serde.workspace = true
+serde_json.workspace = true
+
 futures-util = { workspace = true, optional = true }
 rustls = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true }
 tokio-tungstenite = { workspace = true, optional = true }
-
-[dev-dependencies]
-serde_json.workspace = true
 
 [[example]]
 name = "probe"
