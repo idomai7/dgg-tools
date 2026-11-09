@@ -172,12 +172,42 @@ pub fn kill_under_except(dir: &Path, except: &Path) -> io::Result<()> {
   Ok(())
 }
 
+/// Whether `process` runs one of `names` from under `dir`, but not from
+/// under `except`.
+fn runs_from_except(
+  process: &Process,
+  dir: &Path,
+  names: &[&str],
+  except: Option<&Path>,
+) -> bool {
+  runs_from(process, dir, names)
+    && !except.is_some_and(|except| {
+      process.exe().is_some_and(|exe| exe.starts_with(except))
+    })
+}
+
+/// Kills every process running one of `names` from under `dir`, but not
+/// from under `except`, and waits (briefly) for them to go.
+pub fn kill_from_except(
+  dir: &Path,
+  names: &[&str],
+  except: Option<&Path>,
+) -> io::Result<()> {
+  for process in system()?.processes().values() {
+    if runs_from_except(process, dir, names, except) {
+      process.kill();
+    }
+  }
+  wait_gone_except(dir, names, except, Duration::from_secs(10))?;
+  Ok(())
+}
+
 /// Waits up to `patience` for every process running one of `names` from
 /// under `dir`, but not from under `except`, to exit; whether they did.
 pub fn wait_gone_except(
   dir: &Path,
   names: &[&str],
-  except: &Path,
+  except: Option<&Path>,
   patience: Duration,
 ) -> io::Result<bool> {
   let until = Instant::now() + patience;
@@ -185,10 +215,7 @@ pub fn wait_gone_except(
     let left = system()?
       .processes()
       .values()
-      .filter(|process| {
-        runs_from(process, dir, names)
-          && !process.exe().is_some_and(|exe| exe.starts_with(except))
-      })
+      .filter(|process| runs_from_except(process, dir, names, except))
       .count();
     if left == 0 {
       return Ok(true);

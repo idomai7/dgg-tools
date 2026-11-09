@@ -380,7 +380,7 @@ pub fn install(options: &Options) -> io::Result<Done> {
         // As run now, by the Rust install before that, and by the
         // PowerShell one.
         &["dgg-logger capture", "dgg-capture", "capture"],
-        &build,
+        Some(&build),
         options.handoff_within,
       )?;
     }
@@ -466,7 +466,7 @@ fn stop(current: &Installed, scope: Scope, keep: &Path) -> io::Result<()> {
     Installed::Service(_) => service::delete(service::NAME)?,
     Installed::Legacy(legacy) => {
       legacy::stop_index(legacy)?;
-      legacy::retire(legacy, Duration::ZERO)?;
+      legacy::retire(legacy, Duration::ZERO, Some(keep))?;
     }
   }
   processes::kill_under_except(&current.paths().bin(), keep)
@@ -520,7 +520,7 @@ pub fn uninstall(root: Option<PathBuf>) -> io::Result<Removed> {
     Some(Installed::Service(_)) => service::delete(service::NAME)?,
     Some(Installed::Legacy(legacy)) => {
       legacy::stop_index(legacy)?;
-      legacy::retire(legacy, Duration::ZERO)?;
+      legacy::retire(legacy, Duration::ZERO, None)?;
     }
     None => {}
   }

@@ -64,7 +64,11 @@ fn ignores_other_tasks() {
 fn finds_and_retires_an_install() {
   use {
     ::deploy::legacy::{Retired, find, retire, stop_index},
-    ::std::{fs, process::Command, time::Duration},
+    ::std::{
+      fs,
+      process::{Command, Stdio},
+      time::Duration,
+    },
   };
 
   let folder = format!(r"\dgg-tools-test-{}\", ::std::process::id());
@@ -119,10 +123,36 @@ fn finds_and_retires_an_install() {
   assert!(!exists("index") && !exists("compact"));
   assert!(exists("capture"));
 
-  let retired = retire(&legacy, Duration::from_secs(1)).unwrap();
-  assert_eq!(retired, Retired::default());
+  // The old capture, which won't hand off, and a new build's, which may be
+  // in the same `bin` and must be left alone. Both just sleep.
+  let new_build = root.join("bin").join("20261109-2-def");
+  fs::create_dir_all(&new_build).unwrap();
+  let sleep = |exe: PathBuf| {
+    fs::copy(r"C:\Windows\System32\PING.EXE", &exe).unwrap();
+    Command::new(exe)
+      .args(["-n", "60", "127.0.0.1"])
+      .stdout(Stdio::null())
+      .spawn()
+      .unwrap()
+  };
+  let mut old = sleep(build.join("capture.exe"));
+  let mut new = sleep(new_build.join("dgg-capture.exe"));
+
+  let retired =
+    retire(&legacy, Duration::from_secs(1), Some(&new_build)).unwrap();
+  assert_eq!(
+    retired,
+    Retired {
+      killed_capture: true,
+      left: Vec::new(),
+    }
+  );
+  assert!(old.try_wait().unwrap().is_some());
+  assert!(new.try_wait().unwrap().is_none());
   assert!(!exists("capture"));
   assert_eq!(find(&folder).unwrap(), None);
   assert!(!build.exists());
+  new.kill().unwrap();
+  new.wait().unwrap();
   let _ = fs::remove_dir_all(&root);
 }

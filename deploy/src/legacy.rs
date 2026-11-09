@@ -174,14 +174,20 @@ pub struct Retired {
 /// Step 2, once a newer capture is healthy: waits up to `patience` for the
 /// old capture to hand off and exit (stopping it after that: the new one is
 /// running), then removes its task, the task folder and the old builds.
-pub fn retire(legacy: &Legacy, patience: Duration) -> io::Result<Retired> {
+/// Captures run from under `keep` (the new build, which may be in the same
+/// `bin`) are left alone.
+pub fn retire(
+  legacy: &Legacy,
+  patience: Duration,
+  keep: Option<&Path>,
+) -> io::Result<Retired> {
   let bin = legacy.root.join("bin");
   let mut retired = Retired::default();
   let capture = ["capture", "dgg-capture"];
-  if !processes::wait_gone(&bin, &capture, patience)? {
+  if !processes::wait_gone_except(&bin, &capture, keep, patience)? {
     // Its supervise.ps1 first, or it would restart it.
     processes::kill_scripts(&bin, "supervise.ps1", &capture)?;
-    processes::kill_from(&bin, &capture)?;
+    processes::kill_from_except(&bin, &capture, keep)?;
     retired.killed_capture = true;
   }
   delete_task(&legacy.folder, "capture")?;
