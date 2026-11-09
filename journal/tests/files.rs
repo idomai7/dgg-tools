@@ -3,7 +3,7 @@
 use {
   ::journal::{
     DecodeError, Entry, ReadError, Reader, Record, Version, Writer,
-    layout::{backfill_dir, backfill_files, live_dir, live_files},
+    layout::{backfill_files, live_dir, live_files},
     record::v0::{self, Body},
   },
   ::std::{
@@ -118,13 +118,13 @@ fn backfill_files_by_the_given_day() {
   let files = backfill_files(&root.0).unwrap();
   let names: Vec<_> = files
     .iter()
-    .map(|p| p.strip_prefix(backfill_dir(&root.0)).unwrap().to_owned())
+    .map(|p| p.strip_prefix(&root.0).unwrap().to_owned())
     .collect();
   assert_eq!(
     names,
     [
-      Path::new("2015-12-31").join("backfill-x.journal"),
-      Path::new("2016-01-01").join("backfill-x.journal"),
+      Path::new("backfill/live/2015-12-31").join("backfill-x.journal"),
+      Path::new("backfill/live/2016-01-01").join("backfill-x.journal"),
     ]
   );
   let read: Vec<_> = files

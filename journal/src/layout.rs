@@ -41,36 +41,9 @@ pub fn live_file(root: &Path, day: &str, instance: &str) -> PathBuf {
 
 /// Every live journal file, sorted by day then instance.
 pub fn live_files(root: &Path) -> io::Result<Vec<PathBuf>> {
-  day_files(&live_dir(root))
-}
-
-/// The directory holding the per-day backfill directories under journal
-/// `root`. Backfill files hold only what was fetched from other archives
-/// (`fetched` and `fetchrange` lines), never anything captured natively, so
-/// they're kept apart from [`live_dir`]: everything under here is
-/// non-canonical.
-pub fn backfill_dir(root: &Path) -> PathBuf {
-  root.join("backfill")
-}
-
-/// The backfill file one run writes for one day. Unlike live files, the day
-/// is that of the messages inside, not of when they were fetched.
-pub fn backfill_file(root: &Path, day: &str, instance: &str) -> PathBuf {
-  backfill_dir(root)
-    .join(day)
-    .join(format!("{instance}.{EXTENSION}"))
-}
-
-/// Every backfill file, sorted by day then instance.
-pub fn backfill_files(root: &Path) -> io::Result<Vec<PathBuf>> {
-  day_files(&backfill_dir(root))
-}
-
-/// Every journal file in the day directories under `dir`, sorted by day then
-/// instance.
-fn day_files(dir: &Path) -> io::Result<Vec<PathBuf>> {
+  let dir = live_dir(root);
   let mut files = Vec::new();
-  let days = match fs::read_dir(dir) {
+  let days = match fs::read_dir(&dir) {
     Ok(days) => days,
     Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(files),
     Err(e) => return Err(e),
@@ -92,6 +65,26 @@ fn day_files(dir: &Path) -> io::Result<Vec<PathBuf>> {
   }
   files.sort();
   Ok(files)
+}
+
+/// The backfill journal under journal `root`: a journal root of its own,
+/// laid out the same way (`backfill/live/YYYY-MM-DD/`, `backfill/archive/
+/// YYYY/MM/`), so everything here works on it too. It holds only what was
+/// fetched from other archives (`fetched` and `fetchrange` lines), never
+/// anything captured natively: everything under it is non-canonical.
+pub fn backfill_root(root: &Path) -> PathBuf {
+  root.join("backfill")
+}
+
+/// The backfill file one run writes for one day. Unlike live files, the day
+/// is that of the messages inside, not of when they were fetched.
+pub fn backfill_file(root: &Path, day: &str, instance: &str) -> PathBuf {
+  live_file(&backfill_root(root), day, instance)
+}
+
+/// Every uncompacted backfill file, sorted by day then instance.
+pub fn backfill_files(root: &Path) -> io::Result<Vec<PathBuf>> {
+  live_files(&backfill_root(root))
 }
 
 /// The directory holding archived days under journal `root`.

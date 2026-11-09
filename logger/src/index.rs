@@ -28,7 +28,7 @@
 use {
   ::journal::{
     ReadError, Reader, Record, Version, archive,
-    layout::{backfill_files, live_files},
+    layout::{backfill_files, backfill_root, live_files},
     record::v0::Body,
   },
   ::rusqlite::{
@@ -231,8 +231,17 @@ pub fn index(db: &mut Connection, journal_root: &Path) -> Result<Stats, Error> {
     };
     index_file(db, &path, None, reader, &mut stats)?;
   }
-  for archive in archive::all(journal_root)? {
-    let file = archive.path(journal_root);
+  let backfill = backfill_root(journal_root);
+  let archives = archive::all(journal_root)?
+    .into_iter()
+    .map(|archive| (journal_root, archive))
+    .chain(
+      archive::all(&backfill)?
+        .into_iter()
+        .map(|archive| (backfill.as_path(), archive)),
+    );
+  for (root, archive) in archives {
+    let file = archive.path(root);
     let path = relative(&file);
     let (offset, digest) = checkpoint(db, &path)?;
     let same = digest.as_deref() == Some(archive.sha256.as_str());
@@ -271,11 +280,15 @@ fn checkpoint(
   Ok(found.unwrap_or((0, None)))
 }
 
-/// Drops checkpoints of live files that no longer exist (compacted away).
+/// Drops checkpoints of live and backfill files that no longer exist
+/// (compacted away).
 fn forget_gone(db: &mut Connection, live: &[String]) -> Result<(), Error> {
   let transaction = db.transaction()?;
   let stale: Vec<String> = transaction
-    .prepare("SELECT path FROM files WHERE path LIKE 'live/%'")?
+    .prepare(
+      "SELECT path FROM files
+       WHERE path LIKE 'live/%' OR path LIKE 'backfill/live/%'",
+    )?
     .query_map([], |row| row.get(0))?
     .collect::<Result<Vec<String>, _>>()?
     .into_iter()
