@@ -166,7 +166,7 @@ pub fn run(config: &Config, stop: &Stop) -> io::Result<Exit> {
     &format!(
       "supervisor {} started (build {})",
       ::std::process::id(),
-      ::logger::BUILD
+      crate::BUILD
     ),
   );
 

@@ -167,14 +167,14 @@ pub struct Done {
   pub left: Vec<PathBuf>,
 }
 
-/// `YYYYMMDD-HHMMSS-<build>` for a build made now (see [`::logger::BUILD`]).
+/// `YYYYMMDD-HHMMSS-<build>` for a build made now (see [`crate::BUILD`]).
 pub fn build_name(now: i64) -> String {
   let stamp: String = timestamp(now)
     .chars()
     .take(19)
     .filter(char::is_ascii_digit)
     .collect();
-  format!("{}-{}-{}", &stamp[..8], &stamp[8..], ::logger::BUILD)
+  format!("{}-{}-{}", &stamp[..8], &stamp[8..], crate::BUILD)
 }
 
 /// Copies [`BINARIES`] from `from` into a new build directory in `bin`.

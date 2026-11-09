@@ -1,4 +1,5 @@
-//! For build scripts: names the build by its commit, and gives each Windows
+//! For build scripts: names the build by its version and commit, and gives
+//! each Windows
 //! binary a version resource, so Task Manager and Explorer show what it is
 //! ("dgg-tools: the chat logger") and which build, rather than just its
 //! file name.
@@ -37,7 +38,7 @@ fn git(dir: &Path, args: &[&str]) -> Option<String> {
     .then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned())
 }
 
-/// The build's name: the commit being built (12 hex digits), with `-dirty`
+/// The commit being built (12 hex digits), with `-dirty`
 /// if tracked files differ from it; `unknown` outside a git checkout. Asks
 /// cargo to run the build script again when the commit or any workspace
 /// crate's files change, so the name stays true.
@@ -72,25 +73,32 @@ pub fn commit() -> String {
   }
 }
 
-/// Sets [`BUILD`] to the [`commit`] for the crate being built, for
+/// The build's name: the package's version, then the [`commit`] as semver
+/// build metadata, as in `0.1.0+93b72b343555`.
+pub fn build() -> String {
+  let version = env::var("CARGO_PKG_VERSION").expect("CARGO_PKG_VERSION");
+  format!("{version}+{}", commit())
+}
+
+/// Sets [`BUILD`] to the [`build`] name of the crate being built, for
 /// `env!("DGG_TOOLS_BUILD")`.
 pub fn export() {
-  println!("cargo:rustc-env={BUILD}={}", commit());
+  println!("cargo:rustc-env={BUILD}={}", build());
 }
 
 /// Embeds a version resource in each of `bins`, `(name, description)`, of
 /// the package being built: numbered with the package's version, and
-/// naming the [`commit`] as its version.
+/// naming the [`build`] as its version.
 pub fn embed(bins: &[(&str, &str)]) {
   if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
     return;
   }
   let version = env::var("CARGO_PKG_VERSION").expect("CARGO_PKG_VERSION");
-  let commit = commit();
+  let build = build();
   let out = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR"));
   for (name, description) in bins {
     let path = out.join(format!("{name}.rc"));
-    fs::write(&path, resource(name, description, &version, &commit))
+    fs::write(&path, resource(name, description, &version, &build))
       .expect("writing a resource script");
     ::embed_resource::compile_for(&path, [name], ::embed_resource::NONE)
       .manifest_optional()

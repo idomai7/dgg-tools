@@ -13,7 +13,7 @@ use {
 };
 
 #[derive(Parser)]
-#[command(name = "dgg-logger", version = ::logger::BUILD)]
+#[command(name = "dgg-logger", version = ::deploy::BUILD)]
 struct Args {
   #[command(subcommand)]
   command: Command,

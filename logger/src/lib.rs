@@ -3,8 +3,8 @@
 
 pub mod backfill;
 pub mod capture;
-/// This build: the commit it was built from, with `-dirty` if it had
-/// uncommitted changes (see `version_info::commit`).
+/// This crate's build: its version and the commit it was built from, with
+/// `-dirty` if that had uncommitted changes (see `version_info::build`).
 pub const BUILD: &str = env!("DGG_TOOLS_BUILD");
 
 pub mod cli;

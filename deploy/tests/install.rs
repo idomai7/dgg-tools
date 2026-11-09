@@ -41,7 +41,7 @@ fn names_builds_by_time_and_commit() {
   // 2026-11-08 20:04:00.123Z
   assert_eq!(
     build_name(1_794_168_240_123),
-    format!("20261108-200400-{}", ::logger::BUILD)
+    format!("20261108-200400-{}", ::deploy::BUILD)
   );
 }
 

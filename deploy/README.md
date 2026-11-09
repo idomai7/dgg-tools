@@ -26,7 +26,7 @@ An install lives in one folder:
 
 ```
 %LOCALAPPDATA%\dgg-tools\        (C:\ProgramData\dgg-tools for a machine install)
-  bin\<time>-<commit>\     one build per install; older ones are pruned
+  bin\<time>-<version>+<commit>\  one build per install; older ones are pruned
   data\
     journal\
       live\                today's raw capture, one file per capture per day
