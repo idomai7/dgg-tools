@@ -93,6 +93,7 @@ The layout is flat: each crate is a direct child of the root.
   - `--rebuild` replays the whole journal. An index from another schema version must be rebuilt.
 - **serve / sync:** `serve` also lists live files (`GET /manifest`, format `journal-manifest 0.0`) and serves their bytes (`GET /files/live/<day>/<instance>.journal`, honouring `Range: bytes=N-`).
   - `sync --peer <url>` appends whatever remote bytes are missing locally, then fsyncs. Journal files are append-only, so a local copy is always a prefix of the remote file and an interrupted sync just resumes.
+  - Archives (listed with their SHA-256) are taken whole and checked, never overwriting anything. One for a day with nothing local is installed as is; otherwise it becomes `live/<day>/archive-<sha prefix>.journal` for compaction to merge. `control/synced-archives` records what was taken, so it isn't fetched again.
   - A remote file shorter than its local copy is reported and left alone.
   - `--follow` keeps a warm standby.
   - **Migration:**
@@ -127,7 +128,7 @@ The layout is flat: each crate is a direct child of the root.
     - Stopping is safe, and re-running resumes from the fetched spans.
     - Smoke-tested on 20 minutes across linkers.ooo's archive boundary: 3 requests, 1,140 `linkers` and 274 `linkers-rustlesearch` messages. A re-run found nothing left to fetch.
   - A run holds `backfill/control/<instance>.lock` while it writes, so `compact` leaves its files alone until it's done.
-  - `serve` and `sync` carry `backfill/live/` like `live/`. **Not yet:** neither carries archives (`archive/` or `backfill/archive/`).
+  - `serve` and `sync` carry `backfill/live/` and `backfill/archive/` like `live/` and `archive/`.
 - **compact:** merges each closed UTC day (ended over `--grace-hours` ago, default 1) into `archive/YYYY/MM/YYYY-MM-DD.journal.zst`; then the same for `backfill/`, skipping the files of runs still going.
   - It merges the day's live files and any existing archive for that day, byte for byte, sorted by receive time.
   - Each distinct line is kept as often as any one input has it: dgg does send identical frames twice in one millisecond.

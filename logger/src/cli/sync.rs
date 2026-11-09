@@ -51,6 +51,12 @@ impl Sync {
               stats.files, stats.updated, stats.bytes
             );
           }
+          if stats.installed + stats.merging > 0 {
+            eprintln!(
+              "{} archives installed, {} written out for compaction to merge",
+              stats.installed, stats.merging
+            );
+          }
           for path in &stats.mismatched {
             eprintln!("{path}: shorter on the peer than here; left alone");
           }

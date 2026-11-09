@@ -13,7 +13,8 @@
 //!   size ([`manifest`](crate::manifest)).
 //! - `GET /files/live/<day>/<instance>.journal` (or `/files/backfill/live/
 //!   ...`): a file's bytes; with `Range: bytes=<from>-`, from that offset on
-//!   (`206`).
+//!   (`206`). Likewise `/files/archive/<YYYY>/<MM>/<day>.journal.zst` (or
+//!   `/files/backfill/archive/...`), for archives.
 //!
 //! Every request needs `Authorization: Bearer <token>`. The token travels
 //! in the clear over plain HTTP, so reach `serve` across hosts through
@@ -23,7 +24,7 @@ use {
   crate::{
     capture::now_ms,
     control::{self, Status},
-    manifest::{self, valid_live_path},
+    manifest::{self, archive_path, valid_live_path},
   },
   ::axum::{
     Router,
@@ -157,7 +158,7 @@ async fn manifest(
   Ok(manifest::encode(&files))
 }
 
-/// A live file's bytes, from the `Range: bytes=<from>-` offset if given.
+/// A live file's or archive's bytes, from the `Range: bytes=<from>-` offset if given.
 async fn file(
   State(shared): State<Arc<Shared>>,
   Path(path): Path<String>,
@@ -166,7 +167,7 @@ async fn file(
   if !authorized(&shared, &headers) {
     return Err(StatusCode::UNAUTHORIZED);
   }
-  if !valid_live_path(&path) {
+  if !valid_live_path(&path) && archive_path(&path).is_none() {
     return Err(StatusCode::BAD_REQUEST);
   }
   let from = match headers.get(RANGE) {
