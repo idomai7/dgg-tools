@@ -139,9 +139,12 @@ The layout is flat: each crate is a direct child of the root.
   - Live test: after backfill, the index holds exactly a reference capture's 583 messages over the same span. 16 nicks stay lowercase because those users were never seen natively.
 - **Cross-host handoff:** done. Tested live: the old instance retired about 38 s after the new one started.
 - **`serve` / `sync`:** done.
-- **`compact`:** done.
-  - **Don't run it on real data until `index` reads archives:** `index --rebuild` would lose archived days.
-- **Next:** `index` reads archives (schema v4).
+- **`compact`:** done, and `index` reads archives (schema v4).
+  - Archives are found through the monthly manifests.
+  - Each archive's checkpoint carries its SHA-256, so a fully read archive is skipped unopened and a re-merged one is reread from the start.
+  - Checkpoints of compacted-away live files are dropped.
+  - Real data: the index rebuilt from the archive is identical to one built from the live files (535 messages).
+- **Next:** pick from the roadmap: the read-only viewer, the archives and stats tools, or the services dashboard.
 
 ## Deferred: Kick
 The Kick probe lives on the `kick` branch (`viewer/examples/kick.rs`, with `.env.example`). It compiles but hasn't been run.

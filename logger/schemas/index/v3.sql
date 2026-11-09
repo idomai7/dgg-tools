@@ -1,4 +1,4 @@
--- Index schema version 3, the current one (logger::index::SCHEMA_VERSION).
+-- Index schema version 3. Superseded by v4; kept as a record.
 --
 -- Changes from v2: messages can come from backfill (source
 -- 'backfill:<source>'), matched by lowercased nick through

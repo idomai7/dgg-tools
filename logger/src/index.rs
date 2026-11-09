@@ -5,6 +5,12 @@
 //! transaction as the rows it produced, so an interrupted run resumes
 //! exactly where it stopped, with nothing indexed twice.
 //!
+//! Archives are found through the monthly manifests. An archive's
+//! checkpoint also records its SHA-256: a fully read archive is skipped
+//! without being opened, and one re-merged since (so its offsets no longer
+//! line up) is read again from the start. A newly archived day is read once
+//! more than its live files were, which deduplication makes harmless.
+//!
 //! Messages are deduplicated on `(timestamp, nick, data)`, verified to match
 //! between live `MSG` frames and the `HISTORY` replay. A message seen both
 //! ways is kept as `live`, with the earliest live receive time.
@@ -18,7 +24,7 @@
 
 use {
   ::journal::{
-    ReadError, Reader, Record, layout::live_files, record::v1::Body,
+    ReadError, Reader, Record, archive, layout::live_files, record::v1::Body,
   },
   ::rusqlite::{
     Connection, OptionalExtension, Transaction, TransactionBehavior, params,
@@ -29,12 +35,12 @@ use {
 
 /// Bumped whenever the schema changes; an index at another version must be
 /// rebuilt.
-pub const SCHEMA_VERSION: i64 = 3;
+pub const SCHEMA_VERSION: i64 = 4;
 
 /// The current schema. Every version's schema is kept in `schemas/index/`;
 /// add a new file there (and bump [`SCHEMA_VERSION`]) rather than editing
 /// an old one.
-const SCHEMA: &str = include_str!("../schemas/index/v3.sql");
+const SCHEMA: &str = include_str!("../schemas/index/v4.sql");
 
 /// Lines are committed in batches of this many, with their checkpoint.
 const BATCH: usize = 10_000;
@@ -179,33 +185,86 @@ pub fn follow(
 /// yet.
 pub fn index(db: &mut Connection, journal_root: &Path) -> Result<Stats, Error> {
   let mut stats = Stats::default();
+  let relative = |file: &Path| {
+    let relative = file.strip_prefix(journal_root).unwrap_or(file);
+    relative.to_string_lossy().replace('\\', "/")
+  };
+  let mut live = Vec::new();
   for file in live_files(journal_root)? {
-    let relative = file.strip_prefix(journal_root).unwrap_or(&file);
-    let relative = relative.to_string_lossy().replace('\\', "/");
-    let offset: i64 = db
-      .query_row(
-        "SELECT offset FROM files WHERE path = ?",
-        [&relative],
-        |row| row.get(0),
-      )
-      .optional()?
-      .unwrap_or(0);
-    let reader = match Reader::open(&file, offset as u64) {
+    let path = relative(&file);
+    let (offset, _) = checkpoint(db, &path)?;
+    live.push(path.clone());
+    let reader = match Reader::open(&file, offset) {
       Ok(reader) => reader,
       Err(ReadError::Io(e)) => return Err(e.into()),
       Err(e) => {
-        stats.skipped.push((relative, format!("{e:?}")));
+        stats.skipped.push((path, format!("{e:?}")));
         continue;
       }
     };
-    index_file(db, &relative, reader, &mut stats)?;
+    index_file(db, &path, None, reader, &mut stats)?;
   }
+  for archive in archive::all(journal_root)? {
+    let file = archive.path(journal_root);
+    let path = relative(&file);
+    let (offset, digest) = checkpoint(db, &path)?;
+    let same = digest.as_deref() == Some(archive.sha256.as_str());
+    if same && offset >= archive.bytes {
+      continue;
+    }
+    let offset = if same { offset } else { 0 };
+    let reader = match Reader::open(&file, offset) {
+      Ok(reader) => reader,
+      Err(ReadError::Io(e)) if e.kind() != io::ErrorKind::NotFound => {
+        return Err(e.into());
+      }
+      Err(e) => {
+        stats.skipped.push((path, format!("{e:?}")));
+        continue;
+      }
+    };
+    index_file(db, &path, Some(&archive.sha256), reader, &mut stats)?;
+  }
+  forget_gone(db, &live)?;
   Ok(stats)
+}
+
+/// A file's checkpoint: where to resume, and the digest it was read at.
+fn checkpoint(
+  db: &Connection,
+  path: &str,
+) -> Result<(u64, Option<String>), Error> {
+  let found = db
+    .query_row(
+      "SELECT offset, digest FROM files WHERE path = ?1",
+      [path],
+      |row| Ok((row.get::<_, i64>(0)? as u64, row.get(1)?)),
+    )
+    .optional()?;
+  Ok(found.unwrap_or((0, None)))
+}
+
+/// Drops checkpoints of live files that no longer exist (compacted away).
+fn forget_gone(db: &mut Connection, live: &[String]) -> Result<(), Error> {
+  let transaction = db.transaction()?;
+  let stale: Vec<String> = transaction
+    .prepare("SELECT path FROM files WHERE path LIKE 'live/%'")?
+    .query_map([], |row| row.get(0))?
+    .collect::<Result<Vec<String>, _>>()?
+    .into_iter()
+    .filter(|path| !live.contains(path))
+    .collect();
+  for path in stale {
+    transaction.execute("DELETE FROM files WHERE path = ?1", [path])?;
+  }
+  transaction.commit()?;
+  Ok(())
 }
 
 fn index_file(
   db: &mut Connection,
   path: &str,
+  digest: Option<&str>,
   mut reader: Reader,
   stats: &mut Stats,
 ) -> Result<(), Error> {
@@ -247,9 +306,10 @@ fn index_file(
       )?;
     }
     transaction.execute(
-      "INSERT INTO files (path, offset) VALUES (?1, ?2)
-        ON CONFLICT (path) DO UPDATE SET offset = excluded.offset",
-      params![path, reader.offset() as i64],
+      "INSERT INTO files (path, offset, digest) VALUES (?1, ?2, ?3)
+        ON CONFLICT (path) DO UPDATE SET
+          offset = excluded.offset, digest = excluded.digest",
+      params![path, reader.offset() as i64, digest],
     )?;
     transaction.commit()?;
     stats.lines += lines;

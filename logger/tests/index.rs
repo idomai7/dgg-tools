@@ -347,3 +347,61 @@ fn backfill_yields_to_native_messages() {
   index(&mut db, &root.journal()).unwrap();
   assert_eq!(messages(&db), incremental);
 }
+
+#[test]
+fn follows_files_into_archives() {
+  use ::logger::compact::compact_day;
+  let root = TempRoot::new();
+  let live = |nick: &str, timestamp, data: &str| {
+    frame(format!("MSG {}", message(timestamp, nick, data)))
+  };
+  let mut a = Writer::new(root.journal(), "a");
+  a.write(100, 1, Body::Open("wss://x".into())).unwrap();
+  a.write(101, 1, live("Alice", 101, "one")).unwrap();
+  a.write(102, 1, live("Bob", 102, "two")).unwrap();
+  drop(a);
+  let mut db = open(&root.database()).unwrap();
+  index(&mut db, &root.journal()).unwrap();
+  assert_eq!(messages(&db).len(), 2);
+
+  // Compacting moves the day into an archive: indexed once more (nothing
+  // new), its live checkpoint forgotten, then skipped without being read.
+  compact_day(&root.journal(), "1970-01-01", 3)
+    .unwrap()
+    .unwrap();
+  let archived = index(&mut db, &root.journal()).unwrap();
+  assert_eq!((archived.lines, archived.messages), (3, 0));
+  let paths = |db: &Connection| -> Vec<(String, bool)> {
+    db.prepare("SELECT path, digest IS NOT NULL FROM files ORDER BY path")
+      .unwrap()
+      .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+      .unwrap()
+      .map(Result::unwrap)
+      .collect()
+  };
+  let archive_path = "archive/1970/01/1970-01-01.journal.zst".to_owned();
+  assert_eq!(paths(&db), [(archive_path.clone(), true)]);
+  let idle = index(&mut db, &root.journal()).unwrap();
+  assert_eq!(idle.lines, 0);
+
+  // A late file re-merges the archive: its digest changes, so it's read
+  // again from the start, and the late message arrives.
+  let mut b = Writer::new(root.journal(), "b");
+  b.write(103, 1, Body::Open("wss://x".into())).unwrap();
+  b.write(104, 1, live("Carol", 104, "three")).unwrap();
+  drop(b);
+  compact_day(&root.journal(), "1970-01-01", 3)
+    .unwrap()
+    .unwrap();
+  let remerged = index(&mut db, &root.journal()).unwrap();
+  assert_eq!((remerged.lines, remerged.messages), (5, 1));
+  assert_eq!(paths(&db), [(archive_path, true)]);
+
+  // Rebuilding from archives alone gives the same index.
+  let incremental = messages(&db);
+  drop(db);
+  let mut db = rebuild(&root.database()).unwrap();
+  index(&mut db, &root.journal()).unwrap();
+  assert_eq!(messages(&db), incremental);
+  assert_eq!(incremental.len(), 3);
+}
