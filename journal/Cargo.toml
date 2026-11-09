@@ -2,6 +2,7 @@
 name = "journal"
 version = "0.1.0"
 edition.workspace = true
+description = "The logger's journal: append-only files of captured dgg chat"
 
 [dependencies]
 base64.workspace = true

@@ -2,6 +2,7 @@
 name = "version-info"
 version = "0.1.0"
 edition.workspace = true
+description = "Embeds version information in Windows binaries at build time"
 
 [dependencies]
 embed-resource.workspace = true
