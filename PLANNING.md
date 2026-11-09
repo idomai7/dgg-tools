@@ -31,7 +31,8 @@ The layout is flat: each crate is a direct child of the root.
    - archival;
    - clipping tools;
    - links/attachments viewer (like linkers.ooo);
-   - embed stats viewer: when embeds are live, how many viewers, and perhaps which viewers.
+   - embed stats viewer: when embeds are live, how many viewers, and perhaps which viewers;
+   - services dashboard: the status of running services, such as capture instances and their health, `index --follow` and `sync --follow` progress, gaps, and the backfill budget. It could build on `serve`'s `/control` and `/manifest`.
 4. **Archives and stats, not yet ordered.** Some can likely be derived from chat events the journal already captures (marked *chat*). The rest need other dgg endpoints or sites, which still have to be probed (marked *probe*).
    - donations: amounts, users, messages, times (*chat*: `DONATION`);
    - gifted subs: gifter, recipients, times (*chat*: `GIFTSUB`/`MASSGIFT`);
