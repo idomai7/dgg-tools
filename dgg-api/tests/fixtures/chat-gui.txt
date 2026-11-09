@@ -4,3 +4,12 @@ ERR {"description":"submode","tier":2}
 ERR {"description":"bannedphrase","filtered":"phrase 1"}
 PRIVMSG {"messageid":42,"timestamp":1794203923846,"nick":"user1","data":"whisper 1"}
 PRIVMSGSENT ""
+BAN {"nick":"user1","data":"user2","timestamp":1794203923846}
+UNBAN {"nick":"user1","data":"user2","timestamp":1794203923846}
+UNMUTE {"nick":"System","data":"user2","timestamp":1794203923846}
+SUBONLY {"data":"on","tier":3,"nick":"user1","timestamp":1794203923846}
+SUBONLY {"data":"off","nick":"user1","timestamp":1794203923846}
+PIN {"nick":"user1","data":"pinned 1","uuid":"00000000-0000-0000-0000-000000000001","timestamp":1794203923846}
+PIN {"nick":"user1","data":"","uuid":"00000000-0000-0000-0000-000000000002","timestamp":1794203923846}
+ADDPHRASE {"data":"phrase 1","timestamp":1794203923846}
+REMOVEPHRASE {"data":"phrase 1","timestamp":1794203923846}

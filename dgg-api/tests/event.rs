@@ -202,3 +202,32 @@ fn replies() {
   );
   assert_eq!(chat_gui("PRIVMSGSENT"), [Event::PrivMsgSent]);
 }
+
+#[test]
+fn moderation_from_chat_gui() {
+  let Event::Ban(ban) = &chat_gui("BAN")[0] else {
+    panic!()
+  };
+  assert_eq!((ban.nick.as_str(), ban.target.as_str()), ("user1", "user2"));
+  let Event::Unmute(unmute) = &chat_gui("UNMUTE")[0] else {
+    panic!()
+  };
+  assert_eq!(unmute.nick, "System");
+  let tiers: Vec<_> = chat_gui("SUBONLY")
+    .iter()
+    .map(|event| match event {
+      Event::SubOnly(mode) => mode.tier(),
+      _ => panic!(),
+    })
+    .collect();
+  assert_eq!(tiers, [Some(3), None]);
+  let pins = chat_gui("PIN");
+  let Event::Pin(unpin) = &pins[1] else {
+    panic!()
+  };
+  assert!(unpin.data.is_empty());
+  let Event::AddPhrase(phrase) = &chat_gui("ADDPHRASE")[0] else {
+    panic!()
+  };
+  assert_eq!(phrase.phrase, "phrase 1");
+}

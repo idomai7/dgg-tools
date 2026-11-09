@@ -291,6 +291,59 @@ pub struct PrivMsg {
   pub message_id: Option<i64>,
 }
 
+/// `BAN`, `UNBAN` or `UNMUTE`: `nick` did it to `target`. From chat-gui,
+/// which reads no duration. An `UNMUTE` by `System` is the website lifting
+/// a mute (a subscription or donation).
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+pub struct Moderation {
+  pub nick: String,
+  #[serde(rename = "data")]
+  pub target: String,
+  /// Unix ms.
+  pub timestamp: i64,
+}
+
+/// `SUBONLY`: subscriber-only mode changed. From chat-gui.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+pub struct SubOnly {
+  /// `on` or `off`.
+  #[serde(rename = "data")]
+  pub state: String,
+  /// The tier it needs, when on; 1 if left out.
+  pub tier: Option<u8>,
+  /// Who changed it.
+  pub nick: Option<String>,
+  /// Unix ms.
+  pub timestamp: i64,
+}
+
+impl SubOnly {
+  /// The tier subscribers need to chat, or `None` if it's off.
+  pub fn tier(&self) -> Option<u8> {
+    (self.state == "on").then(|| self.tier.unwrap_or(1))
+  }
+}
+
+/// `PIN`: `nick` pinned a message, or unpinned (`data` empty). From
+/// chat-gui.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+pub struct Pin {
+  pub nick: String,
+  pub data: String,
+  pub uuid: String,
+  /// Unix ms.
+  pub timestamp: i64,
+}
+
+/// `ADDPHRASE` or `REMOVEPHRASE`: a banned phrase. From chat-gui.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+pub struct Phrase {
+  #[serde(rename = "data")]
+  pub phrase: String,
+  /// Unix ms.
+  pub timestamp: i64,
+}
+
 /// One decoded frame.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
@@ -313,6 +366,13 @@ pub enum Event {
   PrivMsg(PrivMsg),
   /// The whisper just sent was delivered. From chat-gui.
   PrivMsgSent,
+  Ban(Moderation),
+  Unban(Moderation),
+  Unmute(Moderation),
+  SubOnly(SubOnly),
+  Pin(Pin),
+  AddPhrase(Phrase),
+  RemovePhrase(Phrase),
   /// An event this crate doesn't type (yet).
   Other {
     event: String,
@@ -357,6 +417,13 @@ impl Event {
       "PRIVMSG" => json(payload).map(Self::PrivMsg),
       // chat-gui reads nothing from it.
       "PRIVMSGSENT" => Ok(Self::PrivMsgSent),
+      "BAN" => json(payload).map(Self::Ban),
+      "UNBAN" => json(payload).map(Self::Unban),
+      "UNMUTE" => json(payload).map(Self::Unmute),
+      "SUBONLY" => json(payload).map(Self::SubOnly),
+      "PIN" => json(payload).map(Self::Pin),
+      "ADDPHRASE" => json(payload).map(Self::AddPhrase),
+      "REMOVEPHRASE" => json(payload).map(Self::RemovePhrase),
       _ => {
         return Self::Other {
           event: event.into(),
@@ -389,6 +456,13 @@ impl Event {
       Self::Err(_) => "ERR",
       Self::PrivMsg(_) => "PRIVMSG",
       Self::PrivMsgSent => "PRIVMSGSENT",
+      Self::Ban(_) => "BAN",
+      Self::Unban(_) => "UNBAN",
+      Self::Unmute(_) => "UNMUTE",
+      Self::SubOnly(_) => "SUBONLY",
+      Self::Pin(_) => "PIN",
+      Self::AddPhrase(_) => "ADDPHRASE",
+      Self::RemovePhrase(_) => "REMOVEPHRASE",
       Self::Other { event, .. } | Self::Unreadable { event, .. } => event,
     }
   }
