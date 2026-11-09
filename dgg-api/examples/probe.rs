@@ -1,5 +1,6 @@
 // Probe: stream dgg chat through dgg_api::chat::Client and print what arrives.
-// Usage: cargo run -p dgg-api --example probe -- [--no-origin]
+// Usage: cargo run -p dgg-api --features client --example probe --
+//          [--no-origin]
 use ::dgg_api::chat::{Client, Item, Options};
 
 #[::tokio::main]

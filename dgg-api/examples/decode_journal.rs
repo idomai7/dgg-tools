@@ -1,7 +1,8 @@
 // Decode every frame in a logger journal's live files, and count what came
 // out: events by name, and any that were unreadable (each shown once) or
 // untyped. For checking chat::event against what dgg really sends.
-// Usage: cargo run -p dgg-api --example decode_journal -- <journal dir>
+// Usage: cargo run -p dgg-api --features protocol --example decode_journal --
+//          <journal dir>
 
 use {
   ::dgg_api::chat::protocol::Event,
