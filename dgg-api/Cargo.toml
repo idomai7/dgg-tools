@@ -26,6 +26,7 @@ tokio = { workspace = true, optional = true }
 tokio-tungstenite = { workspace = true, optional = true }
 
 [dev-dependencies]
+dotenvy.workspace = true
 serde_json.workspace = true
 
 [[example]]
@@ -39,6 +40,10 @@ required-features = ["client"]
 [[example]]
 name = "decode_journal"
 required-features = ["protocol"]
+
+[[example]]
+name = "send"
+required-features = ["client", "protocol"]
 
 [[test]]
 name = "client"
