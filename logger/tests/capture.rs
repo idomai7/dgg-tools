@@ -119,6 +119,7 @@ async fn journals_connections_and_shutdown() {
     started: 1,
     handoff: Handoff::default(),
     peer: None,
+    bridge: false,
   };
   assert_eq!(run(config, shutdown).await.unwrap(), Exit::Shutdown);
   server.abort();
@@ -186,6 +187,7 @@ async fn hands_off_to_a_newer_instance() {
     started,
     handoff: quick_handoff(),
     peer: None,
+    bridge: false,
   };
 
   let old = ::tokio::spawn(run(config("old", 1), ::std::future::pending()));
@@ -238,6 +240,7 @@ async fn hands_off_to_an_instance_on_another_host() {
     started,
     handoff: quick_handoff(),
     peer,
+    bridge: false,
   };
   let old = config(&old_host, "old", 1, None);
   let old = ::tokio::spawn(run(old, ::std::future::pending()));

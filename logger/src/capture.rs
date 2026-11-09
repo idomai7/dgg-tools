@@ -10,8 +10,11 @@
 use {
   crate::control::{self, Status},
   ::dgg_chat::{Client, Item, Options},
-  ::journal::{Writer, record::v0::Body, writer::SYNC_INTERVAL},
+  ::journal::{
+    Writer, layout::utc_day, record::v0::Body, writer::SYNC_INTERVAL,
+  },
   ::std::{
+    fmt::Display,
     io,
     path::{Path, PathBuf},
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -43,6 +46,42 @@ pub fn instance_id(host: &str, start_ms: i64) -> String {
 pub fn now_ms() -> i64 {
   let since = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
   since.as_millis() as i64
+}
+
+/// `YYYY-MM-DD HH:MM:SS.mmmZ` for unix ms `ms`, as log lines start.
+pub fn timestamp(ms: i64) -> String {
+  let of_day = ms.rem_euclid(86_400_000);
+  format!(
+    "{} {:02}:{:02}:{:02}.{:03}Z",
+    utc_day(ms),
+    of_day / 3_600_000,
+    of_day / 60_000 % 60,
+    of_day / 1000 % 60,
+    of_day % 1000
+  )
+}
+
+/// Writes a capture's own lines to stderr, each naming the instance. A
+/// bridge's (a capture an install starts, with no supervisor to timestamp
+/// its lines) are timestamped and marked too.
+#[derive(Clone, Debug)]
+pub struct Say {
+  pub instance: String,
+  pub bridge: bool,
+}
+
+impl Say {
+  pub fn line(&self, message: impl Display) {
+    if self.bridge {
+      eprintln!(
+        "{} {} (bridge): {message}",
+        timestamp(now_ms()),
+        self.instance
+      );
+    } else {
+      eprintln!("{}: {message}", self.instance);
+    }
+  }
 }
 
 /// How instances hand off to each other.
@@ -81,6 +120,8 @@ pub struct Config {
   /// Another host to push this instance's status to, so instances there
   /// hand off to this one.
   pub peer: Option<Peer>,
+  /// Whether this is a bridge, for its log lines (see [`Say`]).
+  pub bridge: bool,
 }
 
 /// Another host's `serve`.
@@ -139,7 +180,12 @@ pub async fn run(
     started,
     handoff,
     peer,
+    bridge,
   } = config;
+  let say = Say {
+    instance: instance.clone(),
+    bridge,
+  };
   let url = chat.url.clone();
   let control = control::dir(&journal_root);
   let mut writer = Writer::new(journal_root, instance.clone());
@@ -149,8 +195,8 @@ pub async fn run(
   let mut connected = None;
   let mut health = Health::default();
   let pusher = peer.clone().map(|peer| {
-    let (control, instance) = (control.clone(), instance.clone());
-    ::tokio::spawn(push_status(peer, control, instance, handoff.interval))
+    let control = control.clone();
+    ::tokio::spawn(push_status(peer, control, say.clone(), handoff.interval))
   });
   ::tokio::pin!(shutdown);
   let exit = loop {
@@ -175,13 +221,13 @@ pub async fn run(
           Item::Disconnected { connection, reason } => {
             connected = None;
             health = Health::default();
-            eprintln!("{instance}: disconnected (#{connection}): {reason}");
+            say.line(format_args!("disconnected (#{connection}): {reason}"));
             writer.write(now, connection, Body::Close(reason))?;
           }
           Item::ConnectFailed { error, retry_in } => {
-            eprintln!(
-              "{instance}: connect failed: {error}; retrying in {retry_in:?}"
-            );
+            say.line(format_args!(
+              "connect failed: {error}; retrying in {retry_in:?}"
+            ));
           }
         }
       }
@@ -199,7 +245,7 @@ pub async fn run(
         match check_handoff(&control, &me, &handoff) {
           Ok(Some(successor)) => break Exit::HandedOff(successor),
           Ok(None) => {}
-          Err(e) => eprintln!("{instance}: control: {e}"),
+          Err(e) => say.line(format_args!("control: {e}")),
         }
       }
       () = &mut shutdown => break Exit::Shutdown,
@@ -214,11 +260,11 @@ pub async fn run(
   }
   writer.sync()?;
   if let Err(e) = control::remove(&control, &instance) {
-    eprintln!("{instance}: control: {e}");
+    say.line(format_args!("control: {e}"));
   }
   if let (Some(pusher), Some(peer)) = (pusher, peer) {
     pusher.abort();
-    withdraw_status(&peer, &instance).await;
+    withdraw_status(&peer, &say).await;
   }
   Ok(exit)
 }
@@ -241,16 +287,17 @@ fn peer_url(peer: &Peer, instance: &str) -> String {
 async fn push_status(
   peer: Peer,
   control: PathBuf,
-  instance: String,
+  say: Say,
   interval: Duration,
 ) {
   let client = peer_client();
-  let url = peer_url(&peer, &instance);
+  let instance = &say.instance;
+  let url = peer_url(&peer, instance);
   let mut tick = ::tokio::time::interval(interval);
   let mut failing: Option<String> = None;
   loop {
     tick.tick().await;
-    let path = control::path(&control, &instance);
+    let path = control::path(&control, instance);
     let Ok(status) = ::tokio::fs::read_to_string(path).await else {
       continue;
     };
@@ -267,11 +314,11 @@ async fn push_status(
     };
     match (&failing, error) {
       (None, Some(error)) => {
-        eprintln!("{instance}: peer {}: {error}", peer.url);
+        say.line(format_args!("peer {}: {error}", peer.url));
         failing = Some(error);
       }
       (Some(_), None) => {
-        eprintln!("{instance}: peer {}: pushing again", peer.url);
+        say.line(format_args!("peer {}: pushing again", peer.url));
         failing = None;
       }
       _ => {}
@@ -280,14 +327,14 @@ async fn push_status(
 }
 
 /// Removes this instance's status from `peer`, best effort.
-async fn withdraw_status(peer: &Peer, instance: &str) {
+async fn withdraw_status(peer: &Peer, say: &Say) {
   let sent = peer_client()
-    .delete(peer_url(peer, instance))
+    .delete(peer_url(peer, &say.instance))
     .bearer_auth(&peer.token)
     .send()
     .await;
   if let Err(e) = sent {
-    eprintln!("{instance}: peer {}: {e}", peer.url);
+    say.line(format_args!("peer {}: {e}", peer.url));
   }
 }
 

@@ -1,7 +1,9 @@
 //! Capture dgg chat into the journal.
 
 use {
-  crate::capture::{Config, Exit, Handoff, Peer, instance_id, now_ms, run},
+  crate::capture::{
+    Config, Exit, Handoff, Peer, Say, instance_id, now_ms, run,
+  },
   ::clap::Args,
   ::dgg_chat::{DEFAULT_URL, Options},
   ::std::{path::Path, process::ExitCode, time::Duration},
@@ -32,6 +34,10 @@ pub struct Capture {
   /// Bearer token for `--peer`.
   #[arg(long, env = "LOGGER_PEER_TOKEN", hide_env_values = true)]
   peer_token: Option<String>,
+  /// Run as an install's bridge: lines are timestamped and marked, since
+  /// no supervisor is there to timestamp them.
+  #[arg(long)]
+  bridge: bool,
 }
 
 impl Capture {
@@ -54,13 +60,17 @@ impl Capture {
       chat.origin = None;
     }
     let journal_root = data.join("journal");
-    eprintln!("capturing as {instance} into {}", journal_root.display());
+    let say = Say {
+      instance: instance.clone(),
+      bridge: self.bridge,
+    };
+    say.line(format_args!("capturing into {}", journal_root.display()));
     let peer = match (self.peer, self.peer_token) {
       (Some(url), Some(token)) if !token.is_empty() => {
         Some(Peer { url, token })
       }
       (Some(_), _) => {
-        eprintln!("--peer needs --peer-token (or LOGGER_PEER_TOKEN)");
+        say.line("--peer needs --peer-token (or LOGGER_PEER_TOKEN)");
         return ExitCode::FAILURE;
       }
       (None, _) => None,
@@ -68,7 +78,7 @@ impl Capture {
     let config = Config {
       chat,
       journal_root,
-      instance: instance.clone(),
+      instance,
       started,
       handoff: Handoff {
         grace: Duration::from_secs(self.handoff_grace),
@@ -76,18 +86,19 @@ impl Capture {
         ..Handoff::default()
       },
       peer,
+      bridge: self.bridge,
     };
     match run(config, shutdown()).await {
       Ok(Exit::Shutdown) => {
-        eprintln!("{instance}: stopped");
+        say.line("stopped");
         ExitCode::SUCCESS
       }
       Ok(Exit::HandedOff(successor)) => {
-        eprintln!("{instance}: handed off to {successor}");
+        say.line(format_args!("handed off to {successor}"));
         ExitCode::SUCCESS
       }
       Err(e) => {
-        eprintln!("{instance}: capture failed: {e}");
+        say.line(format_args!("capture failed: {e}"));
         ExitCode::FAILURE
       }
     }

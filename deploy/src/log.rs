@@ -3,35 +3,13 @@
 //! `capture.log` grows to `max_size`, then becomes `capture.1.log` (the
 //! previous `.1` becoming `.2`, and so on), keeping `keep` old files.
 
-use {
-  ::journal::layout::utc_day,
-  ::std::{
-    fs::{self, File, OpenOptions},
-    io::{self, Write},
-    path::{Path, PathBuf},
-    time::{SystemTime, UNIX_EPOCH},
-  },
+pub use ::logger::capture::{now_ms, timestamp};
+
+use ::std::{
+  fs::{self, File, OpenOptions},
+  io::{self, Write},
+  path::{Path, PathBuf},
 };
-
-/// Unix ms now.
-pub fn now_ms() -> i64 {
-  SystemTime::now()
-    .duration_since(UNIX_EPOCH)
-    .map_or(0, |since| since.as_millis() as i64)
-}
-
-/// `YYYY-MM-DD HH:MM:SS.mmmZ` for unix ms `ms`.
-pub fn timestamp(ms: i64) -> String {
-  let of_day = ms.rem_euclid(86_400_000);
-  format!(
-    "{} {:02}:{:02}:{:02}.{:03}Z",
-    utc_day(ms),
-    of_day / 3_600_000,
-    of_day / 60_000 % 60,
-    of_day / 1000 % 60,
-    of_day % 1000
-  )
-}
 
 /// `<stem>.<n>.<extension>` beside `path`: its `n`th rotated copy.
 pub fn rotated(path: &Path, n: u32) -> PathBuf {

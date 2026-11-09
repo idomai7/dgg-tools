@@ -82,7 +82,8 @@ install's data needs an administrator prompt.
 ### Upgrading and switching
 
 Build, then run `install` again, the same way. Nothing is missed: a capture
-from the new build starts first (the "bridge", logging to `bridge.log`),
+from the new build starts first (the "bridge", its lines in `capture.log`
+marked `(bridge)`),
 the old install hands over to it and stops, and then the new install starts
 and takes over from the bridge. Old builds are pruned, keeping three.
 

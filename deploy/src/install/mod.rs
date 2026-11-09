@@ -345,12 +345,12 @@ pub fn install(options: &Options) -> io::Result<Done> {
   let journal_root = paths.data.join("journal");
   let since = now_ms() - 1000;
   let mut bridge =
-    bridge::start(&build, &paths.data, &paths.logs.join("bridge.log"))?;
+    bridge::start(&build, &paths.data, &paths.logs.join("capture.log"))?;
   if wait_healthy(&journal_root, since, options.healthy_within)?.is_none() {
     let _ = bridge.kill();
     return Err(error(format!(
       "a capture from the new build wasn't healthy within {}s; see \
-       bridge.log in {}. Nothing else was changed.",
+       capture.log in {}. Nothing else was changed.",
       options.healthy_within.as_secs(),
       paths.logs.display()
     )));
