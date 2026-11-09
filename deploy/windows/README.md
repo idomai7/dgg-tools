@@ -1,0 +1,164 @@
+# Running the logger on Windows
+
+The logger is a few small programs that share one data directory:
+
+| Program | Job | Runs |
+|---|---|---|
+| `capture` | Connects to dgg chat and writes everything to the journal | all the time |
+| `index` | Reads the journal into `index.sqlite` | all the time, with `--follow` |
+| `compact` | Packs each finished day into one compressed archive | once a day |
+| `gaps` | Lists when no capture was connected | when you want |
+| `backfill` | Fetches missed messages from public logs | after an outage |
+
+Everything lives under one folder. These docs use
+`%LOCALAPPDATA%\dgg-tools`, which is also where `install.ps1` puts things,
+so you can start in a shell and switch to scheduled tasks later without
+moving any data.
+
+```
+%LOCALAPPDATA%\dgg-tools\
+  bin\<build>\     a copy of the programs (see "Why copy the programs")
+  data\
+    journal\
+      live\        today's raw capture, one file per capture per day
+      archive\     finished days, compressed
+      backfill\    messages fetched from other logs, kept apart
+      control\     each running capture's status
+    index.sqlite   the searchable index; can be rebuilt from the journal
+  logs\            only used by the scheduled tasks
+```
+
+The journal is the record. The index can always be deleted and rebuilt
+with `index --rebuild`.
+
+## Running it in a shell
+
+You need Rust (`cargo`) and two PowerShell windows. Nothing needs
+administrator rights.
+
+### 1. Build and copy
+
+From the repository:
+
+```powershell
+cargo build --release -p logger
+$root = "$env:LOCALAPPDATA\dgg-tools"
+$bin = "$root\bin\shell-$(Get-Date -Format yyyyMMdd-HHmmss)"
+New-Item -ItemType Directory -Force $bin | Out-Null
+Copy-Item target\release\capture.exe, target\release\index.exe,
+  target\release\compact.exe, target\release\gaps.exe,
+  target\release\backfill.exe $bin
+```
+
+### 2. Start capture (window 1)
+
+```powershell
+$root = "$env:LOCALAPPDATA\dgg-tools"
+$bin = (Get-ChildItem "$root\bin" -Directory | Sort-Object Name | Select-Object -Last 1).FullName
+& "$bin\capture.exe" --data "$root\data"
+```
+
+It prints `capturing as <host>-<number> into ...` and then stays quiet. It
+reconnects by itself if the connection drops.
+
+### 3. Start the index (window 2)
+
+```powershell
+$root = "$env:LOCALAPPDATA\dgg-tools"
+$bin = (Get-ChildItem "$root\bin" -Directory | Sort-Object Name | Select-Object -Last 1).FullName
+& "$bin\index.exe" --data "$root\data" --follow
+```
+
+It prints a summary every minute while messages arrive. Run only one index
+at a time.
+
+### 4. Compact once a day
+
+Days are in UTC, and a day can be compacted an hour after it ends. Any time
+the next day, in a third window or either of the others after stopping it:
+
+```powershell
+& "$bin\compact.exe" --data "$root\data"
+```
+
+It's safe to run while capture and index are running, and safe to run when
+there's nothing to do. Use `--dry-run` to see which days it would pack.
+
+### Stopping
+
+Press **Ctrl-C** in each window. Capture saves and closes its file cleanly.
+Closing the window or a crash also loses nothing already written: at most
+the last second, and the journal reader skips a half-written last line.
+
+### Checking on it
+
+```powershell
+powershell -ExecutionPolicy Bypass -File deploy\windows\status.ps1
+```
+
+It shows the running programs and each capture's status file (the log
+section stays empty for shell runs; their output is in the windows).
+
+### Upgrading without missing messages
+
+1. Build and copy again (step 1). Each build goes into its own folder.
+2. Start the new capture in a new window (step 2). Leave the old one
+   running.
+3. About 30 seconds after the new one is connected, the old one prints
+   `handed off to <new instance>` and exits by itself.
+4. Stop the old index with Ctrl-C and start the new one (step 3).
+
+Two captures can run side by side for as long as you like; the index merges
+them without duplicates. The one started last wins the handoff.
+
+## After an outage
+
+If the PC was off or asleep, see what was missed and fill it from public
+logs:
+
+```powershell
+& "$bin\gaps.exe" --data "$root\data" --min 60
+& "$bin\backfill.exe" --data "$root\data" --source linkers --dry-run
+& "$bin\backfill.exe" --data "$root\data" --source linkers
+```
+
+Short gaps are often already covered by the chat history dgg sends on every
+reconnect; `gaps` says which ones were. Backfilled messages go in
+`journal\backfill\`, separate from what was captured, and never replace a
+captured message. `--source rustlesearch` is millisecond-accurate but limited
+to 200 requests a day.
+
+Don't start a history import (`backfill --from`) by hand yet: it's meant to
+run for weeks and comes later.
+
+## Keeping the PC awake
+
+Capture stops while the PC sleeps. While plugged in:
+
+```powershell
+powercfg /change standby-timeout-ac 0
+```
+
+## Why copy the programs
+
+Windows locks a running `.exe`. If capture ran straight from
+`target\release`, the next `cargo build` would fail until you stopped it,
+which would leave a hole in the capture. Running a copy keeps the build
+folder free. Old copies under `bin\` can be deleted once nothing runs from
+them.
+
+## Later: scheduled tasks
+
+`install.ps1` does all of the above as scheduled tasks for your account,
+starting at logon, with output in `logs\`:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File deploy\windows\install.ps1
+```
+
+If a shell capture is running when you install, the task's capture takes
+over from it and the shell one exits on its own. Stop the shell index
+yourself. `uninstall.ps1` removes the tasks and keeps the data.
+
+Don't use `-Scope Machine` yet: it currently lets your account change
+programs that run as SYSTEM (see the security review).
