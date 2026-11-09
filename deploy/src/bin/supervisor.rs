@@ -19,6 +19,7 @@ use {
 /// Keep capture and index running against a data directory until stopped
 /// or until capture hands off to a newer instance.
 #[derive(Parser)]
+#[command(name = "dgg-supervisor", version = ::logger::BUILD)]
 struct Args {
   #[arg(long)]
   data: PathBuf,

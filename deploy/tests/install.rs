@@ -37,11 +37,11 @@ fn exe(dir: &Path, name: &str) -> PathBuf {
 }
 
 #[test]
-fn names_builds_by_time_and_version() {
+fn names_builds_by_time_and_commit() {
   // 2026-11-08 20:04:00.123Z
   assert_eq!(
     build_name(1_794_168_240_123),
-    format!("20261108-200400-{}", env!("CARGO_PKG_VERSION"))
+    format!("20261108-200400-{}", ::logger::BUILD)
   );
 }
 

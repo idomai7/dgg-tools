@@ -4,6 +4,9 @@ version = "0.1.0"
 edition.workspace = true
 description = "Captures dgg chat to a journal; indexes, compacts and syncs it"
 
+[build-dependencies]
+version-info.workspace = true
+
 [dependencies]
 dgg-chat.workspace = true
 journal.workspace = true

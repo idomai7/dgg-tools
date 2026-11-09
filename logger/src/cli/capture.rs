@@ -64,7 +64,11 @@ impl Capture {
       instance: instance.clone(),
       bridge: self.bridge,
     };
-    say.line(format_args!("capturing into {}", journal_root.display()));
+    say.line(format_args!(
+      "capturing into {} (build {})",
+      journal_root.display(),
+      crate::BUILD
+    ));
     let peer = match (self.peer, self.peer_token) {
       (Some(url), Some(token)) if !token.is_empty() => {
         Some(Peer { url, token })

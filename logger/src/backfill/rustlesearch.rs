@@ -25,7 +25,7 @@ impl Rustlesearch {
   pub fn new(base_url: impl Into<String>, channel: impl Into<String>) -> Self {
     let _ = ::rustls::crypto::ring::default_provider().install_default();
     let client = ::reqwest::Client::builder()
-      .user_agent(concat!("dgg-tools-logger/", env!("CARGO_PKG_VERSION")))
+      .user_agent(format!("dgg-tools-logger/{}", crate::BUILD))
       .build()
       .expect("http client");
     Self {

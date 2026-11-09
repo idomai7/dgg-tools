@@ -163,7 +163,11 @@ pub fn run(config: &Config, stop: &Stop) -> io::Result<Exit> {
   fs::create_dir_all(&config.lock_dir)?;
   log_line(
     &supervisor,
-    &format!("supervisor {} started", ::std::process::id()),
+    &format!(
+      "supervisor {} started (build {})",
+      ::std::process::id(),
+      ::logger::BUILD
+    ),
   );
 
   // Stops the programs: on request, or once capture hands off.

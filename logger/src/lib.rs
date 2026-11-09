@@ -3,6 +3,10 @@
 
 pub mod backfill;
 pub mod capture;
+/// This build: the commit it was built from, with `-dirty` if it had
+/// uncommitted changes (see `version_info::commit`).
+pub const BUILD: &str = env!("DGG_TOOLS_BUILD");
+
 pub mod cli;
 pub mod compact;
 pub mod control;
