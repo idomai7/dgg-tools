@@ -24,8 +24,8 @@ enum Command {
     /// Where the logs go.
     #[arg(long)]
     logs: PathBuf,
-    /// Where `capture`, `index` and `compact` are (default: beside this
-    /// program).
+    /// Where `dgg-capture`, `dgg-index` and `dgg-compact` are (default:
+    /// beside this program).
     #[arg(long)]
     bin_dir: Option<PathBuf>,
     /// Minutes between compactions.

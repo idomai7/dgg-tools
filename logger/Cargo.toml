@@ -2,6 +2,37 @@
 name = "logger"
 version = "0.1.0"
 edition.workspace = true
+# Prefixed, so they can be told apart (from Windows' own compact.exe, for
+# one) in Task Manager and process lists.
+autobins = false
+
+[[bin]]
+name = "dgg-backfill"
+path = "src/bin/backfill.rs"
+
+[[bin]]
+name = "dgg-capture"
+path = "src/bin/capture.rs"
+
+[[bin]]
+name = "dgg-compact"
+path = "src/bin/compact.rs"
+
+[[bin]]
+name = "dgg-gaps"
+path = "src/bin/gaps.rs"
+
+[[bin]]
+name = "dgg-index"
+path = "src/bin/index.rs"
+
+[[bin]]
+name = "dgg-serve"
+path = "src/bin/serve.rs"
+
+[[bin]]
+name = "dgg-sync"
+path = "src/bin/sync.rs"
 
 [dependencies]
 dgg-chat.workspace = true

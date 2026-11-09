@@ -151,7 +151,8 @@ fn delete_task(folder: &str, name: &str) -> io::Result<()> {
 /// Step 1: stops the old index and compaction and removes their tasks.
 pub fn stop_index(legacy: &Legacy) -> io::Result<()> {
   let bin = legacy.root.join("bin");
-  let names = ["index", "compact"];
+  // Builds from before the rename, and after (install.ps1 kept working).
+  let names = ["index", "compact", "dgg-index", "dgg-compact"];
   delete_task(&legacy.folder, "index")?;
   delete_task(&legacy.folder, "compact")?;
   // Ending a task should stop its supervise.ps1, which may leave its
@@ -176,7 +177,7 @@ pub struct Retired {
 pub fn retire(legacy: &Legacy, patience: Duration) -> io::Result<Retired> {
   let bin = legacy.root.join("bin");
   let mut retired = Retired::default();
-  let capture = ["capture"];
+  let capture = ["capture", "dgg-capture"];
   if !processes::wait_gone(&bin, &capture, patience)? {
     // Its supervise.ps1 first, or it would restart it.
     processes::kill_scripts(&bin, "supervise.ps1", &capture)?;

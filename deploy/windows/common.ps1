@@ -65,7 +65,7 @@ function Get-Install {
 # already written: the journal is written line by line, and its reader skips
 # a half-written last line.
 function Stop-Running($root, [string[]]$names = @("capture", "index",
-  "compact")) {
+  "compact", "dgg-capture", "dgg-index", "dgg-compact")) {
   $bin = "$root\bin\*"
   $supervisors = @(Get-CimInstance Win32_Process -Filter `
     "Name = 'powershell.exe'" -ErrorAction SilentlyContinue |

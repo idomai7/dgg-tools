@@ -4,11 +4,11 @@ The logger is a few small programs that share one data directory:
 
 | Program | Job | Runs |
 |---|---|---|
-| `capture` | Connects to dgg chat and writes everything to the journal | all the time |
-| `index` | Reads the journal into `index.sqlite` | all the time, with `--follow` |
-| `compact` | Packs each finished day into one compressed archive | once a day |
-| `gaps` | Lists when no capture was connected | when you want |
-| `backfill` | Fetches missed messages from public logs | after an outage |
+| `dgg-capture` | Connects to dgg chat and writes everything to the journal | all the time |
+| `dgg-index` | Reads the journal into `index.sqlite` | all the time, with `--follow` |
+| `dgg-compact` | Packs each finished day into one compressed archive | once a day |
+| `dgg-gaps` | Lists when no capture was connected | when you want |
+| `dgg-backfill` | Fetches missed messages from public logs | after an outage |
 
 Everything lives under one folder. These docs use
 `%LOCALAPPDATA%\dgg-tools`, which is also where `install.ps1` puts things,
@@ -45,9 +45,9 @@ cargo build --release -p logger
 $root = "$env:LOCALAPPDATA\dgg-tools"
 $bin = "$root\bin\shell-$(Get-Date -Format yyyyMMdd-HHmmss)"
 New-Item -ItemType Directory -Force $bin | Out-Null
-Copy-Item target\release\capture.exe, target\release\index.exe,
-  target\release\compact.exe, target\release\gaps.exe,
-  target\release\backfill.exe $bin
+Copy-Item target\release\dgg-capture.exe, target\release\dgg-index.exe,
+  target\release\dgg-compact.exe, target\release\dgg-gaps.exe,
+  target\release\dgg-backfill.exe $bin
 ```
 
 ### 2. Start capture (window 1)
@@ -55,7 +55,7 @@ Copy-Item target\release\capture.exe, target\release\index.exe,
 ```powershell
 $root = "$env:LOCALAPPDATA\dgg-tools"
 $bin = (Get-ChildItem "$root\bin" -Directory | Sort-Object Name | Select-Object -Last 1).FullName
-& "$bin\capture.exe" --data "$root\data"
+& "$bin\dgg-capture.exe" --data "$root\data"
 ```
 
 It prints `capturing as <host>-<number> into ...` and then stays quiet. It
@@ -66,7 +66,7 @@ reconnects by itself if the connection drops.
 ```powershell
 $root = "$env:LOCALAPPDATA\dgg-tools"
 $bin = (Get-ChildItem "$root\bin" -Directory | Sort-Object Name | Select-Object -Last 1).FullName
-& "$bin\index.exe" --data "$root\data" --follow
+& "$bin\dgg-index.exe" --data "$root\data" --follow
 ```
 
 It prints a summary every minute while messages arrive. Run only one index
@@ -78,7 +78,7 @@ Days are in UTC, and a day can be compacted an hour after it ends. Any time
 the next day, in a third window or either of the others after stopping it:
 
 ```powershell
-& "$bin\compact.exe" --data "$root\data"
+& "$bin\dgg-compact.exe" --data "$root\data"
 ```
 
 It's safe to run while capture and index are running, and safe to run when
@@ -127,9 +127,9 @@ If the PC was off or asleep, see what was missed and fill it from public
 logs:
 
 ```powershell
-& "$bin\gaps.exe" --data "$root\data" --min 60
-& "$bin\backfill.exe" --data "$root\data" --source linkers --dry-run
-& "$bin\backfill.exe" --data "$root\data" --source linkers
+& "$bin\dgg-gaps.exe" --data "$root\data" --min 60
+& "$bin\dgg-backfill.exe" --data "$root\data" --source linkers --dry-run
+& "$bin\dgg-backfill.exe" --data "$root\data" --source linkers
 ```
 
 Short gaps are often already covered by the chat history dgg sends on every

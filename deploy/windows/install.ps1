@@ -124,7 +124,7 @@ if ($machine) {
 }
 foreach ($name in "capture", "index", "compact", "serve", "sync",
   "backfill", "gaps") {
-  Copy-Item "$repo\target\release\$name.exe" $bin
+  Copy-Item "$repo\target\release\dgg-$name.exe" $bin
 }
 Copy-Item "$PSScriptRoot\supervise.ps1" $bin
 Write-Host "installed to $bin"
@@ -155,7 +155,7 @@ function Supervised($name, [string]$flags) {
   New-ScheduledTaskAction -Execute "powershell.exe" -WorkingDirectory $bin `
     -Argument ("-NoProfile -NonInteractive -WindowStyle Hidden " +
       "-ExecutionPolicy Bypass -File `"$bin\supervise.ps1`" " +
-      "-Log `"$logs\$name.log`" -Program `"$bin\$name.exe`" " +
+      "-Log `"$logs\$name.log`" -Program `"$bin\dgg-$name.exe`" " +
       "-Data `"$Data`" $flags")
 }
 
@@ -182,7 +182,7 @@ Register-ScheduledTask -TaskPath $TaskPath -TaskName compact -Force `
 # The old index (if any) is stopped outright; the old capture is left to
 # hand off.
 Stop-ScheduledTask -TaskPath $TaskPath -TaskName index
-Stop-Running $Root index
+Stop-Running $Root "index", "dgg-index"
 Start-ScheduledTask -TaskPath $TaskPath -TaskName index
 Start-ScheduledTask -TaskPath $TaskPath -TaskName capture
 Write-Host "started capture and index; logs in $logs"

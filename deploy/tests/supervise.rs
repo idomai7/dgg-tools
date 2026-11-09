@@ -201,3 +201,14 @@ fn one_index_at_a_time() {
     stop_second.request();
   });
 }
+
+#[test]
+fn runs_the_prefixed_binaries() {
+  let bin = Path::new("bin");
+  let config = Config::new(bin, Path::new("data"), Path::new("logs"));
+  let exe =
+    |name: &str| bin.join(format!("{name}{}", ::std::env::consts::EXE_SUFFIX));
+  assert_eq!(config.capture.path, exe("dgg-capture"));
+  assert_eq!(config.index.path, exe("dgg-index"));
+  assert_eq!(config.compact.path, exe("dgg-compact"));
+}

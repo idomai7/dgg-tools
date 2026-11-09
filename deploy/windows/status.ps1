@@ -113,7 +113,8 @@ function Get-Report($log, [int]$logLines) {
   $out.Add("PROGRAMS")
   # A SYSTEM process's path is hidden from a non-administrator; it's shown
   # as running anyway, since only the install runs these names as SYSTEM.
-  $programs = @(Get-Process capture, index, compact, backfill, sync, serve `
+  $programs = @(Get-Process capture, index, compact, backfill, sync, serve, `
+    dgg-capture, dgg-index, dgg-compact, dgg-backfill, dgg-sync, dgg-serve `
     -ErrorAction SilentlyContinue |
     Where-Object { -not $_.Path -or $_.Path -like "$Root\bin\*" })
   if (-not $programs) { $out.Add("  none running") }

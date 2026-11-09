@@ -6,7 +6,7 @@ A Cargo workspace of tools built around destiny.gg chat and its endpoints. Every
 The layout is flat: each crate is a direct child of the root.
 - `dgg-chat/`: the shared socket client and event types.
 - `journal/`: the journal file format, with a writer and a reader.
-- `logger/`: binaries `capture`, `index`, `serve`, `sync`, `backfill` and `compact`.
+- `logger/`: binaries `dgg-capture`, `dgg-index`, `dgg-serve`, `dgg-sync`, `dgg-backfill`, `dgg-compact` and `dgg-gaps` (prefixed so they stand out in process lists; Windows has its own `compact.exe`).
 - `viewer/`: the read-only chat viewer, formerly dggkick.
 
 ## Decisions

@@ -1,13 +1,13 @@
 //! The supervisor: keeps the logger's programs running against one data
 //! directory.
 //!
-//! - `capture` is restarted after it fails. When it exits cleanly it has
+//! - `dgg-capture` is restarted after it fails. When it exits cleanly it has
 //!   handed off to a newer instance, so the supervisor stops everything and
 //!   exits too: starting a newer supervisor is how an upgrade happens.
-//! - `index --follow` is always restarted. Only one supervisor runs it at a
-//!   time (`index.lock` in the data directory), so during a handoff the new
-//!   one waits for the old one to exit.
-//! - `compact` runs every `compact_every` (the first time a minute after
+//! - `dgg-index --follow` is always restarted. Only one supervisor runs it
+//!   at a time (`index.lock` in the data directory), so during a handoff the
+//!   new one waits for the old one to exit.
+//! - `dgg-compact` runs every `compact_every` (the first time a minute after
 //!   start), by whichever supervisor holds `compact.lock`.
 //!
 //! Each program's stdout and stderr go, line by line, to `<name>.log` in the
@@ -87,9 +87,9 @@ impl Config {
     let follow = Path::new("--follow");
     let data_flag = Path::new("--data");
     Self {
-      capture: Program::in_dir(bin_dir, "capture", &[data_flag, data]),
-      index: Program::in_dir(bin_dir, "index", &[data_flag, data, follow]),
-      compact: Program::in_dir(bin_dir, "compact", &[data_flag, data]),
+      capture: Program::in_dir(bin_dir, "dgg-capture", &[data_flag, data]),
+      index: Program::in_dir(bin_dir, "dgg-index", &[data_flag, data, follow]),
+      compact: Program::in_dir(bin_dir, "dgg-compact", &[data_flag, data]),
       lock_dir: data.to_owned(),
       logs: logs.to_owned(),
       compact_first: Duration::from_secs(60),
