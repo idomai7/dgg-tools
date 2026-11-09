@@ -48,18 +48,8 @@ use {
   },
 };
 
-/// What a build holds, all beside `dgg-logger` when it's run.
-pub const BINARIES: [&str; 9] = [
-  "dgg-supervisor",
-  "dgg-logger",
-  "dgg-capture",
-  "dgg-index",
-  "dgg-compact",
-  "dgg-backfill",
-  "dgg-gaps",
-  "dgg-serve",
-  "dgg-sync",
-];
+/// What a build holds, both beside `dgg-logger` when it's run.
+pub const BINARIES: [&str; 2] = ["dgg-supervisor", "dgg-logger"];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Scope {
@@ -387,7 +377,9 @@ pub fn install(options: &Options) -> io::Result<Done> {
       // Sharing the data, its capture hands off to the bridge.
       processes::wait_gone_except(
         &old.bin(),
-        &["dgg-capture", "capture"],
+        // As run now, by the Rust install before that, and by the
+        // PowerShell one.
+        &["dgg-logger capture", "dgg-capture", "capture"],
         &build,
         options.handoff_within,
       )?;

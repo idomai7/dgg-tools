@@ -30,7 +30,7 @@ enum Command {
     /// Where the logs go.
     #[arg(long)]
     logs: PathBuf,
-    /// Where `dgg-capture`, `dgg-index` and `dgg-compact` are (default:
+    /// Where `dgg-logger` is, to run its commands (default:
     /// beside this program).
     #[arg(long)]
     bin_dir: Option<PathBuf>,

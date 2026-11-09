@@ -203,12 +203,21 @@ fn one_index_at_a_time() {
 }
 
 #[test]
-fn runs_the_prefixed_binaries() {
+fn runs_the_loggers_commands() {
   let bin = Path::new("bin");
   let config = Config::new(bin, Path::new("data"), Path::new("logs"));
-  let exe =
-    |name: &str| bin.join(format!("{name}{}", ::std::env::consts::EXE_SUFFIX));
-  assert_eq!(config.capture.path, exe("dgg-capture"));
-  assert_eq!(config.index.path, exe("dgg-index"));
-  assert_eq!(config.compact.path, exe("dgg-compact"));
+  let logger =
+    bin.join(format!("dgg-logger{}", ::std::env::consts::EXE_SUFFIX));
+  let args = |program: &::deploy::supervise::Program| {
+    assert_eq!(program.path, logger);
+    program
+      .args
+      .iter()
+      .map(|arg| arg.to_string_lossy().into_owned())
+      .collect::<Vec<_>>()
+      .join(" ")
+  };
+  assert_eq!(args(&config.capture), "capture --data data");
+  assert_eq!(args(&config.index), "index --follow --data data");
+  assert_eq!(args(&config.compact), "compact --data data");
 }

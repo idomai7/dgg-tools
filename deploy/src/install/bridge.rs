@@ -24,8 +24,9 @@ use {
 pub fn start(build: &Path, data: &Path, log: &Path) -> io::Result<Child> {
   let output = OpenOptions::new().create(true).append(true).open(log)?;
   let spawn = |breakaway: bool| {
-    let mut command = Command::new(exe(build, "dgg-capture"));
+    let mut command = Command::new(exe(build, "dgg-logger"));
     command
+      .arg("capture")
       .arg("--data")
       .arg(data)
       .stdin(Stdio::null())

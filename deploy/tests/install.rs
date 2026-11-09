@@ -355,13 +355,10 @@ fn bridges_run_detached_into_their_log() {
   use ::deploy::install::bridge;
 
   let dir = TempDir::new("bridge");
-  // Something to stand in for dgg-capture: it complains about --data, into
-  // the log, and exits.
-  fs::copy(
-    r"C:\Windows\System32\whoami.exe",
-    exe(&dir.0, "dgg-capture"),
-  )
-  .unwrap();
+  // Something to stand in for dgg-logger: it complains about `capture`,
+  // into the log, and exits.
+  fs::copy(r"C:\Windows\System32\whoami.exe", exe(&dir.0, "dgg-logger"))
+    .unwrap();
   let log = dir.0.join("bridge.log");
   let mut child = bridge::start(&dir.0, &dir.0.join("data"), &log).unwrap();
   assert!(bridge::wait_gone(&mut child, Duration::from_secs(10)));

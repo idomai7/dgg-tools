@@ -1,18 +1,26 @@
 # Running the logger
 
-The logger is a few programs sharing one data directory. `dgg-logger` runs,
-installs and inspects them; the rest do the work:
+The logger is one program, `dgg-logger`, whose commands share one data
+directory:
 
-| Program | Job | Runs |
+| Command | Job | Runs |
 |---|---|---|
-| `dgg-supervisor` | Keeps the others below running, restarting them after failures | all the time |
-| `dgg-capture` | Connects to dgg chat and writes everything to the journal | all the time |
-| `dgg-index` | Reads the journal into `index.sqlite` | all the time, with `--follow` |
-| `dgg-compact` | Packs each finished day into one compressed archive | every hour |
-| `dgg-gaps` | Lists when no capture was connected | when you want |
-| `dgg-backfill` | Fetches missed messages from public logs | after an outage |
+| `capture` | Connects to dgg chat and writes everything to the journal | all the time |
+| `index` | Reads the journal into `index.sqlite` | all the time, with `--follow` |
+| `compact` | Packs each finished day into one compressed archive | every hour |
+| `gaps` | Lists when no capture was connected | when you want |
+| `backfill` | Fetches missed messages from public logs | after an outage |
+| `sync`, `serve` | Copy the journal between hosts | when moving hosts |
+| `install`, `uninstall`, `status`, `supervise` | Run, install and inspect the rest | when you want |
 
-Each has a description Task Manager shows, starting "dgg-tools:".
+`dgg-supervisor` keeps capture and index running, restarts them after
+failures, and runs compact; it's `dgg-logger supervise` without a window,
+for the logon task and the service. In Task Manager, both show as
+"dgg-tools: ..."; the Details tab's Command line column tells the commands
+apart.
+
+The commands that work on the data (`capture` to `serve`) take `--data`,
+which defaults to the installed logger's.
 
 An install lives in one folder:
 
@@ -30,7 +38,7 @@ An install lives in one folder:
 ```
 
 The journal is the record. The index can always be deleted and rebuilt with
-`dgg-index --rebuild`. Logs are timestamped and rotated at 10 MB, keeping 5.
+`dgg-logger index --rebuild`. Logs are timestamped and rotated at 10 MB, keeping 5.
 
 ## Build
 
@@ -66,8 +74,8 @@ and restarted a minute after any failure. It runs as its own account,
 `NT SERVICE\dgg-logger`, not SYSTEM, and that account may change only the
 data and logs. The folder is writable only by administrators, since anyone
 who could change it could run code as the service; other users can read
-it. Running `dgg-backfill`, `dgg-gaps` or `dgg-index` by hand against a
-machine install's data needs an administrator prompt.
+it. Running `backfill`, `gaps` or `index` by hand against a machine
+install's data needs an administrator prompt.
 
 `--root`, `--data` and `--logs` put things elsewhere.
 
@@ -129,19 +137,18 @@ If the PC was off or asleep, see what was missed and fill it from public
 logs:
 
 ```powershell
-$data = "$env:LOCALAPPDATA\dgg-tools\data"
-target\release\dgg-gaps --data $data --min 60
-target\release\dgg-backfill --data $data --source linkers --dry-run
-target\release\dgg-backfill --data $data --source linkers
+target\release\dgg-logger gaps --min 60
+target\release\dgg-logger backfill --source linkers --dry-run
+target\release\dgg-logger backfill --source linkers
 ```
 
 Short gaps are often already covered by the chat history dgg sends on every
-reconnect; `dgg-gaps` says which ones were. Backfilled messages go in
+reconnect; `gaps` says which ones were. Backfilled messages go in
 `journal\backfill\`, separate from what was captured, and never replace a
 captured message. `--source rustlesearch` is millisecond-accurate but
 limited to 200 requests a day.
 
-Don't start a history import (`dgg-backfill --from`) by hand yet: it's
+Don't start a history import (`backfill --from`) by hand yet: it's
 meant to run for weeks and comes later.
 
 ## Keeping the PC awake

@@ -8,7 +8,7 @@ pub mod format;
 pub mod watch;
 
 use {
-  crate::{log::now_ms, paths::Paths},
+  crate::{log::now_ms, paths::Paths, processes},
   ::journal::{
     archive,
     layout::{backfill_files, backfill_root, live_files, utc_day},
@@ -181,6 +181,7 @@ impl Watcher {
       true,
       ProcessRefreshKind::nothing()
         .with_exe(UpdateKind::OnlyIfNotSet)
+        .with_cmd(UpdateKind::OnlyIfNotSet)
         .with_memory()
         .with_cpu(),
     );
@@ -193,8 +194,7 @@ impl Watcher {
       .filter_map(|process| {
         let exe = process.exe().map(Path::to_owned);
         let ours = exe.as_ref().is_some_and(|exe| exe.starts_with(bin));
-        let name = process.name().to_string_lossy();
-        let name = name.strip_suffix(".exe").unwrap_or(&name).to_owned();
+        let name = processes::program(process);
         // Its own name, or (before the rename) anything run from the bin.
         (name.starts_with("dgg-") || ours).then(|| Program {
           name,
@@ -348,7 +348,7 @@ pub fn text(report: &Report) -> Vec<String> {
       (None, false) => "(path hidden)".into(),
     };
     out.push(format!(
-      "  {:<13} pid {:<6} up {:<8} {:>8}  {:>5.1}% cpu  {from}",
+      "  {:<18} pid {:<6} up {:<8} {:>8}  {:>5.1}% cpu  {from}",
       program.name,
       program.pid,
       up,

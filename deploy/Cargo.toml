@@ -2,7 +2,7 @@
 name = "deploy"
 version = "0.1.0"
 edition.workspace = true
-description = "Runs, installs and inspects the dgg logger as a service"
+description = "dgg-logger: runs the logger's commands, and installs and inspects it"
 
 [[bin]]
 name = "dgg-logger"

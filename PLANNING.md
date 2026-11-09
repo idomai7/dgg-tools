@@ -6,8 +6,8 @@ A Cargo workspace of tools built around destiny.gg chat and its endpoints. Every
 The layout is flat: each crate is a direct child of the root.
 - `dgg-chat/`: the shared socket client and event types.
 - `journal/`: the journal file format, with a writer and a reader.
-- `logger/`: binaries `dgg-capture`, `dgg-index`, `dgg-serve`, `dgg-sync`, `dgg-backfill`, `dgg-compact` and `dgg-gaps` (prefixed so they stand out in process lists; Windows has its own `compact.exe`).
-- `deploy/`: `dgg-logger` (install, uninstall, status, supervise) and `dgg-supervisor`, which keeps the logger running as a logon task or a Windows service. See `deploy/README.md`.
+- `logger/`: the logger as a library: capture, index, serve, sync, backfill, compact and gaps, each with its command-line arguments in `logger::cli`. They run as `dgg-logger` subcommands, so the parts of an install can't be from different builds.
+- `deploy/`: `dgg-logger` (the logger's commands, plus install, uninstall, status and supervise) and `dgg-supervisor`, which keeps the logger running as a logon task or a Windows service. See `deploy/README.md`.
 - `version-info/`: a build helper embedding version information in the Windows binaries.
 - `viewer/`: the read-only chat viewer, formerly dggkick.
 

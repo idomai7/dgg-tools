@@ -1,5 +1,5 @@
 //! Finding and stopping the logger's processes by where their binaries
-//! are: an install's are all under its `bin` directory.
+//! are (an install's are all under its `bin` directory) and what they run.
 
 use {
   ::std::{
@@ -26,14 +26,29 @@ fn system() -> io::Result<System> {
   Ok(system)
 }
 
-/// Whether `process` runs one of `names` (without `.exe`) from under `dir`.
+/// What `process` runs: its binary's name without `.exe`, and for
+/// `dgg-logger` the subcommand too (`dgg-logger capture`).
+pub fn program(process: &Process) -> String {
+  let name = match process.exe().and_then(Path::file_stem) {
+    Some(stem) => stem.to_string_lossy().into_owned(),
+    None => {
+      let name = process.name().to_string_lossy();
+      name.strip_suffix(".exe").unwrap_or(&name).to_owned()
+    }
+  };
+  match process.cmd().get(1).map(|arg| arg.to_string_lossy()) {
+    Some(command) if name == "dgg-logger" && !command.starts_with('-') => {
+      format!("{name} {command}")
+    }
+    _ => name,
+  }
+}
+
+/// Whether `process` runs one of `names` (as [`program`] names them) from
+/// under `dir`.
 fn runs_from(process: &Process, dir: &Path, names: &[&str]) -> bool {
-  process.exe().is_some_and(|exe| {
-    exe.starts_with(dir)
-      && exe
-        .file_stem()
-        .is_some_and(|stem| names.iter().any(|name| stem == *name))
-  })
+  process.exe().is_some_and(|exe| exe.starts_with(dir))
+    && names.contains(&program(process).as_str())
 }
 
 /// How many processes run one of `names` from under `dir`.

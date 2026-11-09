@@ -121,7 +121,7 @@ pub fn draw(
           (None, _) => "(path hidden)".into(),
         };
         Line::from(vec![
-          Span::styled(format!("{:<13}", program.name), Style::new().bold()),
+          Span::styled(format!("{:<18}", program.name), Style::new().bold()),
           Span::raw(format!(
             " pid {:<6} up {:<8} {:>8} {:>6.1}% cpu  ",
             program.pid,
