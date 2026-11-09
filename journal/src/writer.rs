@@ -1,8 +1,8 @@
-//! Appends records to live files, always in the [`v1`] format.
+//! Appends records to live or backfill files, always in the [`v1`] format.
 
 use {
   crate::{
-    layout::{live_file, utc_day},
+    layout::{backfill_file, live_file, utc_day},
     record::v1::{self, Body},
   },
   ::std::{
@@ -17,7 +17,8 @@ use {
 pub const SYNC_INTERVAL: Duration = Duration::from_secs(1);
 
 /// Appends one instance's records to its live files, rolling over at UTC
-/// midnight (by each record's `receive_time`).
+/// midnight (by each record's `receive_time`), or to its
+/// [backfill](Writer::backfill) files.
 ///
 /// Every line is written with a single `write` call, so a crash leaves at
 /// most one torn line at the tail. Call [`Writer::sync_if_due`] on a timer to
@@ -25,6 +26,7 @@ pub const SYNC_INTERVAL: Duration = Duration::from_secs(1);
 pub struct Writer {
   root: PathBuf,
   instance: String,
+  backfill: bool,
   open: Option<(String, File)>,
   dirty: bool,
   last_sync: Instant,
@@ -46,10 +48,26 @@ impl Writer {
     Self {
       root: root.into(),
       instance,
+      backfill: false,
       open: None,
       dirty: false,
       last_sync: Instant::now(),
     }
+  }
+
+  /// A writer for `instance`'s backfill files under journal `root`, filed
+  /// with [`Writer::write_on`] by the day of what they hold.
+  ///
+  /// # Panics
+  ///
+  /// If `instance` isn't [`v1::valid_instance`].
+  pub fn backfill(
+    root: impl Into<PathBuf>,
+    instance: impl Into<String>,
+  ) -> Self {
+    let mut writer = Self::new(root, instance);
+    writer.backfill = true;
+    writer
   }
 
   /// The instance id written on every line.
@@ -67,7 +85,19 @@ impl Writer {
     connection: u64,
     body: Body,
   ) -> io::Result<()> {
-    let day = utc_day(receive_time);
+    self.write_on(receive_time, receive_time, connection, body)
+  }
+
+  /// Like [`Writer::write`], but files the line under `file_time`'s UTC day
+  /// instead: for backfill, the time of the message it holds.
+  pub fn write_on(
+    &mut self,
+    file_time: i64,
+    receive_time: i64,
+    connection: u64,
+    body: Body,
+  ) -> io::Result<()> {
+    let day = utc_day(file_time);
     if self
       .open
       .as_ref()
@@ -110,10 +140,14 @@ impl Writer {
     Ok(())
   }
 
-  /// Opens (creating if needed) this instance's live file for `day`. A new
-  /// file gets the v1 header; an existing one with a torn tail gets a newline.
+  /// Opens (creating if needed) this instance's file for `day`. A new file
+  /// gets the v1 header; an existing one with a torn tail gets a newline.
   fn open_day(&self, day: &str) -> io::Result<File> {
-    let path = live_file(&self.root, day, &self.instance);
+    let path = if self.backfill {
+      backfill_file(&self.root, day, &self.instance)
+    } else {
+      live_file(&self.root, day, &self.instance)
+    };
     fs::create_dir_all(path.parent().unwrap())?;
     let mut file = OpenOptions::new()
       .create(true)

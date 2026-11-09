@@ -7,6 +7,11 @@
 //! archive each, `<root>/archive/YYYY/MM/YYYY-MM-DD.journal.zst`, listed in
 //! a manifest per month (see [`archive`]); [`Reader`] reads both.
 //!
+//! What was fetched from other archives rather than captured goes in
+//! `<root>/backfill/YYYY-MM-DD/<instance>.journal` instead, filed by the
+//! day of the messages inside ([`Writer::backfill`]), so non-canonical data
+//! never mixes with live capture.
+//!
 //! # Versions
 //!
 //! The first line of every file is `journal <major>.<minor>` (see

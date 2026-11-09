@@ -3,7 +3,7 @@
 use {
   ::journal::{
     DecodeError, Entry, ReadError, Reader, Record, Version, Writer,
-    layout::{live_dir, live_files},
+    layout::{backfill_dir, backfill_files, live_dir, live_files},
     record::v1::{self, Body},
   },
   ::std::{
@@ -93,6 +93,47 @@ fn write_read_and_rollover() {
     .map(record)
     .collect();
   assert_eq!(read, records);
+}
+
+#[test]
+fn backfill_files_by_the_given_day() {
+  let root = TempRoot::new();
+  let mut writer = Writer::backfill(&root.0, "backfill-x");
+  let fetched = |timestamp| Body::Fetched {
+    source: "linkers".into(),
+    timestamp,
+    nick: "n".into(),
+    text: "t".into(),
+  };
+  // Fetched today, filed under the messages' days.
+  let now = 1_794_168_240_000;
+  for timestamp in [1_451_692_683_000, 1_451_606_400_000, 1_451_606_399_999] {
+    writer
+      .write_on(timestamp, now, 1, fetched(timestamp))
+      .unwrap();
+  }
+  drop(writer);
+
+  assert!(live_files(&root.0).unwrap().is_empty());
+  let files = backfill_files(&root.0).unwrap();
+  let names: Vec<_> = files
+    .iter()
+    .map(|p| p.strip_prefix(backfill_dir(&root.0)).unwrap().to_owned())
+    .collect();
+  assert_eq!(
+    names,
+    [
+      Path::new("2015-12-31").join("backfill-x.journal"),
+      Path::new("2016-01-01").join("backfill-x.journal"),
+    ]
+  );
+  let read: Vec<_> = files
+    .iter()
+    .flat_map(|file| Reader::open(file, 0).unwrap())
+    .map(record)
+    .collect();
+  assert_eq!(read.len(), 3);
+  assert!(read.iter().all(|record| record.receive_time == now));
 }
 
 #[test]
