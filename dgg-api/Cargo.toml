@@ -47,3 +47,7 @@ required-features = ["client"]
 [[test]]
 name = "event"
 required-features = ["protocol"]
+
+[[test]]
+name = "command"
+required-features = ["protocol"]
