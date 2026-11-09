@@ -1,5 +1,6 @@
-use ::dgg_api::chat::protocol::event::{
-  ErrorCode, Event, Subscription, User, Watching,
+use ::dgg_api::chat::protocol::{
+  event::{Contributor, ErrorCode, Event, Subscription, User, Watching},
+  vestaboard::Tile,
 };
 
 /// Frames dgg sent, anonymised: a few of each event seen.
@@ -138,7 +139,7 @@ fn keeps_what_it_cannot_type() {
   assert_eq!((event.as_str(), payload.as_str()), ("MSG", "{}"));
   // A bad frame inside HISTORY spoils only itself.
   let Event::History(frames) =
-    Event::parse("HISTORY [\"MSG x\",\"VESTABOARD_LEAD {}\"]")
+    Event::parse("HISTORY [\"MSG x\",\"NEWEVENT {}\"]")
   else {
     panic!()
   };
@@ -325,4 +326,44 @@ fn session_from_chat_gui() {
     panic!()
   };
   assert_eq!(refresh.cache_key.as_deref(), Some("key2"));
+}
+
+#[test]
+fn vestaboard_from_chat_gui() {
+  let Event::VestaboardLead(lead) = &chat_gui("VESTABOARD_LEAD")[0] else {
+    panic!()
+  };
+  assert_eq!(
+    (
+      lead.submitter.as_deref(),
+      lead.artist.as_deref(),
+      lead.is_new_design
+    ),
+    (Some("user1"), Some("user2"), false)
+  );
+  assert_eq!(
+    lead.contributors[0],
+    Contributor {
+      name: "user1".into(),
+      amount_cents: 2000,
+    }
+  );
+  let tiles = lead.tiles();
+  assert_eq!((tiles.len(), tiles[0].len()), (6, 22));
+  assert_eq!(
+    &tiles[0][..3],
+    [Tile::Char('H'), Tile::Char('I'), Tile::Blank]
+  );
+  assert!(matches!(tiles[1][0], Tile::Color(_)));
+  // Hourly before any design: no submitter to name.
+  let Event::VestaboardHourly(hourly) = &chat_gui("VESTABOARD_HOURLY")[0]
+  else {
+    panic!()
+  };
+  assert_eq!(hourly.submitter.as_deref(), Some(""));
+  assert!(hourly.contributors.is_empty());
+  assert!(matches!(
+    chat_gui("VESTABOARD_RESET")[0],
+    Event::VestaboardReset(_)
+  ));
 }

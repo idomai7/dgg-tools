@@ -17,9 +17,12 @@
 //! [`Event::Unreadable`], with the error. The frame itself, raw, is the
 //! caller's to keep (the client's `Frame` does).
 
-use ::serde::{
-  Deserialize, Deserializer,
-  de::{DeserializeOwned, Error as _},
+use {
+  super::vestaboard::Tile,
+  ::serde::{
+    Deserialize, Deserializer,
+    de::{DeserializeOwned, Error as _},
+  },
 };
 
 /// A chat user, as every event describes one. Seen with every field but
@@ -529,6 +532,56 @@ pub struct RefreshChatAssets {
   pub cache_key: Option<String>,
 }
 
+/// `VESTABOARD_LEAD`, `VESTABOARD_HOURLY` or `VESTABOARD_RESET`: news of
+/// the Vestaboard auction, shown in chat until `expiration_timestamp`.
+/// From chat-gui, which leaves out (and so this doesn't type) `designId`.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Vestaboard {
+  /// For a lead, who took it (with a new design) or funded a design into
+  /// it; hourly, who leads; for a reset, who won. `None` (or empty) for an
+  /// hourly one before any design was submitted.
+  pub submitter: Option<String>,
+  /// The design's funding, in cents.
+  pub total: u64,
+  /// The design: rows of tile codes (see [`Vestaboard::tiles`]).
+  #[serde(default)]
+  pub characters: Vec<Vec<u8>>,
+  /// The design's author, when a lead was funded rather than new.
+  pub artist: Option<String>,
+  /// Its top backers.
+  #[serde(default)]
+  pub contributors: Vec<Contributor>,
+  /// For a lead: whether a new design took it, rather than a contribution
+  /// lifting an existing one.
+  #[serde(default)]
+  pub is_new_design: bool,
+  /// Unix ms.
+  pub timestamp: i64,
+  /// Unix ms.
+  pub expiration_timestamp: i64,
+  pub uuid: String,
+}
+
+impl Vestaboard {
+  /// The design, decoded.
+  pub fn tiles(&self) -> Vec<Vec<Tile>> {
+    self
+      .characters
+      .iter()
+      .map(|row| row.iter().map(|&code| Tile::from_code(code)).collect())
+      .collect()
+  }
+}
+
+/// One of a [`Vestaboard`] design's backers.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Contributor {
+  pub name: String,
+  pub amount_cents: u64,
+}
+
 /// One decoded frame.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
@@ -576,6 +629,12 @@ pub enum Event {
   /// Clients should reload. From chat-gui, which reads nothing from it.
   Reload,
   RefreshChatAssets(RefreshChatAssets),
+  /// A design took the lead.
+  VestaboardLead(Vestaboard),
+  /// Hourly: who leads, if anyone.
+  VestaboardHourly(Vestaboard),
+  /// The auction was won; a new one begins.
+  VestaboardReset(Vestaboard),
   /// An event this crate doesn't type (yet).
   Other {
     event: String,
@@ -640,6 +699,9 @@ impl Event {
       "USERSDELTA" => json(payload).map(Self::UsersDelta),
       "RELOAD" => Ok(Self::Reload),
       "REFRESHCHATASSETS" => json(payload).map(Self::RefreshChatAssets),
+      "VESTABOARD_LEAD" => json(payload).map(Self::VestaboardLead),
+      "VESTABOARD_HOURLY" => json(payload).map(Self::VestaboardHourly),
+      "VESTABOARD_RESET" => json(payload).map(Self::VestaboardReset),
       "SPOTLIGHTS" => json::<Option<Vec<Spotlight>>>(payload)
         .map(|list| Self::Spotlights(list.unwrap_or_default())),
       _ => {
@@ -695,6 +757,9 @@ impl Event {
       Self::UsersDelta(_) => "USERSDELTA",
       Self::Reload => "RELOAD",
       Self::RefreshChatAssets(_) => "REFRESHCHATASSETS",
+      Self::VestaboardLead(_) => "VESTABOARD_LEAD",
+      Self::VestaboardHourly(_) => "VESTABOARD_HOURLY",
+      Self::VestaboardReset(_) => "VESTABOARD_RESET",
       Self::Other { event, .. } | Self::Unreadable { event, .. } => event,
     }
   }

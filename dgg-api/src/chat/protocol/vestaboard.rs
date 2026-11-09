@@ -1,5 +1,5 @@
-//! Vestaboard tiles: the board in destiny.gg's office, 6 rows of 22, whose
-//! designs chat announces.
+//! Vestaboard tiles: the board of 6 rows of 22 whose designs, funded by
+//! auction, chat announces (see [`Vestaboard`](super::event::Vestaboard)).
 //!
 //! Each tile is an integer code, mapped as chat-gui's
 //! `vestaboardCharacters.js` maps them (itself ported from the website's
