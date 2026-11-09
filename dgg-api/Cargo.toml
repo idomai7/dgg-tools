@@ -17,6 +17,8 @@ client = [
 protocol = ["dep:serde", "dep:serde_json"]
 # Decoding chat's emotes and flairs, assets.
 assets = ["dep:serde", "dep:serde_json"]
+# Fetching them, assets::fetch.
+http = ["assets", "dep:reqwest"]
 
 [dependencies]
 serde = { workspace = true, optional = true }
@@ -27,9 +29,13 @@ rustls = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true }
 tokio-tungstenite = { workspace = true, optional = true }
 
+reqwest = { workspace = true, optional = true }
+
 [dev-dependencies]
 dotenvy.workspace = true
 serde_json.workspace = true
+rustls.workspace = true
+tokio.workspace = true
 
 [[example]]
 name = "probe"
@@ -66,3 +72,7 @@ required-features = ["protocol"]
 [[test]]
 name = "assets"
 required-features = ["assets"]
+
+[[test]]
+name = "fetch"
+required-features = ["http"]

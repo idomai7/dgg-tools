@@ -10,8 +10,12 @@
 //! The CDN caches the files for hours. Chat announces new ones with
 //! `REFRESHCHATASSETS {"cacheKey":...}`; asking with that key (see
 //! [`emotes_url`]) gets them fresh.
+//!
+//! With feature `http`, `fetch` gets them.
 
 pub mod emote;
+#[cfg(feature = "http")]
+pub mod fetch;
 pub mod flair;
 
 pub use {emote::Emote, flair::Flair};
