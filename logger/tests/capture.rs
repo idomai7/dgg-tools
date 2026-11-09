@@ -4,7 +4,7 @@ use {
   ::journal::{
     Reader, Record,
     layout::live_files,
-    record::v1::{self, Body},
+    record::v0::{self, Body},
   },
   ::logger::{
     capture::{
@@ -76,7 +76,7 @@ fn instance_ids() {
   assert_eq!(instance_id("deskpc", 5), "deskpc-5");
   assert_eq!(instance_id("my host.lan", 5), "my-host.lan-5");
   assert_eq!(instance_id("", 5), "host-5");
-  assert!(v1::valid_instance(&instance_id("π/é:x", 5)));
+  assert!(v0::valid_instance(&instance_id("π/é:x", 5)));
 }
 
 /// Two connections from a local server, then a clean shutdown while the
@@ -128,7 +128,7 @@ async fn journals_connections_and_shutdown() {
   let bodies: Vec<_> = Reader::open(&files[0], 0)
     .unwrap()
     .map(|entry| {
-      let Record::V1(record) = entry.unwrap().record;
+      let Record::V0(record) = entry.unwrap().record;
       assert_eq!(record.instance, "t");
       (record.connection, record.body)
     })
@@ -154,7 +154,7 @@ async fn journals_connections_and_shutdown() {
   assert_eq!(why, SHUTDOWN);
 }
 
-/// Reads every v1 record body from `instance`'s live files.
+/// Reads every v0 record body from `instance`'s live files.
 fn bodies(root: &TempRoot, instance: &str) -> Vec<Body> {
   live_files(&root.0)
     .unwrap()
@@ -162,7 +162,7 @@ fn bodies(root: &TempRoot, instance: &str) -> Vec<Body> {
     .filter(|file| file.file_stem().unwrap() == instance)
     .flat_map(|file| Reader::open(file, 0).unwrap())
     .map(|entry| {
-      let Record::V1(record) = entry.unwrap().record;
+      let Record::V0(record) = entry.unwrap().record;
       record.body
     })
     .collect()

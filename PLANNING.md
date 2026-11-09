@@ -56,15 +56,19 @@ The layout is flat: each crate is a direct child of the root.
 - **Journal layout:**
   - `data/journal/live/YYYY-MM-DD/<instance>.journal`: one file per capture instance per day. These are the hot files.
   - `data/journal/archive/YYYY/MM/YYYY-MM-DD.journal.zst` plus a `manifest.json` per month. These are cold.
-  - `data/journal/control/<instance>.status`: heartbeats (`capture-status 1.0`; see `logger/src/control.rs`).
+  - `data/journal/control/<instance>.status`: heartbeats (`capture-status 0.0`; see `logger/src/control.rs`).
   - `data/journal/backfill/YYYY-MM-DD/<instance>.journal`: what was fetched from other archives, one file per backfill run per day. It's filed by the day of the messages inside, not when they were fetched. Nothing here is canonical, so it never mixes with `live/` or `archive/`.
   - Hot paths only ever list `live/`.
 - **Days:** UTC.
-- **Line format:** explicit and hand-written, with no serde. The spec lives in the `journal` crate: each major version has its own module (`journal/src/record/v1.rs`) holding its structure, encoding and decoding, so several formats can coexist in the library.
-  - Each file starts with `journal <major>.<minor>` (currently `1.1`). Readers accept any minor of their own major, so minor bumps may only add kinds, which old readers skip as unknown. Anything else is a major bump, which readers without that major's module refuse.
+- **Line format:** explicit and hand-written, with no serde. The spec lives in the `journal` crate: each major version has its own module (`journal/src/record/v0.rs`) holding its structure, encoding and decoding, so several formats can coexist in the library.
+  - Each file starts with `journal <major>.<minor>` (currently `0.1`).
+  - **Versioning, for every format** (journal, `capture-status`, `journal-archive`, `journal-manifest` and the index schema): like cargo's semver.
+    - While the major is 0 (pre-release, where we are now), any minor may break. Readers accept only the exact minor they know, and existing files are rewritten rather than read across versions.
+    - Major 1 marks production. From then on, minor bumps may only add things old readers skip (new kinds, keys or entries), and anything else is a major bump, which readers without that major's module refuse.
+    - Everything was re-versioned from 1.x to 0.x on 2026-11-09, and existing files were rewritten to match.
   - Each line is `<receive-time> <instance> <connection> <kind> <data>`, separated by single spaces, with `data` verbatim to the end of the line.
   - Kinds are `frame` (the exact text frame), `binary` (base64), `open` (the URL) and `close` (why).
-  - 1.1 adds `fetched` (`<source> <timestamp> <nick> <text>`, one backfilled message) and `fetchrange` (`<source> <from> <to>`, a span the source returned in full).
+  - 0.1 adds `fetched` (`<source> <timestamp> <nick> <text>`, one backfilled message) and `fetchrange` (`<source> <from> <to>`, a span the source returned in full).
   - Lines end at LF only, and a CR is ordinary data. Text containing an LF is written as `<kind>64` with the data in base64.
   - Unknown kinds are reported separately from malformed lines.
 
@@ -79,13 +83,13 @@ The layout is flat: each crate is a direct child of the root.
     - The new instance pushes its status there every second (`PUT /control/<instance>`), shifted onto the old host's clock, and withdraws it on exit.
     - The old instance retires by the same rule as a local handoff, and needs no flags or restart.
     - Use a VPN or SSH tunnel between hosts: the bearer token isn't encrypted over plain HTTP.
-- **index:** journal into `data/index.sqlite` (schema in `logger/schemas/index/v<N>.sql`, every past version kept there; the version is stored in `user_version`).
+- **index:** journal into `data/index.sqlite` (schema in `logger/schemas/index/v<major>.<minor>.sql`, currently 0.4, every past version kept there; stored in `user_version` as `major << 16 | minor`).
   - The dedupe key is `(timestamp, nick, data)`. It was verified with `dgg-chat/examples/history_check.rs`: `HISTORY` is a JSON array of the last 150 `"MSG {...}"` frames, byte-identical to the live frames.
   - A message seen both live and in `HISTORY` is kept with `source = live` and the earliest live receive time.
   - Tables: `messages` (with an FTS5 table, `messages_fts`), `connections` (open, close and last-seen times, close reasons, and the oldest timestamp in each connection's `HISTORY`), `unparsed` and `files` (per-file checkpoints).
   - Each file's checkpoint commits in the same transaction as its rows, so an interrupted run resumes exactly where it stopped.
   - `--rebuild` replays the whole journal. An index from another schema version must be rebuilt.
-- **serve / sync:** `serve` also lists live files (`GET /manifest`, format `journal-manifest 1.0`) and serves their bytes (`GET /files/live/<day>/<instance>.journal`, honouring `Range: bytes=N-`).
+- **serve / sync:** `serve` also lists live files (`GET /manifest`, format `journal-manifest 0.0`) and serves their bytes (`GET /files/live/<day>/<instance>.journal`, honouring `Range: bytes=N-`).
   - `sync --peer <url>` appends whatever remote bytes are missing locally, then fsyncs. Journal files are append-only, so a local copy is always a prefix of the remote file and an interrupted sync just resumes.
   - A remote file shorter than its local copy is reported and left alone.
   - `--follow` keeps a warm standby.
@@ -151,14 +155,14 @@ The layout is flat: each crate is a direct child of the root.
   - It writes one `fetched` line per message and a `fetchrange` per page.
   - It's limited by `--max-requests` (default 50) and stops when the rate limit has fewer than `--reserve` (10) requests left.
   - `--dry-run` lists the gaps it would fetch.
-- **Backfill indexing:** done (schema v3).
+- **Backfill indexing:** done (schema 0.3).
   - Fetched messages are stored with `source = backfill:<source>` and matched on timestamp plus lowercased nick. Native rows win, whichever is indexed first.
   - A fetched nick takes its capitalisation from the same user's native messages.
   - `fetch_ranges` spans mark gaps as filled, and `backfill` skips filled gaps.
   - Live test: after backfill, the index holds exactly a reference capture's 583 messages over the same span. 16 nicks stay lowercase because those users were never seen natively.
 - **Cross-host handoff:** done. Tested live: the old instance retired about 38 s after the new one started.
 - **`serve` / `sync`:** done.
-- **`compact`:** done, and `index` reads archives (schema v4).
+- **`compact`:** done, and `index` reads archives (schema 0.4).
   - Archives are found through the monthly manifests.
   - Each archive's checkpoint carries its SHA-256, so a fully read archive is skipped unopened and a re-merged one is reread from the start.
   - Checkpoints of compacted-away live files are dropped.

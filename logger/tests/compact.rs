@@ -64,14 +64,14 @@ fn finds_closed_days() {
 #[test]
 fn merges_a_day_into_a_verified_archive() {
   let root = TempRoot::new();
-  root.live("a", "journal 1.0\n10 a 1 frame MSG 1\n30 a 1 frame MSG 3\n");
+  root.live("a", "journal 0.1\n10 a 1 frame MSG 1\n30 a 1 frame MSG 3\n");
   // b interleaves with a, and ends with a line torn by a crash.
   root.live(
     "b",
-    "journal 1.1\n20 b 1 frame MSG 2\n30 b 1 open u\n40 b 1 fr",
+    "journal 0.1\n20 b 1 frame MSG 2\n30 b 1 open u\n40 b 1 fr",
   );
   // A copy of a's file: every line an exact duplicate.
-  root.live("c", "journal 1.0\n10 a 1 frame MSG 1\n30 a 1 frame MSG 3\n");
+  root.live("c", "journal 0.1\n10 a 1 frame MSG 1\n30 a 1 frame MSG 3\n");
 
   let done = compact_day(&root.0, DAY, 3).unwrap().unwrap();
   assert_eq!(
@@ -87,7 +87,7 @@ fn merges_a_day_into_a_verified_archive() {
   // Sorted by receive time; equal times keep their order (a before b).
   assert_eq!(
     root.archived(),
-    "journal 1.1\n10 a 1 frame MSG 1\n20 b 1 frame MSG 2\n\
+    "journal 0.1\n10 a 1 frame MSG 1\n20 b 1 frame MSG 2\n\
      30 a 1 frame MSG 3\n30 b 1 open u\n"
   );
   // The manifest describes it exactly.
@@ -112,18 +112,18 @@ fn merges_a_day_into_a_verified_archive() {
 #[test]
 fn merges_late_files_into_an_existing_archive() {
   let root = TempRoot::new();
-  root.live("a", "journal 1.1\n10 a 1 frame MSG 1\n30 a 1 frame MSG 3\n");
+  root.live("a", "journal 0.1\n10 a 1 frame MSG 1\n30 a 1 frame MSG 3\n");
   compact_day(&root.0, DAY, 3).unwrap().unwrap();
   // A late sync brings another instance's file for the same day, and a
   // second copy of a's.
-  root.live("b", "journal 1.1\n20 b 1 frame MSG 2\n");
-  root.live("a", "journal 1.1\n10 a 1 frame MSG 1\n30 a 1 frame MSG 3\n");
+  root.live("b", "journal 0.1\n20 b 1 frame MSG 2\n");
+  root.live("a", "journal 0.1\n10 a 1 frame MSG 1\n30 a 1 frame MSG 3\n");
   let done = compact_day(&root.0, DAY, 3).unwrap().unwrap();
   assert!(done.remerged);
   assert_eq!((done.files, done.duplicates), (2, 2));
   assert_eq!(
     root.archived(),
-    "journal 1.1\n10 a 1 frame MSG 1\n20 b 1 frame MSG 2\n30 a 1 frame MSG 3\n"
+    "journal 0.1\n10 a 1 frame MSG 1\n20 b 1 frame MSG 2\n30 a 1 frame MSG 3\n"
   );
   assert_eq!(archive::read_month(&root.0, DAY).unwrap()[0].lines, 3);
   // Nothing left to do.
@@ -131,23 +131,19 @@ fn merges_late_files_into_an_existing_archive() {
 }
 
 #[test]
-fn keeps_lines_from_newer_minors_verbatim() {
+fn refuses_unreadable_versions() {
   let root = TempRoot::new();
-  root.live(
-    "a",
-    "journal 1.7\n10 a 1 shiny new kind\n20 a 1 frame MSG 1\n",
-  );
-  compact_day(&root.0, DAY, 3).unwrap().unwrap();
-  assert_eq!(
-    root.archived(),
-    "journal 1.7\n10 a 1 shiny new kind\n20 a 1 frame MSG 1\n"
-  );
+  root.live("a", "journal 0.1\n10 a 1 frame MSG 1\n");
+  // Within major 0 another minor may mean anything.
+  root.live("b", "journal 0.7\n10 a 1 shiny new kind\n");
+  assert!(compact_day(&root.0, DAY, 3).is_err());
+  assert!(!archive_file(&root.0, DAY).exists());
 }
 
 #[test]
 fn leaves_unreadable_days_alone() {
   let root = TempRoot::new();
-  root.live("a", "journal 1.1\n10 a 1 frame MSG 1\n");
+  root.live("a", "journal 0.1\n10 a 1 frame MSG 1\n");
   root.live("b", "journal 2.0\n20 b 1 something\n");
   assert!(compact_day(&root.0, DAY, 3).is_err());
   assert!(!archive_file(&root.0, DAY).exists());
@@ -160,7 +156,7 @@ fn keeps_lines_repeated_within_one_file() {
   let root = TempRoot::new();
   // dgg really does send the same frame twice in one millisecond.
   let twice =
-    "journal 1.1\n10 a 1 frame UPDATEUSER {}\n10 a 1 frame UPDATEUSER {}\n";
+    "journal 0.1\n10 a 1 frame UPDATEUSER {}\n10 a 1 frame UPDATEUSER {}\n";
   root.live("a", twice);
   let done = compact_day(&root.0, DAY, 3).unwrap().unwrap();
   assert_eq!(done.duplicates, 0);

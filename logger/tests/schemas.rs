@@ -2,15 +2,16 @@
 //! the one the index uses.
 
 use {
+  ::journal::Version,
   ::logger::index::{SCHEMA_VERSION, open},
   ::rusqlite::Connection,
   ::std::{fs, path::PathBuf},
 };
 
-fn schema_file(version: i64) -> PathBuf {
+fn schema_file(version: Version) -> PathBuf {
   PathBuf::from(env!("CARGO_MANIFEST_DIR"))
     .join("schemas/index")
-    .join(format!("v{version}.sql"))
+    .join(format!("v{}.{}.sql", version.major, version.minor))
 }
 
 /// Every table and index a database defines, as SQLite stored it.
@@ -29,15 +30,20 @@ fn definitions(db: &Connection) -> Vec<String> {
 
 #[test]
 fn every_version_is_recorded() {
-  for version in 1..=SCHEMA_VERSION {
+  // Major 0 started at 0.1.
+  for minor in 1..=SCHEMA_VERSION.minor {
+    let version = Version { major: 0, minor };
     let sql = fs::read_to_string(schema_file(version))
-      .unwrap_or_else(|e| panic!("schema v{version}: {e}"));
+      .unwrap_or_else(|e| panic!("schema 0.{minor}: {e}"));
     Connection::open_in_memory()
       .unwrap()
       .execute_batch(&sql)
-      .unwrap_or_else(|e| panic!("schema v{version} doesn't run: {e}"));
+      .unwrap_or_else(|e| panic!("schema 0.{minor} doesn't run: {e}"));
   }
-  let next = schema_file(SCHEMA_VERSION + 1);
+  let next = schema_file(Version {
+    minor: SCHEMA_VERSION.minor + 1,
+    ..SCHEMA_VERSION
+  });
   assert!(!next.exists(), "{next:?} exists; bump SCHEMA_VERSION");
 }
 

@@ -3,7 +3,7 @@ use {
     Reader, Record,
     archive::{self, Archive},
     layout::{archive_file, archive_month_dir},
-    record::v1::Body,
+    record::v0::Body,
   },
   ::std::{
     fs,
@@ -62,20 +62,23 @@ fn manifest_format() {
   assert_eq!(
     text,
     format!(
-      "journal-archive 1.0\n2026-11-08 10 20 1 {sha}\n\
+      "journal-archive 0.0\n2026-11-08 10 20 1 {sha}\n\
        2026-11-09 10 20 2 {sha}\n"
     )
   );
   let decoded = archive::decode(&text).unwrap();
   assert_eq!(decoded, [entry("2026-11-08", 1), entry("2026-11-09", 2)]);
-  // A newer minor, with an entry this version doesn't know.
-  let newer =
-    format!("journal-archive 1.2\nsomething new\n2026-11-08 10 20 1 {sha}\n");
-  assert_eq!(archive::decode(&newer).unwrap(), [entry("2026-11-08", 1)]);
+  // An entry this version doesn't know is skipped.
+  let extra =
+    format!("journal-archive 0.0\nsomething new\n2026-11-08 10 20 1 {sha}\n");
+  assert_eq!(archive::decode(&extra).unwrap(), [entry("2026-11-08", 1)]);
   for bad in [
+    // Within major 0, only the exact version is read.
+    "journal-archive 0.1\n".to_owned(),
+    "journal-archive 1.0\n".to_owned(),
     "journal-archive 2.0\n".to_owned(),
-    format!("journal-archive 1.0\n2026-11-08 10 x 1 {sha}\n"),
-    "journal-archive 1.0\n2026-11-08 10 20 1 ABCD\n".to_owned(),
+    format!("journal-archive 0.0\n2026-11-08 10 x 1 {sha}\n"),
+    "journal-archive 0.0\n2026-11-08 10 20 1 ABCD\n".to_owned(),
   ] {
     assert_eq!(archive::decode(&bad), None, "{bad:?}");
   }
@@ -110,7 +113,7 @@ fn reader_reads_archives_and_resumes() {
   let root = TempRoot::new();
   let path = archive_file(&root.0, "1970-01-01");
   fs::create_dir_all(path.parent().unwrap()).unwrap();
-  let journal = "journal 1.1\n0 a 1 frame MSG 1\n5 b 1 frame MSG 2\n";
+  let journal = "journal 0.1\n0 a 1 frame MSG 1\n5 b 1 frame MSG 2\n";
   let compressed = ::zstd::encode_all(journal.as_bytes(), 3).unwrap();
   fs::write(&path, compressed).unwrap();
 
@@ -119,7 +122,7 @@ fn reader_reads_archives_and_resumes() {
       .unwrap()
       .map(|entry| {
         let entry = entry.unwrap();
-        let Record::V1(record) = entry.record;
+        let Record::V0(record) = entry.record;
         let Body::Frame(frame) = record.body else {
           panic!("not a frame")
         };

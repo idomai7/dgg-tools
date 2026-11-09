@@ -2,25 +2,32 @@
 //!
 //! The header line every journal file starts with: `journal <major>.<minor>`.
 
-pub mod v1;
+pub mod v0;
 
 /// Format name at the start of every file's header line.
 pub const MAGIC: &str = "journal";
-/// Majors this crate has a decoder for.
-pub const READABLE_MAJORS: &[u32] = &[v1::VERSION.major];
+/// The newest version of each major this crate has a decoder for.
+pub const READABLE: &[Version] = &[v0::VERSION];
 
+/// A format version, like cargo's semver: major 0 is pre-release, where
+/// any minor may break; from major 1 on, only a major bump does.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Version {
   /// Bumped for changes old readers can't handle.
   pub major: u32,
-  /// Bumped for changes old readers tolerate (new kinds).
+  /// Within major 0, bumped for any change. From major 1 on, bumped only
+  /// for changes old readers tolerate (new kinds).
   pub minor: u32,
 }
 
 impl Version {
-  /// Whether this crate can read files written at this version.
+  /// Whether this crate can read files written at this version: within
+  /// major 0, only the exact minor it knows; from major 1 on, any minor of
+  /// a major it knows.
   pub fn readable(self) -> bool {
-    READABLE_MAJORS.contains(&self.major)
+    READABLE.iter().any(|known| {
+      known.major == self.major && (self.major > 0 || known.minor == self.minor)
+    })
   }
 
   /// The header line, without its newline.
@@ -46,7 +53,7 @@ impl Version {
 /// A record from a file of any readable version, tagged by its major.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Record {
-  V1(v1::Record),
+  V0(v0::Record),
 }
 
 /// Why a complete line couldn't be decoded.
@@ -65,7 +72,7 @@ impl Record {
   /// Decodes one line, without its newline, from a file at `version`.
   pub fn decode(version: Version, line: &[u8]) -> Result<Self, DecodeError> {
     match version.major {
-      1 => v1::Record::decode(line).map(Self::V1),
+      0 => v0::Record::decode(line).map(Self::V0),
       major => Err(DecodeError::NoDecoder(major)),
     }
   }

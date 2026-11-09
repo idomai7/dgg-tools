@@ -18,7 +18,7 @@ fn format() {
   let text = healthy.encode();
   assert_eq!(
     text,
-    "capture-status 1.0\ninstance a\nstarted 5\nheartbeat 1000\n\
+    "capture-status 0.0\ninstance a\nstarted 5\nheartbeat 1000\n\
      healthy-since 7\n"
   );
   assert_eq!(Status::decode(&text), Some(healthy));
@@ -30,19 +30,21 @@ fn format() {
 fn decode_tolerance() {
   let base = "instance a\nstarted 5\nheartbeat 1000\n";
   let decode = |text: &str| Status::decode(text);
-  // A newer minor, and keys it added, are fine.
-  let newer = format!("capture-status 1.4\n{base}added x y\n");
-  assert_eq!(decode(&newer), Some(status("a", 5, None)));
+  // Keys it doesn't know are skipped.
+  let extra = format!("capture-status 0.0\n{base}added x y\n");
+  assert_eq!(decode(&extra), Some(status("a", 5, None)));
   for bad in [
-    format!("capture-status 2.0\n{base}"),
-    format!("capture-status 1.\n{base}"),
-    format!("capture-status 1.0\n{base}started 6\n"),
-    format!("capture-status 1.0\n{base}instance b\n"),
-    format!("capture-status 1.0\n{base}healthy-since x\n"),
-    format!("capture-status 1.0\n{base}novalue\n"),
-    "capture-status 1.0\ninstance a\nstarted 5\n".into(),
-    "capture-status 1.0\ninstance a/b\nstarted 5\nheartbeat 1\n".into(),
-    format!("capture-status 1.0\n{base}").trim_end().into(),
+    // Within major 0, only the exact version is read.
+    format!("capture-status 0.1\n{base}"),
+    format!("capture-status 1.0\n{base}"),
+    format!("capture-status 0.\n{base}"),
+    format!("capture-status 0.0\n{base}started 6\n"),
+    format!("capture-status 0.0\n{base}instance b\n"),
+    format!("capture-status 0.0\n{base}healthy-since x\n"),
+    format!("capture-status 0.0\n{base}novalue\n"),
+    "capture-status 0.0\ninstance a\nstarted 5\n".into(),
+    "capture-status 0.0\ninstance a/b\nstarted 5\nheartbeat 1\n".into(),
+    format!("capture-status 0.0\n{base}").trim_end().into(),
   ] {
     assert_eq!(decode(&bad), None, "{bad:?}");
   }

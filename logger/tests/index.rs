@@ -1,6 +1,8 @@
 use {
-  ::journal::{Writer, record::v1::Body},
-  ::logger::index::{Error, SCHEMA_VERSION, follow, index, open, rebuild},
+  ::journal::{Version, Writer, record::v0::Body},
+  ::logger::index::{
+    Error, SCHEMA_VERSION, follow, index, open, rebuild, user_version,
+  },
   ::rusqlite::Connection,
   ::std::{
     fs,
@@ -199,11 +201,15 @@ fn resumes_from_checkpoints() {
 fn refuses_other_schema_versions() {
   let root = TempRoot::new();
   let db = open(&root.database()).unwrap();
-  db.pragma_update(None, "user_version", SCHEMA_VERSION + 1)
+  let next = Version {
+    minor: SCHEMA_VERSION.minor + 1,
+    ..SCHEMA_VERSION
+  };
+  db.pragma_update(None, "user_version", user_version(next))
     .unwrap();
   drop(db);
   let error = open(&root.database()).unwrap_err();
-  assert!(matches!(error, Error::Schema(v) if v == SCHEMA_VERSION + 1));
+  assert!(matches!(error, Error::Schema(v) if v == next));
   assert!(rebuild(&root.database()).is_ok());
 }
 

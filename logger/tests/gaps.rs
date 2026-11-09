@@ -1,5 +1,5 @@
 use {
-  ::journal::{Writer, record::v1::Body},
+  ::journal::{Writer, record::v0::Body},
   ::logger::{
     gaps::{Gap, coverage, format_duration, format_utc, unfetched},
     index::{index, open},

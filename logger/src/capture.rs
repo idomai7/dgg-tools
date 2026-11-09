@@ -10,7 +10,7 @@
 use {
   crate::control::{self, Status},
   ::dgg_chat::{Client, Item, Options},
-  ::journal::{Writer, record::v1::Body, writer::SYNC_INTERVAL},
+  ::journal::{Writer, record::v0::Body, writer::SYNC_INTERVAL},
   ::std::{
     io,
     path::{Path, PathBuf},

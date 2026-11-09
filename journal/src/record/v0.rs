@@ -1,6 +1,7 @@
-//! Format version 1.
+//! Format version 0, pre-release: any minor may break, so readers accept
+//! only the minor they know.
 //!
-//! After the `journal 1.<minor>` header, each line is
+//! After the `journal 0.<minor>` header, each line is
 //!
 //! ```text
 //! <receive-time> <instance> <connection> <kind> <data>
@@ -17,9 +18,9 @@
 //! - `close`: a connection dropped; data is why.
 //! - `fetched`: a message fetched from another source to fill a gap; data is
 //!   `<source> <timestamp> <nick> <text>`, with `timestamp` dgg's unix ms and
-//!   `text` verbatim to the end of the line. (1.1)
+//!   `text` verbatim to the end of the line. (0.1)
 //! - `fetchrange`: a source returned everything it has between two times;
-//!   data is `<source> <from> <to>`, unix ms. (1.1)
+//!   data is `<source> <from> <to>`, unix ms. (0.1)
 //!
 //! `source` and `nick` are [tokens](valid_token). Lines end at LF only; a CR
 //! is ordinary data. Data containing an LF can't sit on one line, so it's
@@ -28,8 +29,8 @@
 //!
 //! Minor versions:
 //!
-//! - `1.0`: `frame`, `binary`, `open` and `close`.
-//! - `1.1`: adds `fetched` and `fetchrange`.
+//! - `0.0`: `frame`, `binary`, `open` and `close`.
+//! - `0.1`: adds `fetched` and `fetchrange`.
 
 use {
   super::{DecodeError, Version, digits},
@@ -37,7 +38,7 @@ use {
   ::std::borrow::Cow,
 };
 
-pub const VERSION: Version = Version { major: 1, minor: 1 };
+pub const VERSION: Version = Version { major: 0, minor: 1 };
 
 /// One line.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -62,7 +63,7 @@ pub enum Body {
   Open(String),
   /// Connection dropped, with why.
   Close(String),
-  /// A message fetched from another source to fill a gap. (1.1)
+  /// A message fetched from another source to fill a gap. (0.1)
   Fetched {
     source: String,
     /// dgg's timestamp, unix ms.
@@ -71,7 +72,7 @@ pub enum Body {
     text: String,
   },
   /// `source` returned everything it has from `from` to `to`, unix ms.
-  /// (1.1)
+  /// (0.1)
   FetchRange { source: String, from: i64, to: i64 },
 }
 

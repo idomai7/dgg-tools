@@ -1,28 +1,29 @@
 //! The journal files a host has, for `sync` to compare against its own.
 //!
 //! ```text
-//! journal-manifest 1.0
+//! journal-manifest 0.0
 //! live/<YYYY-MM-DD>/<instance>.journal <size in bytes>
 //! ```
 //!
 //! One line per file after the format name and `<major>.<minor>` version.
 //! Paths are relative to the journal root, `/`-separated, and checked with
-//! [`valid_live_path`]. A reader ignores lines it doesn't recognise, so a
-//! minor bump may add kinds of entry; anything else is a major bump.
+//! [`valid_live_path`].
+//!
+//! While the major is 0 (pre-release) any minor may break, so readers accept
+//! only the exact header they write. From 1.0 on, readers will ignore lines
+//! they don't recognise, so a minor bump may add kinds of entry; anything
+//! else will be a major bump.
 
 use {
   ::journal::{
     layout::{EXTENSION, live_files},
-    record::v1::valid_instance,
+    record::v0::valid_instance,
   },
   ::std::{fs, io, path::Path},
 };
 
-/// Format name and major version on the first line.
-pub const HEADER_PREFIX: &str = "journal-manifest 1.";
-
-/// The full header line this crate writes.
-pub const HEADER: &str = "journal-manifest 1.0";
+/// The header line this crate writes and reads.
+pub const HEADER: &str = "journal-manifest 0.0";
 
 /// One file and its size.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -78,8 +79,7 @@ pub fn encode(files: &[File]) -> String {
 /// Parses a manifest, or `None` if it isn't one this crate can read.
 pub fn decode(text: &str) -> Option<Vec<File>> {
   let mut lines = text.strip_suffix('\n')?.split('\n');
-  let minor = lines.next()?.strip_prefix(HEADER_PREFIX)?;
-  if minor.is_empty() || !minor.bytes().all(|b| b.is_ascii_digit()) {
+  if lines.next()? != HEADER {
     return None;
   }
   let mut files = Vec::new();

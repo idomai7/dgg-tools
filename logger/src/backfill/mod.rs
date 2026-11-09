@@ -19,7 +19,7 @@ use {
   crate::{capture::now_ms, gaps::format_utc},
   ::journal::{
     Writer,
-    record::v1::{Body, valid_token},
+    record::v0::{Body, valid_token},
   },
   ::std::{io, path::PathBuf, time::Duration},
 };

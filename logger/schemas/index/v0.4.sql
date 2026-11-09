@@ -1,6 +1,6 @@
--- Index schema version 4, the current one (logger::index::SCHEMA_VERSION).
+-- Index schema version 0.4, the current one (logger::index::SCHEMA_VERSION).
 --
--- Changes from v3: files gains digest, so a re-merged archive (whose
+-- Changes from v0.3: files gains digest, so a re-merged archive (whose
 -- offsets no longer line up) is read again from the start.
 
 CREATE TABLE files (

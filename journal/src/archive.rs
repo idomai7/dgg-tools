@@ -7,14 +7,17 @@
 //! opening every archive:
 //!
 //! ```text
-//! journal-archive 1.0
+//! journal-archive 0.0
 //! <YYYY-MM-DD> <compressed bytes> <bytes> <lines> <sha-256 of the archive>
 //! ```
 //!
 //! `bytes` and `lines` are of the decompressed journal; the SHA-256 is of
-//! the compressed file, lowercase hex. Readers ignore lines they don't
-//! recognise, so a minor bump may add kinds of entry; anything else is a
-//! major bump.
+//! the compressed file, lowercase hex.
+//!
+//! While the major is 0 (pre-release) any minor may break, so readers accept
+//! only the exact header they write. From 1.0 on, readers will ignore lines
+//! they don't recognise, so a minor bump may add kinds of entry; anything
+//! else will be a major bump.
 
 use {
   crate::layout::{archive_dir, archive_file, archive_month_dir},
@@ -24,11 +27,8 @@ use {
   },
 };
 
-/// Format name and major version on a manifest's first line.
-pub const HEADER_PREFIX: &str = "journal-archive 1.";
-
-/// The full header line this crate writes.
-pub const HEADER: &str = "journal-archive 1.0";
+/// The header line this crate writes and reads.
+pub const HEADER: &str = "journal-archive 0.0";
 
 /// The manifest's file name in each month directory.
 pub const MANIFEST: &str = "manifest";
@@ -89,7 +89,7 @@ pub fn encode(archives: &[Archive]) -> String {
 /// Parses a manifest, or `None` if it isn't one this crate can read.
 pub fn decode(text: &str) -> Option<Vec<Archive>> {
   let mut lines = text.strip_suffix('\n')?.split('\n');
-  if !digits(lines.next()?.strip_prefix(HEADER_PREFIX)?) {
+  if lines.next()? != HEADER {
     return None;
   }
   let mut archives = Vec::new();

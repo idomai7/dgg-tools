@@ -19,9 +19,12 @@
 //! format. Each major version has its own module under [`record`] describing
 //! its structure, encoding and decoding, so old and new formats coexist:
 //!
-//! - [`record::v1`]: the current format.
+//! - [`record::v0`]: the current format.
 //!
-//! A reader accepts any minor of a major it has a module for. So a minor bump
+//! Versions work like cargo's semver. While the major is 0 (pre-release),
+//! any minor may break, so a reader accepts only the exact minor it has; files
+//! written at another are rewritten rather than read. From major 1 on, a
+//! reader accepts any minor of a major it has a module for, so a minor bump
 //! may only make changes old readers tolerate: new kinds, which they report
 //! as [`DecodeError::Unknown`] and skip. Anything else is a major bump, and
 //! readers without that major's module refuse the file.

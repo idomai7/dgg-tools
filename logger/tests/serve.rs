@@ -43,7 +43,7 @@ fn status(instance: &str) -> Status {
 #[test]
 fn pushed_statuses_move_onto_the_receivers_clock() {
   let body = push_body(&status("a").encode(), 2_000);
-  assert!(body.starts_with("now 2000\ncapture-status 1.0\n"));
+  assert!(body.starts_with("now 2000\ncapture-status 0.0\n"));
   // The receiver's clock is 10 s ahead.
   let mut expected = status("a");
   expected.shift(10_000);
@@ -109,7 +109,7 @@ async fn control_endpoints() {
     .await
     .unwrap();
   assert!(listed.starts_with("now "));
-  assert!(listed.contains("\n\ncapture-status 1.0\ninstance remote\n"));
+  assert!(listed.contains("\n\ncapture-status 0.0\ninstance remote\n"));
 
   let deleted = client
     .delete(url("/control/remote"))

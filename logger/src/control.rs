@@ -4,7 +4,7 @@
 //! up to date:
 //!
 //! ```text
-//! capture-status 1.0
+//! capture-status 0.0
 //! instance <id>
 //! started <unix ms>
 //! heartbeat <unix ms>
@@ -13,8 +13,12 @@
 //!
 //! The first line is the format name and `<major>.<minor>` version. Each
 //! later line is `<key> <value>`. `healthy-since` is omitted while the
-//! instance isn't healthy. Readers ignore keys they don't know, so a minor
-//! bump may add keys; anything else is a major bump.
+//! instance isn't healthy.
+//!
+//! While the major is 0 (pre-release) any minor may break, so readers accept
+//! only the exact header they write. From 1.0 on, readers will ignore keys
+//! they don't recognise, so a minor bump may add keys; anything else will be
+//! a major bump.
 //!
 //! An instance on another host makes itself known by pushing its status to
 //! this host's `serve` (see [`push_body`]), which writes it here with its
@@ -22,7 +26,7 @@
 //! any other.
 
 use {
-  ::journal::record::v1::valid_instance,
+  ::journal::record::v0::valid_instance,
   ::std::{
     fs, io,
     path::{Path, PathBuf},
@@ -30,11 +34,8 @@ use {
   },
 };
 
-/// Format name and major version on the first line of a status file.
-pub const HEADER_PREFIX: &str = "capture-status 1.";
-
-/// The full header line this crate writes.
-pub const HEADER: &str = "capture-status 1.0";
+/// The header line this crate writes and reads.
+pub const HEADER: &str = "capture-status 0.0";
 
 /// File extension of status files.
 pub const EXTENSION: &str = "status";
@@ -67,9 +68,7 @@ impl Status {
   /// Parses file contents, or `None` if they aren't a readable status.
   pub fn decode(text: &str) -> Option<Self> {
     let mut lines = text.strip_suffix('\n')?.split('\n');
-    let header = lines.next()?;
-    let minor = header.strip_prefix(HEADER_PREFIX)?;
-    if !digits(minor) {
+    if lines.next()? != HEADER {
       return None;
     }
     let (mut instance, mut started, mut heartbeat, mut healthy_since) =

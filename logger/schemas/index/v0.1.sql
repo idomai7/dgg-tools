@@ -1,6 +1,4 @@
--- Index schema version 2. Superseded by v3; kept as a record.
---
--- Changes from v1: connections gains last_seen and history_from.
+-- Index schema version 0.1. Superseded by v0.2; kept as a record.
 
 CREATE TABLE files (
   path TEXT PRIMARY KEY,  -- relative to the journal root, '/'-separated
@@ -13,8 +11,6 @@ CREATE TABLE connections (
   opened INTEGER NOT NULL,
   closed INTEGER,
   close_reason TEXT,
-  last_seen INTEGER NOT NULL,  -- receive time of its latest line
-  history_from INTEGER,        -- oldest MSG timestamp in its HISTORY
   PRIMARY KEY (instance, connection)
 );
 CREATE TABLE messages (

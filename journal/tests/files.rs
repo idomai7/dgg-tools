@@ -4,7 +4,7 @@ use {
   ::journal::{
     DecodeError, Entry, ReadError, Reader, Record, Version, Writer,
     layout::{backfill_dir, backfill_files, live_dir, live_files},
-    record::v1::{self, Body},
+    record::v0::{self, Body},
   },
   ::std::{
     fs::{self, OpenOptions},
@@ -34,8 +34,8 @@ impl Drop for TempRoot {
   }
 }
 
-fn frame_record(receive_time: i64, frame: &str) -> v1::Record {
-  v1::Record {
+fn frame_record(receive_time: i64, frame: &str) -> v0::Record {
+  v0::Record {
     receive_time,
     instance: "a".into(),
     connection: 1,
@@ -43,14 +43,14 @@ fn frame_record(receive_time: i64, frame: &str) -> v1::Record {
   }
 }
 
-fn write(writer: &mut Writer, record: &v1::Record) {
+fn write(writer: &mut Writer, record: &v0::Record) {
   writer
     .write(record.receive_time, record.connection, record.body.clone())
     .unwrap();
 }
 
-fn record(entry: Result<Entry, ReadError>) -> v1::Record {
-  let Record::V1(record) = entry.unwrap().record;
+fn record(entry: Result<Entry, ReadError>) -> v0::Record {
+  let Record::V0(record) = entry.unwrap().record;
   record
 }
 
@@ -144,17 +144,21 @@ fn header_is_checked() {
   drop(writer);
   let path = live_files(&root.0).unwrap()[0].clone();
   let text = fs::read_to_string(&path).unwrap();
-  assert_eq!(text, "journal 1.1\n0 a 1 frame MSG 1\n");
+  assert_eq!(text, "journal 0.1\n0 a 1 frame MSG 1\n");
 
   let with = |header: &str| {
-    fs::write(&path, text.replacen("journal 1.1", header, 1)).unwrap();
+    fs::write(&path, text.replacen("journal 0.1", header, 1)).unwrap();
     Reader::open(&path, 0)
   };
-  // A newer minor is read; kinds it added would come back as Unknown.
-  let mut reader = with("journal 1.7").unwrap();
-  assert_eq!(reader.version(), Some(Version { major: 1, minor: 7 }));
+  let mut reader = with("journal 0.1").unwrap();
+  assert_eq!(reader.version(), Some(Version { major: 0, minor: 1 }));
   assert_eq!(frame(reader.next().unwrap()), "MSG 1");
-  // A major without a decoder is refused.
+  // Within major 0 another minor may have broken anything: refused.
+  let v07 = Version { major: 0, minor: 7 };
+  assert!(
+    matches!(with("journal 0.7"), Err(ReadError::Version(v)) if v == v07)
+  );
+  // As is a major without a decoder.
   let v2 = Version { major: 2, minor: 0 };
   assert!(matches!(with("journal 2.0"), Err(ReadError::Version(v)) if v == v2));
   assert!(matches!(

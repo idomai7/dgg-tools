@@ -2,7 +2,7 @@ use {
   ::journal::{
     Reader, Record,
     layout::{backfill_files, live_files},
-    record::v1::{self, Body},
+    record::v0::{self, Body},
   },
   ::logger::backfill::{
     Message, Options, Page, Source, linkers, run,
@@ -120,7 +120,7 @@ fn options(root: &TempRoot, max_requests: u64) -> Options {
 }
 
 /// Everything journaled, which must all be in backfill files.
-fn bodies(root: &TempRoot) -> Vec<v1::Body> {
+fn bodies(root: &TempRoot) -> Vec<v0::Body> {
   let journal = root.0.join("journal");
   assert!(live_files(&journal).unwrap().is_empty());
   backfill_files(&journal)
@@ -128,7 +128,7 @@ fn bodies(root: &TempRoot) -> Vec<v1::Body> {
     .iter()
     .flat_map(|file| Reader::open(file, 0).unwrap())
     .map(|entry| {
-      let Record::V1(record) = entry.unwrap().record;
+      let Record::V0(record) = entry.unwrap().record;
       assert_eq!(
         (record.instance.as_str(), record.connection),
         ("backfill-t", 1)

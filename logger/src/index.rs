@@ -27,9 +27,9 @@
 
 use {
   ::journal::{
-    ReadError, Reader, Record, archive,
+    ReadError, Reader, Record, Version, archive,
     layout::{backfill_files, live_files},
-    record::v1::Body,
+    record::v0::Body,
   },
   ::rusqlite::{
     Connection, OptionalExtension, Transaction, TransactionBehavior, params,
@@ -39,13 +39,27 @@ use {
 };
 
 /// Bumped whenever the schema changes; an index at another version must be
-/// rebuilt.
-pub const SCHEMA_VERSION: i64 = 4;
+/// rebuilt. While the major is 0, every change bumps the minor.
+pub const SCHEMA_VERSION: Version = Version { major: 0, minor: 4 };
+
+/// How a schema version is stored in SQLite's `user_version`:
+/// `major << 16 | minor`.
+pub fn user_version(version: Version) -> i64 {
+  i64::from(version.major) << 16 | i64::from(version.minor)
+}
+
+/// The schema version a `user_version` stands for.
+pub fn schema_version(user_version: i64) -> Version {
+  Version {
+    major: (user_version >> 16) as u32,
+    minor: (user_version & 0xffff) as u32,
+  }
+}
 
 /// The current schema. Every version's schema is kept in `schemas/index/`;
 /// add a new file there (and bump [`SCHEMA_VERSION`]) rather than editing
 /// an old one.
-const SCHEMA: &str = include_str!("../schemas/index/v4.sql");
+const SCHEMA: &str = include_str!("../schemas/index/v0.4.sql");
 
 /// Lines are committed in batches of this many, with their checkpoint.
 const BATCH: usize = 10_000;
@@ -55,7 +69,7 @@ pub enum Error {
   Io(io::Error),
   Sqlite(::rusqlite::Error),
   /// The index was built with another schema version; rebuild it.
-  Schema(i64),
+  Schema(Version),
 }
 
 impl From<io::Error> for Error {
@@ -77,8 +91,12 @@ impl ::std::fmt::Display for Error {
       Self::Sqlite(e) => write!(f, "sqlite: {e}"),
       Self::Schema(version) => write!(
         f,
-        "index has schema {version}, not {SCHEMA_VERSION}; \
-         run `index --rebuild`"
+        "index has schema {}.{}, not {}.{}; \
+         run `index --rebuild`",
+        version.major,
+        version.minor,
+        SCHEMA_VERSION.major,
+        SCHEMA_VERSION.minor,
       ),
     }
   }
@@ -116,10 +134,11 @@ pub fn open(path: &Path) -> Result<Connection, Error> {
   match version {
     0 => {
       transaction.execute_batch(SCHEMA)?;
-      transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+      let version = user_version(SCHEMA_VERSION);
+      transaction.pragma_update(None, "user_version", version)?;
     }
-    SCHEMA_VERSION => {}
-    other => return Err(Error::Schema(other)),
+    version if version == user_version(SCHEMA_VERSION) => {}
+    other => return Err(Error::Schema(schema_version(other))),
   }
   transaction.commit()?;
   Ok(db)
@@ -285,7 +304,7 @@ fn index_file(
       lines += 1;
       match entry {
         Ok(entry) => {
-          let Record::V1(record) = entry.record;
+          let Record::V0(record) = entry.record;
           let key = (record.instance.clone(), record.connection);
           let seen = last_seen.entry(key).or_insert(record.receive_time);
           *seen = record.receive_time.max(*seen);

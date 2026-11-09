@@ -1,5 +1,5 @@
 use {
-  ::journal::{Writer, record::v1::Body},
+  ::journal::{Writer, record::v0::Body},
   ::logger::{
     capture::Peer,
     manifest::{self, File, valid_live_path},
@@ -66,17 +66,20 @@ fn manifest_format() {
   let text = manifest::encode(&files);
   assert_eq!(
     text,
-    "journal-manifest 1.0\nlive/2026-11-08/a-1.journal 42\n"
+    "journal-manifest 0.0\nlive/2026-11-08/a-1.journal 42\n"
   );
   assert_eq!(manifest::decode(&text), Some(files.clone()));
-  // A newer minor, with an entry kind this version doesn't know.
-  let newer = "journal-manifest 1.3\narchive/2026/11 9\n\
+  // An entry kind this version doesn't know is skipped.
+  let extra = "journal-manifest 0.0\narchive/2026/11 9\n\
     live/2026-11-08/a-1.journal 42\n";
-  assert_eq!(manifest::decode(newer), Some(files));
+  assert_eq!(manifest::decode(extra), Some(files));
   for bad in [
+    // Within major 0, only the exact version is read.
+    "journal-manifest 0.1\nlive/2026-11-08/a-1.journal 42\n",
+    "journal-manifest 1.0\nlive/2026-11-08/a-1.journal 42\n",
     "journal-manifest 2.0\n",
-    "journal-manifest 1.0\nlive/2026-11-08/a-1.journal x\n",
-    "journal-manifest 1.0",
+    "journal-manifest 0.0\nlive/2026-11-08/a-1.journal x\n",
+    "journal-manifest 0.0",
   ] {
     assert_eq!(manifest::decode(bad), None, "{bad:?}");
   }
@@ -103,7 +106,7 @@ async fn file_endpoint() {
   let whole = get(path, None).await.unwrap();
   assert_eq!(whole.status().as_u16(), 200);
   let whole = whole.text().await.unwrap();
-  assert_eq!(whole, "journal 1.1\n0 a 1 frame MSG 1\n");
+  assert_eq!(whole, "journal 0.1\n0 a 1 frame MSG 1\n");
   let tail = get(path, Some("bytes=12-")).await.unwrap();
   assert_eq!(tail.status().as_u16(), 206);
   assert_eq!(tail.text().await.unwrap(), "0 a 1 frame MSG 1\n");
@@ -166,7 +169,7 @@ async fn pulls_only_what_is_missing() {
 
   // A file shorter remotely than here was rewritten: reported, untouched.
   let before = fs::read(local.0.join(path)).unwrap();
-  fs::write(remote.0.join(path), "journal 1.1\n").unwrap();
+  fs::write(remote.0.join(path), "journal 0.1\n").unwrap();
   let rewritten = sync(&peer, &local.0).await.unwrap();
   assert_eq!(rewritten.mismatched, [path]);
   assert_eq!(fs::read(local.0.join(path)).unwrap(), before);

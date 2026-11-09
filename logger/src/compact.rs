@@ -20,7 +20,7 @@ use {
   ::journal::{
     archive::{self, Archive, valid_day},
     layout::{EXTENSION, archive_file, live_day_dir, live_dir},
-    record::{Version, v1},
+    record::{Version, v0},
   },
   ::sha2::{Digest, Sha256},
   ::std::{
@@ -120,8 +120,8 @@ fn parse(
   };
   let version = Version::parse_header(&bytes[..header_end])
     .ok_or_else(|| invalid(path, "not a journal"))?;
-  if version.major != v1::VERSION.major {
-    return Err(invalid(path, "journal of another major version"));
+  if !version.readable() {
+    return Err(invalid(path, "journal of an unreadable version"));
   }
   let body = &bytes[header_end + 1..];
   let mut lines: Vec<Vec<u8>> =
@@ -213,7 +213,7 @@ pub fn compact_day(
   let minor = inputs
     .iter()
     .map(|input| input.version.minor)
-    .chain([v1::VERSION.minor])
+    .chain([v0::VERSION.minor])
     .max()
     .unwrap();
   let mut lines: Vec<&[u8]> = inputs
@@ -229,7 +229,7 @@ pub fn compact_day(
     kept
   });
   let version = Version {
-    major: v1::VERSION.major,
+    major: v0::VERSION.major,
     minor,
   };
   let mut journal = format!("{}\n", version.header()).into_bytes();

@@ -1,6 +1,6 @@
 use ::journal::{
   DecodeError,
-  record::v1::{Body, Record},
+  record::v0::{Body, Record},
 };
 
 #[test]

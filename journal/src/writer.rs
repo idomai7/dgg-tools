@@ -1,9 +1,9 @@
-//! Appends records to live or backfill files, always in the [`v1`] format.
+//! Appends records to live or backfill files, always in the [`v0`] format.
 
 use {
   crate::{
     layout::{backfill_file, live_file, utc_day},
-    record::v1::{self, Body},
+    record::v0::{self, Body},
   },
   ::std::{
     fs::{self, File, OpenOptions},
@@ -38,11 +38,11 @@ impl Writer {
   ///
   /// # Panics
   ///
-  /// If `instance` isn't [`v1::valid_instance`].
+  /// If `instance` isn't [`v0::valid_instance`].
   pub fn new(root: impl Into<PathBuf>, instance: impl Into<String>) -> Self {
     let instance = instance.into();
     assert!(
-      v1::valid_instance(&instance),
+      v0::valid_instance(&instance),
       "instance id must be [A-Za-z0-9._-]+: {instance:?}"
     );
     Self {
@@ -60,7 +60,7 @@ impl Writer {
   ///
   /// # Panics
   ///
-  /// If `instance` isn't [`v1::valid_instance`].
+  /// If `instance` isn't [`v0::valid_instance`].
   pub fn backfill(
     root: impl Into<PathBuf>,
     instance: impl Into<String>,
@@ -106,7 +106,7 @@ impl Writer {
       self.sync()?;
       self.open = Some((day.clone(), self.open_day(&day)?));
     }
-    let record = v1::Record {
+    let record = v0::Record {
       receive_time,
       instance: self.instance.clone(),
       connection,
@@ -141,7 +141,7 @@ impl Writer {
   }
 
   /// Opens (creating if needed) this instance's file for `day`. A new file
-  /// gets the v1 header; an existing one with a torn tail gets a newline.
+  /// gets the v0 header; an existing one with a torn tail gets a newline.
   fn open_day(&self, day: &str) -> io::Result<File> {
     let path = if self.backfill {
       backfill_file(&self.root, day, &self.instance)
@@ -155,7 +155,7 @@ impl Writer {
       .append(true)
       .open(path)?;
     if file.metadata()?.len() == 0 {
-      file.write_all(format!("{}\n", v1::VERSION.header()).as_bytes())?;
+      file.write_all(format!("{}\n", v0::VERSION.header()).as_bytes())?;
     } else {
       // Isolate a torn line left by a crash, so the next record starts clean.
       let mut last = [0];
