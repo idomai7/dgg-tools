@@ -4,7 +4,9 @@ use {
   ::deploy::{
     log::now_ms,
     paths::Paths,
-    status::{Health, Watcher, format, journal_lines, tail, text},
+    status::{
+      Health, Watcher, capture_tail, format, journal_lines, tail, text,
+    },
   },
   ::logger_journal::layout::utc_day,
   ::std::{fs, path::PathBuf},
@@ -188,11 +190,13 @@ fn draws_the_watch_screen() {
     .gather(&Paths::under(dir.0.clone()))
     .unwrap();
   let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
-  let log = vec!["2026-11-09 12:00:00.000Z capturing as a-1".to_owned()];
+  let pane = ::deploy::status::watch::Pane {
+    title: "capture.log".into(),
+    lines: vec!["2026-11-09 12:00:00.000Z capturing as a-1".to_owned()],
+    empty: "(empty)",
+  };
   terminal
-    .draw(|frame| {
-      ::deploy::status::watch::draw(frame, &report, "capture", &log)
-    })
+    .draw(|frame| ::deploy::status::watch::draw(frame, &report, &pane))
     .unwrap();
   let screen: String = terminal
     .backend()
@@ -205,6 +209,7 @@ fn draws_the_watch_screen() {
     " programs ",
     " captures ",
     "healthy for 50s",
+    "0 frames",
     " journal ",
     " capture.log ",
     "capturing as a-1",
@@ -264,4 +269,41 @@ LOGGER_PEER_TOKEN=secret
   );
   let report = watcher.gather(&paths).unwrap();
   assert!(report.sync.unwrap().peer.is_err());
+}
+
+#[test]
+fn tails_a_captures_frames() {
+  let dir = TempDir::new("frames");
+  let root = dir.0.join("journal");
+  assert!(capture_tail(&root, "a-1", 10).unwrap().is_empty());
+  // 2026-11-09 12:00:00.000 UTC, then on.
+  let at = 1_794_225_600_000_i64;
+  let mut text = format!("journal 0.1\n{at} a-1 1 open wss://x\n");
+  for n in 1..=3 {
+    text += &format!("{} a-1 1 frame MSG {{\"n\":{n}}}\n", at + n);
+  }
+  text += &format!("{} a-1 1 close gone\n{} a-1 2 frame PI", at + 9, at + 10);
+  dir.write("journal/live/2026-11-09/a-1.journal", &text);
+  dir.write("journal/live/2026-11-09/a-2.journal", "journal 0.1\n");
+  assert_eq!(
+    capture_tail(&root, "a-1", 3).unwrap(),
+    [
+      "12:00:00.002 #1 MSG {\"n\":2}",
+      "12:00:00.003 #1 MSG {\"n\":3}",
+      "12:00:00.009 #1 (disconnected: gone)",
+    ]
+  );
+  assert_eq!(
+    capture_tail(&root, "a-1", 10).unwrap()[0],
+    "12:00:00.000 #1 (connected to wss://x)"
+  );
+  // A newer day's file is the one shown.
+  dir.write(
+    "journal/live/2026-11-10/a-1.journal",
+    &format!("journal 0.1\n{} a-1 2 frame PING {{}}\n", at + 86_400_000),
+  );
+  assert_eq!(
+    capture_tail(&root, "a-1", 10).unwrap(),
+    ["12:00:00.000 #2 PING {}"]
+  );
 }

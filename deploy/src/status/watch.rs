@@ -2,11 +2,14 @@
 //! filling the rest of the screen.
 //!
 //! Keys: `1`-`5` show the capture, index, compact, supervisor or sync
-//! log, `r` redraws now, `e` opens the data folder, `q` (or Esc, or
+//! log, `f` the newest frames a capture wrote (again for the next
+//! capture), `r` redraws now, `e` opens the data folder, `q` (or Esc, or
 //! Ctrl-C) quits.
 
 use {
-  super::{LOGS, Report, Watcher, format, health, journal_lines, tail},
+  super::{
+    LOGS, Report, Watcher, capture_tail, format, health, journal_lines, tail,
+  },
   crate::paths::Paths,
   ::ratatui::{
     DefaultTerminal, Frame,
@@ -23,7 +26,63 @@ use {
   },
 };
 
-const KEYS: &str = " 1 capture  2 index  3 compact  4 supervisor  5 sync   r redraw  e open data  q quit";
+const KEYS: &str = " 1 capture  2 index  3 compact  4 supervisor  5 sync  f frames   r redraw  e open data  q quit";
+
+/// What fills the bottom of the screen.
+enum View {
+  /// One of [`LOGS`].
+  Log(usize),
+  /// The newest frames of a capture instance.
+  Frames(String),
+}
+
+/// The bottom of the screen: a title, its lines, and what to say if
+/// there are none.
+pub struct Pane<'a> {
+  pub title: String,
+  pub lines: Vec<String>,
+  pub empty: &'a str,
+}
+
+impl View {
+  fn pane(&self, paths: &Paths) -> Pane<'static> {
+    match self {
+      Self::Log(log) => Pane {
+        title: format!("{}.log", LOGS[*log]),
+        lines: tail(&paths.logs.join(format!("{}.log", LOGS[*log])), 500)
+          .unwrap_or_default(),
+        empty: "(empty: shell runs print to their own windows)",
+      },
+      Self::Frames(instance) => Pane {
+        title: format!("frames: {instance}"),
+        lines: capture_tail(&paths.data.join("journal"), instance, 500)
+          .unwrap_or_else(|e| vec![format!("(can't read: {e})")]),
+        empty: "(no live file yet)",
+      },
+    }
+  }
+
+  /// `f` pressed: the newest capture's frames, or the next older one's.
+  fn next_frames(&self, report: &Report) -> Self {
+    let instances: Vec<&str> = report
+      .captures
+      .iter()
+      .rev()
+      .map(|capture| capture.instance.as_str())
+      .collect();
+    let next = match self {
+      Self::Frames(current) => instances
+        .iter()
+        .position(|instance| instance == current)
+        .map_or(0, |at| (at + 1) % instances.len()),
+      Self::Log(_) => 0,
+    };
+    match instances.get(next) {
+      Some(instance) => Self::Frames((*instance).to_owned()),
+      None => Self::Log(0),
+    }
+  }
+}
 
 /// Runs the screen until the user quits.
 pub fn run(paths: &Paths, interval: Duration) -> io::Result<()> {
@@ -40,12 +99,11 @@ fn event_loop(
   paths: &Paths,
   interval: Duration,
 ) -> io::Result<()> {
-  let mut log = 0;
+  let mut view = View::Log(0);
   loop {
     let report = watcher.gather(paths)?;
-    let lines = tail(&paths.logs.join(format!("{}.log", LOGS[log])), 500)
-      .unwrap_or_default();
-    terminal.draw(|frame| draw(frame, &report, LOGS[log], &lines))?;
+    let pane = view.pane(paths);
+    terminal.draw(|frame| draw(frame, &report, &pane))?;
 
     let until = Instant::now() + interval;
     loop {
@@ -66,7 +124,11 @@ fn event_loop(
           return Ok(());
         }
         KeyCode::Char(digit @ '1'..='5') => {
-          log = digit as usize - '1' as usize;
+          view = View::Log(digit as usize - '1' as usize);
+          break;
+        }
+        KeyCode::Char('f') => {
+          view = view.next_frames(&report);
           break;
         }
         KeyCode::Char('r') => break,
@@ -96,13 +158,8 @@ fn heading(title: &str) -> Block<'_> {
   ))
 }
 
-/// Draws `report`, with `log_lines` of the `log` log below.
-pub fn draw(
-  frame: &mut Frame,
-  report: &Report,
-  log: &str,
-  log_lines: &[String],
-) {
+/// Draws `report`, with `pane` below.
+pub fn draw(frame: &mut Frame, report: &Report, pane: &Pane) {
   let now = report.now;
   let programs: Vec<Line> = if report.programs.is_empty() {
     vec![Line::from("none running".dark_gray())]
@@ -212,17 +269,13 @@ pub fn draw(
     journal_area,
   );
   let room = log_area.height.saturating_sub(2) as usize;
-  let shown = &log_lines[log_lines.len().saturating_sub(room)..];
+  let shown = &pane.lines[pane.lines.len().saturating_sub(room)..];
   let body: Vec<Line> = if shown.is_empty() {
-    vec![Line::from(
-      "(empty: shell runs print to their own windows)".dark_gray(),
-    )]
+    vec![Line::from(pane.empty.dark_gray())]
   } else {
     shown.iter().map(|line| Line::from(line.as_str())).collect()
   };
-  frame.render_widget(
-    Paragraph::new(body).block(heading(&format!("{log}.log"))),
-    log_area,
-  );
+  frame
+    .render_widget(Paragraph::new(body).block(heading(&pane.title)), log_area);
   frame.render_widget(Line::from(KEYS.dark_gray()), keys);
 }

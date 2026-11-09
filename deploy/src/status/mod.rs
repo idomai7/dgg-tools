@@ -9,7 +9,11 @@ pub mod format;
 pub mod watch;
 
 use {
-  crate::{log::now_ms, paths::Paths, peer, processes},
+  crate::{
+    log::{now_ms, timestamp},
+    paths::Paths,
+    peer, processes,
+  },
   ::logger::control,
   ::logger_journal::{
     Reader, Record, archive,
@@ -386,6 +390,54 @@ pub fn tail(path: &Path, lines: usize) -> io::Result<Vec<String>> {
   }
   let skip = all.len().saturating_sub(lines);
   Ok(all[skip..].iter().map(|line| (*line).to_owned()).collect())
+}
+
+/// The last `lines` records `instance` wrote to its newest live file, one
+/// line each: receive time (UTC), connection, and the frame as received
+/// (or what happened to the connection). Reads at most the last 64 KB.
+pub fn capture_tail(
+  journal_root: &Path,
+  instance: &str,
+  lines: usize,
+) -> io::Result<Vec<String>> {
+  let Some(file) = live_files(journal_root)?
+    .into_iter()
+    .rfind(|file| file.file_stem().is_some_and(|stem| stem == instance))
+  else {
+    return Ok(Vec::new());
+  };
+  let start = fs::metadata(&file)?.len().saturating_sub(64 << 10);
+  let reader = Reader::open(&file, start).map_err(|e| match e {
+    ::logger_journal::ReadError::Io(e) => e,
+    other => io::Error::other(format!("{}: {other:?}", file.display())),
+  })?;
+  // Starting mid-file, the first line may be cut: it doesn't decode.
+  let records: Vec<v0::Record> = reader
+    .filter_map(Result::ok)
+    .map(|entry| match entry.record {
+      Record::V0(record) => record,
+    })
+    .collect();
+  let skip = records.len().saturating_sub(lines);
+  Ok(records[skip..].iter().map(record_line).collect())
+}
+
+/// One record, as [`capture_tail`] shows it.
+fn record_line(record: &v0::Record) -> String {
+  let time = timestamp(record.receive_time);
+  // Just the time of day: `HH:MM:SS.mmm`.
+  let time = time.get(11..23).unwrap_or(&time);
+  let what = match &record.body {
+    v0::Body::Frame(frame) => frame.clone(),
+    v0::Body::Binary(bytes) => format!("(binary frame, {} bytes)", bytes.len()),
+    v0::Body::Open(url) => format!("(connected to {url})"),
+    v0::Body::Close(why) => format!("(disconnected: {why})"),
+    v0::Body::Fetched { source, nick, .. } => {
+      format!("(fetched from {source}: {nick})")
+    }
+    v0::Body::FetchRange { source, .. } => format!("(fetched from {source})"),
+  };
+  format!("{time} #{} {what}", record.connection)
 }
 
 /// How one capture is doing, as text.
