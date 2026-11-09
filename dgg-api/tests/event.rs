@@ -20,7 +20,7 @@ fn decodes_every_fixture() {
     let name = line.split(' ').next().unwrap();
     assert_eq!(event.name(), name);
     match (&event, name) {
-      (Event::Other { .. }, "ME" | "SPOTLIGHTS") => {}
+      (Event::Other { .. }, "ME") => {}
       (Event::Other { .. } | Event::Unreadable { .. }, _) => {
         panic!("{line}: {event:?}")
       }
@@ -282,4 +282,29 @@ fn polls_from_chat_gui() {
     panic!()
   };
   assert_eq!(counted.vote, Some(2));
+}
+
+#[test]
+fn spotlights_from_chat_gui() {
+  let Event::Spotlight(spotlight) = &chat_gui("SPOTLIGHT")[0] else {
+    panic!()
+  };
+  assert_eq!(
+    (
+      spotlight.key.as_str(),
+      spotlight.user.nick.as_str(),
+      spotlight.spotlighted_by.as_str()
+    ),
+    ("key1", "user1", "user2")
+  );
+  assert_eq!(
+    chat_gui("SPOTLIGHTS"),
+    [Event::Spotlights(vec![spotlight.clone()])]
+  );
+  // As seen: empty.
+  assert_eq!(Event::parse("SPOTLIGHTS []"), Event::Spotlights(vec![]));
+  let Event::Unspotlight(ended) = &chat_gui("UNSPOTLIGHT")[0] else {
+    panic!()
+  };
+  assert_eq!(ended.key, "key1");
 }

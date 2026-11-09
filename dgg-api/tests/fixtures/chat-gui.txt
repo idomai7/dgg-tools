@@ -22,3 +22,6 @@ POLLSTOP {"totals":[5,4],"totalvotes":9}
 VOTECAST {"vote":2,"quantity":1}
 VOTECAST {"quantity":3}
 VOTECOUNTED {"vote":"2"}
+SPOTLIGHT {"timestamp":1794203983846,"expirationTimestamp":1794204043846,"retentionTimestamp":1794205783846,"uuid":"00000000-0000-0000-0000-000000000006","key":"key1","user":{"id":1000,"nick":"user1"},"nick":"user1","data":"message 1","messageTimestamp":1794203923846,"spotlightedBy":"user2"}
+UNSPOTLIGHT {"key":"key1"}
+SPOTLIGHTS [{"timestamp":1794203983846,"expirationTimestamp":1794204043846,"retentionTimestamp":1794205783846,"uuid":"00000000-0000-0000-0000-000000000006","key":"key1","user":{"id":1000,"nick":"user1"},"nick":"user1","data":"message 1","messageTimestamp":1794203923846,"spotlightedBy":"user2"}]

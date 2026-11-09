@@ -482,6 +482,37 @@ fn vote<'de, D: Deserializer<'de>>(
   }
 }
 
+/// `SPOTLIGHT`: `spotlighted_by` spotlighted `user`'s message: shown in
+/// chat until `expiration_timestamp`, emphasised until
+/// `retention_timestamp`. From chat-gui.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Spotlight {
+  /// Identifies the message: a hash of its time, author and text.
+  pub key: String,
+  /// The message's author.
+  pub user: User,
+  /// The message's text.
+  pub data: String,
+  /// When the message was sent, unix ms.
+  pub message_timestamp: Option<i64>,
+  /// Who spotlighted it.
+  pub spotlighted_by: String,
+  /// Unix ms.
+  pub timestamp: i64,
+  /// Unix ms.
+  pub expiration_timestamp: i64,
+  /// Unix ms.
+  pub retention_timestamp: Option<i64>,
+  pub uuid: String,
+}
+
+/// `UNSPOTLIGHT`: the spotlight with this key ended. From chat-gui.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+pub struct Unspotlight {
+  pub key: String,
+}
+
 /// One decoded frame.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
@@ -518,6 +549,10 @@ pub enum Event {
   PollStop(PollStop),
   VoteCast(VoteCast),
   VoteCounted(VoteCounted),
+  Spotlight(Spotlight),
+  Unspotlight(Unspotlight),
+  /// Spotlights still showing, sent on connecting (seen, empty).
+  Spotlights(Vec<Spotlight>),
   /// An event this crate doesn't type (yet).
   Other {
     event: String,
@@ -576,6 +611,10 @@ impl Event {
       "POLLSTOP" => json(payload).map(Self::PollStop),
       "VOTECAST" => json(payload).map(Self::VoteCast),
       "VOTECOUNTED" => json(payload).map(Self::VoteCounted),
+      "SPOTLIGHT" => json(payload).map(Self::Spotlight),
+      "UNSPOTLIGHT" => json(payload).map(Self::Unspotlight),
+      "SPOTLIGHTS" => json::<Option<Vec<Spotlight>>>(payload)
+        .map(|list| Self::Spotlights(list.unwrap_or_default())),
       _ => {
         return Self::Other {
           event: event.into(),
@@ -622,6 +661,9 @@ impl Event {
       Self::PollStop(_) => "POLLSTOP",
       Self::VoteCast(_) => "VOTECAST",
       Self::VoteCounted(_) => "VOTECOUNTED",
+      Self::Spotlight(_) => "SPOTLIGHT",
+      Self::Unspotlight(_) => "UNSPOTLIGHT",
+      Self::Spotlights(_) => "SPOTLIGHTS",
       Self::Other { event, .. } | Self::Unreadable { event, .. } => event,
     }
   }
