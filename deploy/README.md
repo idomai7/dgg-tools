@@ -170,6 +170,31 @@ only administrators and the service can read it. The next `install` keeps
 it; `install --no-peer` removes it, and so does `uninstall`. Each round's
 output is in `sync.log`; the index picks up what arrives.
 
+### Running serve safely
+
+On the other host, make a token and serve with it:
+
+```powershell
+$env:LOGGER_TOKEN = [Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
+target\release\dgg-logger serve --listen 0.0.0.0:8788
+```
+
+- `serve` speaks plain HTTP, so the token crosses the network readable.
+  Reach it only over something private: a VPN such as Tailscale or
+  WireGuard, or an SSH tunnel. Don't open the port to the internet.
+- That token only reads, which is all sync needs. A second one,
+  `--control-token` (`LOGGER_CONTROL_TOKEN`), lets a capture on another
+  host push its status there, which makes that host's captures retire.
+  Set it only while moving capture to a new host (`capture --peer`), and
+  give it only to that host. Tokens must be 32 characters or more, and
+  the two must differ.
+- Sync trusts the peer for what its journal says: whatever it serves is
+  added here. Sync from your own hosts only. It doesn't trust the peer
+  for size, though: it refuses a manifest over 16 MB and a file over 4 GB,
+  takes no more of a file than the manifest lists, checks archives
+  against their SHA-256, and doesn't follow redirects.
+- `serve` handles 8 requests at once and turns away the rest.
+
 ## Keeping the PC awake
 
 A user install only runs while you're logged on, and nothing runs while the

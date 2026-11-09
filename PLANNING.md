@@ -81,7 +81,8 @@ The layout is flat: each crate is a direct child of the root.
     - An older instance retires once a later-started one has a fresh heartbeat (under 5 s old) and has been healthy for the grace period (`--handoff-grace`, default 30 s). Its journal ends with `close handoff to <instance>`.
     - `--keep-running` opts out, for deliberate redundancy.
     - Tested live: 34 s of overlap, with 13 MSGs in both journals and none missing from their union.
-  - **Across hosts:** the old host runs `serve`, and the new instance runs `capture --peer http://old-host:8788 --peer-token …`.
+  - **Across hosts:** the old host runs `serve --control-token …`, and the new instance runs `capture --peer http://old-host:8788 --peer-token <that control token>`.
+    - `serve`'s plain `--token` only reads (enough for `sync`); pushing a status needs the control token, since a pushed status makes the host's captures retire.
     - The new instance pushes its status there every second (`PUT /control/<instance>`), shifted onto the old host's clock, and withdraws it on exit.
     - The old instance retires by the same rule as a local handoff, and needs no flags or restart.
     - Use a VPN or SSH tunnel between hosts: the bearer token isn't encrypted over plain HTTP.
