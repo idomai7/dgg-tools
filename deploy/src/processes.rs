@@ -132,3 +132,55 @@ pub fn kill_under(dir: &Path, first: &[&str]) -> io::Result<()> {
   }
   Ok(())
 }
+
+/// Kills every process running from under `dir` but not from under
+/// `except`, and waits (briefly) for them to go.
+pub fn kill_under_except(dir: &Path, except: &Path) -> io::Result<()> {
+  let doomed = |exe: &Path| exe.starts_with(dir) && !exe.starts_with(except);
+  for process in system()?.processes().values() {
+    if process.exe().is_some_and(doomed) {
+      process.kill();
+    }
+  }
+  let until = Instant::now() + Duration::from_secs(10);
+  while Instant::now() < until {
+    let left = system()?
+      .processes()
+      .values()
+      .filter(|process| process.exe().is_some_and(doomed))
+      .count();
+    if left == 0 {
+      break;
+    }
+    thread::sleep(Duration::from_millis(200));
+  }
+  Ok(())
+}
+
+/// Waits up to `patience` for every process running one of `names` from
+/// under `dir`, but not from under `except`, to exit; whether they did.
+pub fn wait_gone_except(
+  dir: &Path,
+  names: &[&str],
+  except: &Path,
+  patience: Duration,
+) -> io::Result<bool> {
+  let until = Instant::now() + patience;
+  loop {
+    let left = system()?
+      .processes()
+      .values()
+      .filter(|process| {
+        runs_from(process, dir, names)
+          && !process.exe().is_some_and(|exe| exe.starts_with(except))
+      })
+      .count();
+    if left == 0 {
+      return Ok(true);
+    }
+    if Instant::now() >= until {
+      return Ok(false);
+    }
+    thread::sleep(Duration::from_millis(500));
+  }
+}

@@ -218,7 +218,7 @@ mod acl {
       .output()
       .unwrap();
     assert!(made.status.success());
-    assert_eq!(links(&dir.0).unwrap(), [junction.clone()]);
+    assert_eq!(links(&dir.0).unwrap(), ::std::slice::from_ref(&junction));
     fs::remove_dir(&junction).unwrap();
   }
 
@@ -232,4 +232,138 @@ mod acl {
       assert_ne!(sid, "S-1-5-32-544");
     }
   }
+}
+
+mod planning {
+  use {
+    ::deploy::{
+      install::{Installed, Options, Scope, plan},
+      paths::Paths,
+    },
+    ::std::path::PathBuf,
+  };
+
+  fn options(scope: Scope) -> Options {
+    Options {
+      scope,
+      ..Options::default()
+    }
+  }
+
+  #[test]
+  fn keeps_an_install_of_the_same_scope_where_it_is() {
+    let custom = Paths {
+      root: PathBuf::from(r"D:\logger"),
+      data: PathBuf::from(r"E:\chat"),
+      logs: PathBuf::from(r"D:\logger\logs"),
+    };
+    let current = Installed::Task(custom.clone());
+    assert_eq!(plan(&options(Scope::User), Some(&current)), custom);
+    // Another scope starts from its own defaults.
+    let machine = plan(&options(Scope::Machine), Some(&current));
+    assert_eq!(machine, Paths::under(Scope::Machine.default_root()));
+    assert_ne!(machine.data, custom.data);
+  }
+
+  #[test]
+  fn defaults_and_overrides() {
+    assert_eq!(
+      plan(&options(Scope::User), None),
+      Paths::under(Scope::User.default_root())
+    );
+    let mut told = options(Scope::User);
+    told.root = Some(PathBuf::from(r"D:\x"));
+    told.logs = Some(PathBuf::from(r"D:\logs"));
+    assert_eq!(
+      plan(&told, None),
+      Paths {
+        root: PathBuf::from(r"D:\x"),
+        data: PathBuf::from(r"D:\x\data"),
+        logs: PathBuf::from(r"D:\logs"),
+      }
+    );
+  }
+}
+
+mod moving {
+  use {
+    super::TempDir,
+    ::deploy::install::moving::{collisions, merge, merge_logs, same},
+    ::std::{fs, path::PathBuf},
+  };
+
+  fn write(dir: &TempDir, path: &str, text: &str) {
+    let path = dir.0.join(path);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(path, text).unwrap();
+  }
+
+  #[test]
+  fn merges_data_unless_a_file_is_in_both() {
+    let dir = TempDir::new("merge");
+    write(&dir, "old/journal/live/2026-11-09/a-1.journal", "a");
+    write(&dir, "old/index.sqlite", "i");
+    write(&dir, "new/journal/live/2026-11-09/b-2.journal", "b");
+    let (old, new) = (dir.0.join("old"), dir.0.join("new"));
+    assert!(collisions(&old, &new).unwrap().is_empty());
+    merge(&old, &new).unwrap();
+    assert!(!old.exists());
+    assert_eq!(
+      fs::read_to_string(new.join("journal/live/2026-11-09/a-1.journal"))
+        .unwrap(),
+      "a"
+    );
+    assert!(new.join("journal/live/2026-11-09/b-2.journal").exists());
+    assert!(new.join("index.sqlite").exists());
+
+    write(&dir, "old/index.sqlite", "again");
+    write(&dir, "old/other", "o");
+    assert_eq!(
+      collisions(&old, &new).unwrap(),
+      [PathBuf::from("index.sqlite")]
+    );
+    assert!(merge(&old, &new).is_err());
+    // Nothing moved.
+    assert!(old.join("other").exists());
+    assert_eq!(fs::read_to_string(new.join("index.sqlite")).unwrap(), "i");
+    assert!(same(&new, &new) && !same(&old, &new));
+  }
+
+  #[test]
+  fn merges_logs_oldest_first() {
+    let dir = TempDir::new("logs");
+    write(&dir, "old/capture.log", "old\n");
+    write(&dir, "old/index.log", "index\n");
+    write(&dir, "new/capture.log", "new\n");
+    let (old, new) = (dir.0.join("old"), dir.0.join("new"));
+    merge_logs(&old, &new).unwrap();
+    assert_eq!(
+      fs::read_to_string(new.join("capture.log")).unwrap(),
+      "old\nnew\n"
+    );
+    assert_eq!(
+      fs::read_to_string(new.join("index.log")).unwrap(),
+      "index\n"
+    );
+    assert!(!old.exists());
+  }
+}
+
+#[cfg(windows)]
+#[test]
+fn bridges_run_detached_into_their_log() {
+  use ::deploy::install::bridge;
+
+  let dir = TempDir::new("bridge");
+  // Something to stand in for dgg-capture: it complains about --data, into
+  // the log, and exits.
+  fs::copy(
+    r"C:\Windows\System32\whoami.exe",
+    exe(&dir.0, "dgg-capture"),
+  )
+  .unwrap();
+  let log = dir.0.join("bridge.log");
+  let mut child = bridge::start(&dir.0, &dir.0.join("data"), &log).unwrap();
+  assert!(bridge::wait_gone(&mut child, Duration::from_secs(10)));
+  assert!(!fs::read(&log).unwrap().is_empty());
 }

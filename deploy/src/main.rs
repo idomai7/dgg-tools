@@ -37,14 +37,20 @@ enum Command {
     #[arg(long, default_value_t = 60)]
     compact_every: u64,
   },
-  /// Install the logger for this user, from the build this program is in,
-  /// as a scheduled task that starts at logon; or upgrade the installed
-  /// one, without missing a message. Takes over an install made by the
-  /// PowerShell scripts.
+  /// Install the logger from the build this program is in: for this user,
+  /// as a scheduled task started at logon, or with `--machine` as a
+  /// Windows service started with the system. Installing again upgrades;
+  /// installing the other kind switches to it, moving the data. Takes over
+  /// an install made by the PowerShell scripts. Nothing is missed on the
+  /// way: a capture from the new build bridges the change.
   #[cfg(windows)]
   Install {
+    /// A machine install (a service): needs an elevated prompt.
+    #[arg(long)]
+    machine: bool,
     /// Where the install goes (default: the installed one's, else
-    /// `%LOCALAPPDATA%\dgg-tools`).
+    /// `%LOCALAPPDATA%\dgg-tools`, or `C:\ProgramData\dgg-tools` with
+    /// `--machine`).
     #[arg(long)]
     root: Option<PathBuf>,
     /// The data directory, if not `<root>\data`.
@@ -57,8 +63,9 @@ enum Command {
     #[arg(long, default_value_t = 3)]
     keep: usize,
   },
-  /// Remove the install: its task, programs and binaries. The data and
-  /// logs stay.
+  /// Remove the install: its task or service, programs and binaries. The
+  /// data and logs stay (a machine install's get ordinary permissions,
+  /// owned by you). A machine install needs an elevated prompt.
   #[cfg(windows)]
   Uninstall {
     /// Where to clean up if nothing is installed (after shell runs).
@@ -99,11 +106,17 @@ fn main() -> ExitCode {
     } => supervise(data, logs, bin_dir, compact_every),
     #[cfg(windows)]
     Command::Install {
+      machine,
       root,
       data,
       logs,
       keep,
     } => install(&install::Options {
+      scope: if machine {
+        install::Scope::Machine
+      } else {
+        install::Scope::User
+      },
       root,
       data,
       logs,
@@ -155,18 +168,25 @@ fn install(options: &install::Options) -> ExitCode {
   eprintln!("installing; waiting for the new capture to be healthy");
   match install::install(options) {
     Ok(done) => {
+      let kind = match done.scope {
+        install::Scope::User => "user install (a logon task)",
+        install::Scope::Machine => "machine install (a service)",
+      };
       match &done.replaced {
-        Some(install::Installed::Task(_)) => eprintln!("upgraded"),
+        None => eprintln!("installed: {kind}"),
         Some(install::Installed::Legacy(_)) => {
-          eprintln!("took over from the PowerShell install")
+          eprintln!("took over from the PowerShell install: {kind}")
         }
-        None => eprintln!("installed"),
+        Some(replaced) if replaced.scope() == done.scope => {
+          eprintln!("upgraded: {kind}")
+        }
+        Some(_) => eprintln!("switched to a {kind}"),
       }
       eprintln!("  build    {}", done.build.display());
       eprintln!("  data     {}", done.paths.data.display());
       eprintln!("  logs     {}", done.paths.logs.display());
       eprintln!("  capture  {} (healthy)", done.capture);
-      eprintln!("starts at logon; `dgg-logger status --watch` to see it");
+      eprintln!("`dgg-logger status --watch` to see it");
       for build in done.left {
         eprintln!("still in use, left for next time: {}", build.display());
       }
