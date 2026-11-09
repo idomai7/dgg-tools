@@ -150,7 +150,9 @@ The layout is flat: each crate is a direct child of the root.
 - **Workspace restructure:** done.
   - The dgg probe is at `dgg-api/examples/probe.rs`.
   - `viewer` is a placeholder stub.
-- **`dgg-api`:** a minimal chat client (reconnect with backoff, PING/PONG, idle timeout). The typed events and assets are still to do.
+- **`dgg-api`:** the chat client (reconnect with backoff, PING/PONG, idle timeout, sending raw frames), behind feature `client`; decoding events and encoding commands, behind `protocol`. Assets are still to do.
+  - Events seen in a capture (2026-11-09) are typed from it; the rest from chat-gui's handlers (github.com/destinygg/chat-gui), as are the commands.
+  - Logging in: a destiny.gg login key (Profile > Developer > Connections), sent as the cookie `authtoken=<key>`. Tried 2026-11-09 with `examples/send.rs`: `ME` named the user, and a public `MSG` echoed back. Whispers are untried.
 - **`logger-journal`:** live files, plus a writer and a reader. The `.zst` archives and manifests come with `compact`.
 - **`logger capture`:** done, including local handoff.
 - **`logger index`:** done for live files, one-shot or `--follow` (polls every `--interval` seconds, default 1; prints a summary every `--report` seconds, default 60).

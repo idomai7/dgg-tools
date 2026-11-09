@@ -622,8 +622,8 @@ pub enum Event {
   Unspotlight(Unspotlight),
   /// Spotlights still showing, sent on connecting (seen, empty).
   Spotlights(Vec<Spotlight>),
-  /// This connection's user, sent first; `None` when not logged in (seen).
-  /// From chat-gui otherwise.
+  /// This connection's user, sent first; `None` when not logged in. Seen
+  /// both ways (logged in with a login key, 2026-11-09).
   Me(Option<User>),
   UsersDelta(UsersDelta),
   /// Clients should reload. From chat-gui, which reads nothing from it.

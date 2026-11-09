@@ -6,6 +6,10 @@
 //! a command directly: it takes effect as the event everyone gets (`MUTE`,
 //! `PIN`, ...), or fails as an `ERR` to the sender. Only a whisper is
 //! acknowledged, with `PRIVMSGSENT`.
+//!
+//! Tried against chat (2026-11-09, logged in with a login key): `MSG`,
+//! which came back as the sender's own `MSG`. The rest are as chat-gui
+//! sends them, not yet tried.
 
 use {
   ::serde_json::{Value, json},
