@@ -39,6 +39,8 @@ The layout is flat: each crate is a direct child of the root.
    - bans, with their reasons (*chat*: `BAN`/`MUTE`);
    - pinned messages (*chat*: `PIN`);
    - emotes: which are popular, each user's emotes and how often they use them, and rare emotes (*chat*: `MSG` text against the emote list);
+    - Halloween and other special-event emotes are counted separately from the regular set. That means keeping a history of the emote list, so it's known which emotes existed when.
+    - Greentext (`>` lines) and orangetext are told apart from each other and from emotes.
    - user activity times (*chat*: `MSG`/`JOIN`/`QUIT`);
    - user subscription statuses (*chat*: `MSG`/`NAMES` carry `subscription` and `features`);
    - TTS messages (*probe*; may arrive as chat events);
