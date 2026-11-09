@@ -1,7 +1,7 @@
 use {
   ::journal::{Writer, record::v1::Body},
   ::logger::{
-    gaps::{Gap, coverage, format_duration, format_utc},
+    gaps::{Gap, coverage, format_duration, format_utc, unfetched},
     index::{index, open},
   },
   ::std::{
@@ -133,14 +133,15 @@ fn fetched_spans_fill_gaps() {
   a.write(8000, 3, Body::Open("wss://x".into())).unwrap();
   drop(a);
   // Two touching spans cover 2000..5000; 6000..8000 is only half fetched.
-  let mut backfill = Writer::new(&journal, "backfill-x");
+  // Read from the backfill directory.
+  let mut backfill = Writer::backfill(&journal, "backfill-x");
   for (from, to) in [(1900, 3000), (3000, 5100), (7000, 8100)] {
     let range = Body::FetchRange {
       source: "rustlesearch".into(),
       from,
       to,
     };
-    backfill.write(9000, 1, range).unwrap();
+    backfill.write_on(from, 9000, 1, range).unwrap();
   }
   drop(backfill);
 
@@ -155,4 +156,43 @@ fn fetched_spans_fill_gaps() {
     summary,
     [(2000, 5000, true, true), (6000, 8000, false, false)]
   );
+}
+
+#[test]
+fn unfetched_ranges_resume_a_history_import() {
+  let root = TempRoot::new();
+  let journal = root.0.join("journal");
+  let mut backfill = Writer::backfill(&journal, "backfill-x");
+  let spans = [
+    ("linkers", 2000, 3000),
+    ("linkers", 3000, 4000),
+    ("linkers", 6000, 7000),
+    ("rustlesearch", 4000, 6000),
+  ];
+  for (source, from, to) in spans {
+    let range = Body::FetchRange {
+      source: source.into(),
+      from,
+      to,
+    };
+    backfill.write_on(from, 9000, 1, range).unwrap();
+  }
+  drop(backfill);
+
+  let mut db = open(&root.0.join("index.sqlite")).unwrap();
+  index(&mut db, &journal).unwrap();
+  // Only this source's spans count; what's left comes newest first.
+  assert_eq!(
+    unfetched(&db, "linkers", 1000, 8000).unwrap(),
+    [(7000, 8000), (4000, 6000), (1000, 2000)]
+  );
+  assert_eq!(
+    unfetched(&db, "linkers", 2500, 3500).unwrap(),
+    Vec::<(i64, i64)>::new()
+  );
+  assert_eq!(
+    unfetched(&db, "linkers", 3500, 6500).unwrap(),
+    [(4000, 6000)]
+  );
+  assert_eq!(unfetched(&db, "other", 0, 10).unwrap(), [(0, 10)]);
 }

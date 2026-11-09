@@ -85,6 +85,7 @@ pub fn parse(body: &str) -> Result<Page, String> {
         .ok_or(format!("bad ts {timestamp:?}"))?,
       nick: field("username")?.into(),
       text: field("text")?.into(),
+      origin: None,
     });
   }
   Ok(Page {

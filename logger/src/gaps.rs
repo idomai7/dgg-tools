@@ -102,7 +102,7 @@ pub fn coverage(db: &Connection) -> ::rusqlite::Result<Option<Coverage>> {
     coverage.last = coverage.last.max(ended);
   }
   if let Some(coverage) = coverage.as_mut() {
-    let fetched = fetched_spans(db)?;
+    let fetched = fetched_spans(db, None)?;
     for gap in &mut coverage.gaps {
       gap.backfilled = fetched
         .iter()
@@ -117,14 +117,50 @@ pub fn coverage(db: &Connection) -> ::rusqlite::Result<Option<Coverage>> {
   Ok(coverage)
 }
 
-/// Every source's fetched spans, merged where they touch or overlap, oldest
-/// first.
-fn fetched_spans(db: &Connection) -> ::rusqlite::Result<Vec<(i64, i64)>> {
+/// The parts of `[from, to)` that `source` hasn't fetched yet, newest first:
+/// what's left to do of a history import, however often it was stopped.
+pub fn unfetched(
+  db: &Connection,
+  source: &str,
+  from: i64,
+  to: i64,
+) -> ::rusqlite::Result<Vec<(i64, i64)>> {
+  let mut left = Vec::new();
+  let mut start = from;
+  for (span_start, span_end) in fetched_spans(db, Some(source))? {
+    if span_end <= start {
+      continue;
+    }
+    if span_start >= to {
+      break;
+    }
+    if span_start > start {
+      left.push((start, span_start));
+    }
+    start = start.max(span_end);
+  }
+  if start < to {
+    left.push((start, to));
+  }
+  left.reverse();
+  Ok(left)
+}
+
+/// The fetched spans of `source`, or of every source, merged where they
+/// touch or overlap, oldest first.
+fn fetched_spans(
+  db: &Connection,
+  source: Option<&str>,
+) -> ::rusqlite::Result<Vec<(i64, i64)>> {
   let mut query = db.prepare(
-    "SELECT start_time, end_time FROM fetch_ranges ORDER BY start_time",
+    "SELECT start_time, end_time FROM fetch_ranges
+      WHERE ?1 IS NULL OR source = ?1
+      ORDER BY start_time",
   )?;
   let mut merged: Vec<(i64, i64)> = Vec::new();
-  for span in query.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))? {
+  let spans =
+    query.query_map([source], |row| Ok((row.get(0)?, row.get(1)?)))?;
+  for span in spans {
     let (start, end) = span?;
     match merged.last_mut() {
       Some(last) if start <= last.1 => last.1 = last.1.max(end),

@@ -27,7 +27,9 @@
 
 use {
   ::journal::{
-    ReadError, Reader, Record, archive, layout::live_files, record::v1::Body,
+    ReadError, Reader, Record, archive,
+    layout::{backfill_files, live_files},
+    record::v1::Body,
   },
   ::rusqlite::{
     Connection, OptionalExtension, Transaction, TransactionBehavior, params,
@@ -193,7 +195,10 @@ pub fn index(db: &mut Connection, journal_root: &Path) -> Result<Stats, Error> {
     relative.to_string_lossy().replace('\\', "/")
   };
   let mut live = Vec::new();
-  for file in live_files(journal_root)? {
+  let files = live_files(journal_root)?
+    .into_iter()
+    .chain(backfill_files(journal_root)?);
+  for file in files {
     let path = relative(&file);
     let (offset, _) = checkpoint(db, &path)?;
     live.push(path.clone());

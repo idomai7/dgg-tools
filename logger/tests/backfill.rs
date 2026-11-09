@@ -1,15 +1,12 @@
 use {
   ::journal::{
     Reader, Record,
-    layout::live_files,
+    layout::{backfill_files, live_files},
     record::v1::{self, Body},
   },
-  ::logger::{
-    backfill::{
-      Message, Options, Page, Source, linkers, run,
-      rustlesearch::{parse, parse_timestamp, remaining},
-    },
-    gaps::Gap,
+  ::logger::backfill::{
+    Message, Options, Page, Source, linkers, run,
+    rustlesearch::{parse, parse_timestamp, remaining},
   },
   ::std::{
     fs,
@@ -48,6 +45,8 @@ struct Fake {
   messages: Vec<Message>,
   remaining: Option<u64>,
   asked: Mutex<Vec<i64>>,
+  /// Requests left to fail.
+  failing: AtomicU32,
 }
 
 impl Fake {
@@ -62,12 +61,14 @@ impl Fake {
           "n".into()
         },
         text: format!("at {}", i * 100),
+        origin: (i == 30).then(|| "elsewhere".into()),
       })
       .collect();
     Self {
       messages,
       remaining,
       asked: Mutex::new(Vec::new()),
+      failing: AtomicU32::new(0),
     }
   }
 }
@@ -79,6 +80,13 @@ impl Source for Fake {
 
   async fn page(&self, before: i64) -> Result<Page, String> {
     self.asked.lock().unwrap().push(before);
+    if self
+      .failing
+      .try_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_sub(1))
+      .is_ok()
+    {
+      return Err("down".into());
+    }
     let messages: Vec<_> = self
       .messages
       .iter()
@@ -94,30 +102,28 @@ impl Source for Fake {
   }
 }
 
-fn gap(start: i64, end: i64) -> Gap {
-  Gap {
-    start,
-    end,
-    resumed_by: ("a".into(), 1),
-    history_from: None,
-    recovered: 0,
-    backfilled: false,
-  }
+/// A gap's range, widened by 500 ms each side as the bin does.
+fn gap(start: i64, end: i64) -> (i64, i64) {
+  (start - 500, end + 500)
 }
 
 fn options(root: &TempRoot, max_requests: u64) -> Options {
   Options {
     journal_root: root.0.join("journal"),
     instance: "backfill-t".into(),
-    margin: Duration::from_millis(500),
     max_requests,
     reserve: 10,
     delay: Duration::ZERO,
+    retries: 0,
+    report: None,
   }
 }
 
+/// Everything journaled, which must all be in backfill files.
 fn bodies(root: &TempRoot) -> Vec<v1::Body> {
-  live_files(&root.0.join("journal"))
+  let journal = root.0.join("journal");
+  assert!(live_files(&journal).unwrap().is_empty());
+  backfill_files(&journal)
     .unwrap()
     .iter()
     .flat_map(|file| Reader::open(file, 0).unwrap())
@@ -157,6 +163,17 @@ async fn fills_a_gap_page_by_page() {
     .filter(|&t| t != 4200)
     .collect();
   assert_eq!(fetched, wanted);
+  // A relayed message is journaled under its origin.
+  let origins: Vec<_> = bodies
+    .iter()
+    .filter_map(|body| match body {
+      Body::Fetched {
+        source, timestamp, ..
+      } if source != "fake" => Some((source.as_str(), *timestamp)),
+      _ => None,
+    })
+    .collect();
+  assert_eq!(origins, [("elsewhere", 3000)]);
   // The ranges chain from the widened end back to the widened start.
   let ranges: Vec<_> = bodies
     .iter()
@@ -183,6 +200,29 @@ async fn fills_a_gap_page_by_page() {
     *source.asked.lock().unwrap(),
     [5500, 5000, 4500, 4000, 3500, 3000]
   );
+}
+
+#[::tokio::test(start_paused = true)]
+async fn retries_failed_requests() {
+  let root = TempRoot::new();
+  let source = Fake::new(None);
+  source.failing.store(2, Ordering::Relaxed);
+  let mut options = options(&root, 50);
+  options.retries = 2;
+  options.delay = Duration::from_millis(1);
+  // Waits 1 s then 2 s, which paused time skips.
+  let stats = run(&source, &[gap(3000, 5000)], &options).await.unwrap();
+  assert_eq!((stats.retried, stats.filled, stats.stopped), (2, 1, None));
+  assert_eq!(stats.messages, 29);
+
+  // One failure too many gives up.
+  let root = TempRoot::new();
+  source.failing.store(3, Ordering::Relaxed);
+  let mut options = self::options(&root, 50);
+  options.retries = 2;
+  let stats = run(&source, &[gap(3000, 5000)], &options).await.unwrap();
+  assert_eq!((stats.retried, stats.filled), (2, 0));
+  assert!(stats.stopped.unwrap().contains("down"));
 }
 
 #[::tokio::test]
@@ -245,11 +285,13 @@ fn parses_rustlesearch_responses() {
         timestamp: 1_794_156_888_711,
         nick: "superblanks".into(),
         text: "TINYING".into(),
+        origin: None,
       },
       Message {
         timestamp: 1_451_692_683_000,
         nick: "old".into(),
         text: "hi  there".into(),
+        origin: None,
       },
     ]
   );
@@ -358,6 +400,31 @@ fn parses_linkers_responses() {
   let page = linkers::parse(&body(mixed), 3).unwrap();
   assert!(page.exhausted);
   assert_eq!(listed(&page), [(at(60), "Spr1ggs 4".into())]);
+
+  // Relayed archive rows are tagged with where they came from.
+  let mut relayed = item(7, "2025-12-20T12:00:56.123Z", "hesperus", "MSG");
+  relayed["id"] = "a274480534".into();
+  relayed["source"] = "rustlesearch".into();
+  let mut old = item(8, "2019-02-28T23:59:56.000Z", "gorto", "MSG");
+  old["source"] = "overrustle".into();
+  let mut own = items[0].clone();
+  own["source"] = "linkers".into();
+  let page = linkers::parse(&body(vec![own, relayed, old.clone()]), 5).unwrap();
+  let origins: Vec<_> = page
+    .messages
+    .iter()
+    .map(|message| (message.timestamp % 1000, message.origin.as_deref()))
+    .collect();
+  assert_eq!(
+    origins,
+    [
+      (0, None),
+      (123, Some("linkers-rustlesearch")),
+      (0, Some("linkers-overrustle")),
+    ]
+  );
+  old["source"] = "two words".into();
+  assert!(linkers::parse(&body(vec![old]), 5).is_err());
 
   assert!(linkers::parse(r#"{"error":"Failed"}"#, 5).is_err());
   assert!(linkers::parse("<html>", 5).is_err());

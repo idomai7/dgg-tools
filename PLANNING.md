@@ -57,6 +57,7 @@ The layout is flat: each crate is a direct child of the root.
   - `data/journal/live/YYYY-MM-DD/<instance>.journal`: one file per capture instance per day. These are the hot files.
   - `data/journal/archive/YYYY/MM/YYYY-MM-DD.journal.zst` plus a `manifest.json` per month. These are cold.
   - `data/journal/control/<instance>.status`: heartbeats (`capture-status 1.0`; see `logger/src/control.rs`).
+  - `data/journal/backfill/YYYY-MM-DD/<instance>.journal`: what was fetched from other archives, one file per backfill run per day. It's filed by the day of the messages inside, not when they were fetched. Nothing here is canonical, so it never mixes with `live/` or `archive/`.
   - Hot paths only ever list `live/`.
 - **Days:** UTC.
 - **Line format:** explicit and hand-written, with no serde. The spec lives in the `journal` crate: each major version has its own module (`journal/src/record/v1.rs`) holding its structure, encoding and decoding, so several formats can coexist in the library.
@@ -106,14 +107,20 @@ The layout is flat: each crate is a direct child of the root.
   - **Second source, `--source linkers`:** linkers.ooo (`GET https://linkers.ooo/api/messages?messageType=MSG&endTime=<ISO>&limit=500`).
     - It returns `{messages: [{id, timestamp, user, message, message_type, user_flairs, subscription_tier, ...}], total, totalCapped, limit, offset}`, newest first, up to 500 a page. `endTime` is inclusive.
     - Timestamps and `endTime` are truncated to the second. Nicks keep their case, and newlines become spaces. A full page leaves its oldest second for the next page, so no second is ever split.
-    - Its own log starts 2026-01-06. `sources=all` adds a static copy of the rustle archive that ends at that date (with millisecond timestamps), so it doesn't get around rustlesearch's limit for recent gaps.
+    - Its own log starts 2026-01-06. Requests use `sources=all`, which adds a static copy of the rustle archive that ends at that date, so it doesn't get around rustlesearch's limit for recent gaps.
+    - Rows from that copy have an `a<id>` and a `source` of `rustlesearch` (millisecond timestamps) or `overrustle` (whole seconds). They're journaled as `linkers-rustlesearch` and `linkers-overrustle`, so every message records which archive it really came from. Any other `source` becomes `linkers-<source>`.
     - **Rate limit:** 60 requests per minute per IP (`X-RateLimit-Remaining`). A logged-in `lk_session` cookie (`--linkers-session` / `LINKERS_SESSION`, valid 7 days) removes the limit.
     - Also logs `BAN`, `MUTE`, `SUBSCRIPTION`, `GIFTSUB`, `MASSGIFT` and `DONATION`, which could feed the archive tools.
     - Tested live: it agreed with a 9-minute native capture on all 266 messages (same second and nick); 5 requests filled a 38-minute gap.
   - **Matching:** a backfilled message matches a native one on timestamp plus case-insensitive nick. A whole-second timestamp is taken as truncated and matches anything from that user within its second.
     - Native rows win, and a backfilled row with a precise timestamp replaces a truncated one.
     - Nick casing comes from native rows, failing that from a source that keeps case.
-  - Journaled as one `fetched` line per message, plus a `fetchrange` per page, in the backfill run's own `live/` file.
+  - Journaled as one `fetched` line per message, plus a `fetchrange` per page, in the run's own `backfill/` files. The index stores them as `source = backfill:<origin>`.
+  - **History import:** `backfill --source linkers --from <date> [--to <date>]` fetches everything in that span that this source has no `fetchrange` for yet, newest first. It's built but never started automatically.
+    - Defaults: 10 s between requests, which pulls linkers.ooo's whole archive (about 550,000 pages) in about two months. No request cap, 20 retries with backoff (doubling up to 15 min), and a progress line every 10 minutes.
+    - Stopping is safe, and re-running resumes from the fetched spans.
+    - Smoke-tested on 20 minutes across linkers.ooo's archive boundary: 3 requests, 1,140 `linkers` and 274 `linkers-rustlesearch` messages. A re-run found nothing left to fetch.
+  - **Not yet:** `compact`, `serve` and `sync` don't handle `backfill/`. Backfill files are re-fetchable, but a long import should be compacted and synced before it grows large.
 - **compact:** merges each closed UTC day (ended over `--grace-hours` ago, default 1) into `archive/YYYY/MM/YYYY-MM-DD.journal.zst`.
   - It merges the day's live files and any existing archive for that day, byte for byte, sorted by receive time.
   - Each distinct line is kept as often as any one input has it: dgg does send identical frames twice in one millisecond.
@@ -140,7 +147,7 @@ The layout is flat: each crate is a direct child of the root.
 - **`logger capture`:** done, including local handoff.
 - **`logger index`:** done for live files, one-shot or `--follow` (polls every `--interval` seconds, default 1; prints a summary every `--report` seconds, default 60).
 - **`logger gaps`:** done. It reports stretches when no connection was open (a connection that never closed ends at its last line), and whether the next connection's `HISTORY` reached back far enough to cover each one.
-- **`logger backfill`:** fetches uncovered gaps from rustlesearch or linkers.ooo into the journal.
+- **`logger backfill`:** fetches uncovered gaps, or with `--from` a span of history, from rustlesearch or linkers.ooo into the journal's `backfill/` directory.
   - It writes one `fetched` line per message and a `fetchrange` per page.
   - It's limited by `--max-requests` (default 50) and stops when the rate limit has fewer than `--reserve` (10) requests left.
   - `--dry-run` lists the gaps it would fetch.
