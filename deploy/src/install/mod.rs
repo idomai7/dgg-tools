@@ -18,8 +18,8 @@
 //!    against the new data directory, and waited on until it's healthy.
 //! 2. What was installed stops. If it shared the data directory, its capture
 //!    hands off to the bridge first.
-//! 3. If the data directory changed, the old data and logs are [moved]
-//!    (moving) in.
+//! 3. If the data directory changed, the old data and logs are
+//!    [moved](moving) in.
 //! 4. The new task or service starts. Its capture, the newest, takes over
 //!    from the bridge, which exits.
 

@@ -10,7 +10,7 @@
 //! - `GET /control`: `now <unix ms>`, a blank line, then every status here,
 //!   each followed by a blank line.
 //! - `GET /manifest`: every live journal file and backfill file, and its
-//!   size ([`manifest`](crate::manifest)).
+//!   size ([`manifest`]).
 //! - `GET /files/live/<day>/<instance>.journal` (or `/files/backfill/live/
 //!   ...`): a file's bytes; with `Range: bytes=<from>-`, from that offset on
 //!   (`206`). Likewise `/files/archive/<YYYY>/<MM>/<day>.journal.zst` (or
