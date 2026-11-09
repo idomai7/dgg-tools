@@ -349,6 +349,88 @@ fn backfill_yields_to_native_messages() {
 }
 
 #[test]
+fn truncated_timestamps_match_within_their_second() {
+  let root = TempRoot::new();
+  let live = |nick: &str, timestamp, data: &str| {
+    frame(format!("MSG {}", message(timestamp, nick, data)))
+  };
+  let fetched =
+    |source: &str, timestamp, nick: &str, text: &str| Body::Fetched {
+      source: source.into(),
+      timestamp,
+      nick: nick.into(),
+      text: text.into(),
+    };
+  let mut a = Writer::new(root.journal(), "a");
+  a.write(100, 1, Body::Open("wss://x".into())).unwrap();
+  a.write(101, 1, live("Alice", 5_250, "one\ntwo")).unwrap();
+  drop(a);
+  let mut linkers = Writer::new(root.journal(), "backfill-l");
+  // Alice's message truncated to its second: skipped.
+  linkers
+    .write(900, 1, fetched("linkers", 5_000, "Alice", "one two"))
+    .unwrap();
+  // The second before it doesn't match.
+  linkers
+    .write(900, 1, fetched("linkers", 4_000, "Alice", "earlier"))
+    .unwrap();
+  linkers
+    .write(900, 1, fetched("linkers", 7_000, "Bob", "bob says"))
+    .unwrap();
+  linkers
+    .write(900, 1, fetched("linkers", 8_000, "Carol", "hi"))
+    .unwrap();
+  drop(linkers);
+
+  let mut db = open(&root.database()).unwrap();
+  let stats = index(&mut db, &root.journal()).unwrap();
+  assert_eq!((stats.messages, stats.backfilled), (4, 3));
+
+  // rustlesearch's precise copy of Bob's replaces linkers', taking the
+  // casing linkers had; a native copy of Carol's replaces hers. Named to
+  // sort first, so a rebuild indexes these in the other order.
+  let mut rustle = Writer::new(root.journal(), "backfill-0");
+  rustle
+    .write(950, 1, fetched("rustlesearch", 7_420, "bob", "bob says"))
+    .unwrap();
+  rustle
+    .write(950, 1, fetched("rustlesearch", 6_500, "bob", "first"))
+    .unwrap();
+  drop(rustle);
+  let mut b = Writer::new(root.journal(), "b");
+  b.write(1000, 1, Body::Open("wss://x".into())).unwrap();
+  b.write(1001, 1, live("Carol", 8_999, "hi")).unwrap();
+  drop(b);
+  index(&mut db, &root.journal()).unwrap();
+  let rows: Vec<(i64, String, String)> = messages(&db)
+    .into_iter()
+    .map(|(timestamp, nick, _, _, source)| (timestamp, nick, source))
+    .collect();
+  assert_eq!(
+    rows,
+    [
+      (4_000, "Alice".into(), "backfill:linkers".into()),
+      (5_250, "Alice".into(), "live".into()),
+      (6_500, "Bob".into(), "backfill:rustlesearch".into()),
+      (7_420, "Bob".into(), "backfill:rustlesearch".into()),
+      (8_999, "Carol".into(), "live".into()),
+    ]
+  );
+  let says = count(
+    &db,
+    "SELECT count(*) FROM messages_fts WHERE messages_fts MATCH 'says'",
+  );
+  assert_eq!(says, 1);
+
+  // Rebuilding agrees.
+  let incremental = messages(&db);
+  drop(db);
+  let mut db = rebuild(&root.database()).unwrap();
+  index(&mut db, &root.journal()).unwrap();
+  assert_eq!(messages(&db), incremental);
+}
+
+#[test]
 fn follows_files_into_archives() {
   use ::logger::compact::compact_day;
   let root = TempRoot::new();

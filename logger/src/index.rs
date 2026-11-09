@@ -17,10 +17,13 @@
 //!
 //! Backfilled (`fetched`) messages have lowercased nicks and may have their
 //! text altered (rustlesearch turns newlines into spaces), so they match on
-//! timestamp and lowercased nick instead. Native messages win: a backfilled
-//! one is skipped if a native one is already there, and replaced when one
-//! arrives. Its nick takes the capitalisation of the same user's native
-//! messages, whenever those are indexed.
+//! timestamp and lowercased nick instead. A whole-second timestamp is taken
+//! to be truncated (linkers.ooo, old rustle logs) and matches anything from
+//! that user within its second. Native messages win: a backfilled one is
+//! skipped if a native one is already there, and replaced when one arrives.
+//! Likewise a backfilled message with a precise timestamp replaces a
+//! truncated one. Its nick takes the capitalisation of the same user's
+//! native messages, whenever those are indexed.
 
 use {
   ::journal::{
@@ -485,7 +488,8 @@ fn message(
 }
 
 /// Indexes one backfilled message, unless a message from the same user at
-/// the same time is already there.
+/// the same time is already there. A whole-second timestamp is taken to be
+/// truncated, so it matches anything from that user within its second.
 fn fetched(
   db: &Transaction,
   line: &Line,
@@ -495,16 +499,10 @@ fn fetched(
   text: &str,
   stats: &mut Stats,
 ) -> Result<(), Error> {
-  let exists: bool = db.query_row(
-    "SELECT EXISTS (SELECT 1 FROM messages
-      WHERE timestamp = ?1 AND lower(nick) = lower(?2))",
-    params![timestamp, nick],
-    |row| row.get(0),
-  )?;
-  if exists {
-    return Ok(());
-  }
-  let cased: Option<String> = db
+  // Native casing first; failing that, a source that keeps case. This
+  // happens even for a message that's skipped, so the result doesn't
+  // depend on the order sources are indexed in.
+  let mut cased: Option<String> = db
     .query_row(
       "SELECT nick FROM messages
         WHERE lower(nick) = lower(?1) AND source NOT LIKE 'backfill:%'
@@ -513,6 +511,41 @@ fn fetched(
       |row| row.get(0),
     )
     .optional()?;
+  if cased.is_none() && nick == nick.to_lowercase() {
+    cased = db
+      .query_row(
+        "SELECT nick FROM messages
+          WHERE lower(nick) = lower(?1) AND nick <> lower(nick)
+          LIMIT 1",
+        [nick],
+        |row| row.get(0),
+      )
+      .optional()?;
+  } else if cased.is_none() {
+    // Re-case this user's lowercased backfilled messages.
+    db.execute(
+      "UPDATE messages SET nick = ?1
+        WHERE lower(nick) = lower(?1) AND nick = lower(nick)
+          AND source LIKE 'backfill:%'",
+      [nick],
+    )?;
+  }
+  let end = if whole_second(timestamp) {
+    timestamp + 1000
+  } else {
+    timestamp + 1
+  };
+  let exists: bool = db.query_row(
+    "SELECT EXISTS (SELECT 1 FROM messages
+      WHERE timestamp >= ?1 AND timestamp < ?2 AND lower(nick) = lower(?3))",
+    params![timestamp, end, nick],
+    |row| row.get(0),
+  )?;
+  if exists {
+    return Ok(());
+  }
+  // A precise timestamp supersedes a truncated one.
+  remove_backfilled(db, timestamp, nick)?;
   let nick = cased.as_deref().unwrap_or(nick);
   let source = format!("backfill:{source}");
   if insert(db, timestamp, nick, text, "[]", line.received, &source)? {
@@ -548,8 +581,15 @@ fn insert(
   Ok(inserted == 1)
 }
 
-/// Removes backfilled messages a native one at `timestamp` from `nick`
-/// supersedes, with their full-text entries.
+/// Whether `timestamp` (unix ms) falls on a whole second, as truncated
+/// timestamps from some sources do.
+fn whole_second(timestamp: i64) -> bool {
+  timestamp.rem_euclid(1000) == 0
+}
+
+/// Removes backfilled messages that a message at `timestamp` from `nick`
+/// supersedes: those at exactly that time, and those truncated to its
+/// second. Their full-text entries go too.
 fn remove_backfilled(
   db: &Transaction,
   timestamp: i64,
@@ -557,11 +597,12 @@ fn remove_backfilled(
 ) -> Result<(), Error> {
   let mut query = db.prepare_cached(
     "SELECT id, data FROM messages
-      WHERE timestamp = ?1 AND lower(nick) = lower(?2)
+      WHERE timestamp IN (?1, ?2) AND lower(nick) = lower(?3)
         AND source LIKE 'backfill:%'",
   )?;
+  let second = timestamp - timestamp.rem_euclid(1000);
   let superseded: Vec<(i64, String)> = query
-    .query_map(params![timestamp, nick], |row| {
+    .query_map(params![timestamp, second, nick], |row| {
       Ok((row.get(0)?, row.get(1)?))
     })?
     .collect::<Result<_, _>>()?;
