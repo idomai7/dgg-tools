@@ -53,6 +53,10 @@ required-features = ["protocol"]
 name = "send"
 required-features = ["client", "protocol"]
 
+[[example]]
+name = "fetch_assets"
+required-features = ["http"]
+
 [[test]]
 name = "client"
 required-features = ["client"]
