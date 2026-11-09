@@ -160,5 +160,10 @@ If a shell capture is running when you install, the task's capture takes
 over from it and the shell one exits on its own. Stop the shell index
 yourself. `uninstall.ps1` removes the tasks and keeps the data.
 
-Don't use `-Scope Machine` yet: it currently lets your account change
-programs that run as SYSTEM (see the security review).
+`-Scope Machine` (from an administrator PowerShell) runs the tasks as
+SYSTEM from startup instead, whether or not anyone is logged on, in
+`C:\ProgramData\dgg-tools`. That folder is then writable only by
+Administrators and SYSTEM, because anyone who could change it could run code
+as SYSTEM. Your account can still read the data and logs, but running
+`backfill`, `gaps` or `index` by hand against it needs an administrator
+shell.
