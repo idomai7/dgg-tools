@@ -96,8 +96,18 @@ the last second, and the journal reader skips a half-written last line.
 powershell -ExecutionPolicy Bypass -File deploy\windows\status.ps1
 ```
 
-It shows the running programs and each capture's status file (the log
-section stays empty for shell runs; their output is in the windows).
+It shows the scheduled tasks, the running programs, each capture's health
+(healthy, connecting, or stale when its heartbeat stopped), the journal
+(today's files and when they were last written, days waiting for compact,
+archives, backfill), the index, free disk space and the end of the logs.
+The log section stays empty for shell runs; their output is in the
+windows.
+
+Add `-Watch` to keep it open: it redraws every 2 seconds (`-Interval` to
+change), shows how fast today's journal is growing, and fills the rest of
+the window with a log. Keys: `1` `2` `3` show the capture, index or compact
+log, `r` redraws, `e` opens the data folder, `n` opens the log in Notepad,
+`q` quits.
 
 ### Upgrading without missing messages
 
