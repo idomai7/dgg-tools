@@ -22,6 +22,7 @@ rustls = { version = "0.23.46", default-features = false, features = ["ring", "s
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 sha2 = "0.11.1"
+sysinfo = { version = "0.40.1", default-features = false, features = ["system"] }
 tokio = { version = "1.54.1", features = ["full"] }
 tokio-tungstenite = { version = "0.30.0", features = ["rustls-tls-native-roots"] }
 zstd = "0.14.3"
