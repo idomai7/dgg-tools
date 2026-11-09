@@ -1,11 +1,11 @@
 //! dgg chat: its socket, at [`DEFAULT_URL`], and the [events](event) it
 //! sends.
 
-#[cfg(feature = "chat")]
+#[cfg(feature = "client")]
 pub mod client;
 pub mod event;
 
-#[cfg(feature = "chat")]
+#[cfg(feature = "client")]
 pub use client::{Client, Frame, Item, Options};
 pub use event::Event;
 
