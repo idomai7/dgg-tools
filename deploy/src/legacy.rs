@@ -151,7 +151,7 @@ fn delete_task(folder: &str, name: &str) -> io::Result<()> {
 /// Step 1: stops the old index and compaction and removes their tasks.
 pub fn stop_index(legacy: &Legacy) -> io::Result<()> {
   let bin = legacy.root.join("bin");
-  // Builds from before the rename, and after (install.ps1 kept working).
+  // Builds from before the rename, and after.
   let names = ["index", "compact", "dgg-index", "dgg-compact"];
   delete_task(&legacy.folder, "index")?;
   delete_task(&legacy.folder, "compact")?;
