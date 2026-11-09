@@ -79,3 +79,36 @@ fn successors() {
   // Its own status is never its successor.
   assert_eq!(pick(::std::slice::from_ref(&me)), None);
 }
+
+#[cfg(windows)]
+#[test]
+fn remove_waits_out_a_reader_that_blocks_deletion() {
+  use {
+    ::logger::control,
+    ::std::{fs, os::windows::fs::OpenOptionsExt, thread},
+  };
+
+  let dir = ::std::env::temp_dir()
+    .join(format!("logger-control-remove-{}", ::std::process::id()));
+  let _ = fs::remove_dir_all(&dir);
+  control::write(&dir, &status("a", 5, None)).unwrap();
+  let path = control::path(&dir, "a");
+  // Open with no sharing, as a virus scanner might: deleting fails until
+  // it's closed.
+  let held = fs::OpenOptions::new()
+    .read(true)
+    .share_mode(0)
+    .open(&path)
+    .unwrap();
+  assert!(fs::remove_file(&path).is_err());
+  let reader = thread::spawn(move || {
+    thread::sleep(Duration::from_millis(300));
+    drop(held);
+  });
+  control::remove(&dir, "a").unwrap();
+  reader.join().unwrap();
+  assert!(!path.exists());
+  // Already gone is fine.
+  control::remove(&dir, "a").unwrap();
+  fs::remove_dir_all(&dir).unwrap();
+}

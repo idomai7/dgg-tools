@@ -30,7 +30,8 @@ use {
   ::std::{
     fs, io,
     path::{Path, PathBuf},
-    time::Duration,
+    thread,
+    time::{Duration, Instant},
   },
 };
 
@@ -156,11 +157,20 @@ pub fn write(dir: &Path, status: &Status) -> io::Result<()> {
   fs::rename(temporary, path)
 }
 
-/// Deletes an instance's status file, if it exists.
+/// Deletes an instance's status file, if it exists. Windows refuses while
+/// something has the file open without allowing deletion (a virus scanner
+/// or the search indexer, say), so a failure is retried for up to two
+/// seconds; a status left behind would show as a stale capture.
 pub fn remove(dir: &Path, instance: &str) -> io::Result<()> {
-  match fs::remove_file(path(dir, instance)) {
-    Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
-    _ => Ok(()),
+  let path = path(dir, instance);
+  let until = Instant::now() + Duration::from_secs(2);
+  loop {
+    match fs::remove_file(&path) {
+      Ok(()) => return Ok(()),
+      Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
+      Err(e) if Instant::now() >= until => return Err(e),
+      Err(_) => thread::sleep(Duration::from_millis(50)),
+    }
   }
 }
 
