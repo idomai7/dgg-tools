@@ -1204,7 +1204,6 @@ dependencies = [
  "sha2",
  "tokio",
  "tokio-tungstenite",
- "version-info",
  "zstd",
 ]
 
