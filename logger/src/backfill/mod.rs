@@ -8,6 +8,7 @@
 //! `fetchrange` line, in this run's own journal file. Matching them against
 //! what was captured natively is left to the index.
 
+pub mod linkers;
 pub mod rustlesearch;
 
 use {

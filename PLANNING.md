@@ -93,7 +93,7 @@ The layout is flat: each crate is a direct child of the root.
     2. On the new host, start `capture --peer` and `sync --follow`, then run `index`.
     3. When the old capture has retired, run a final `sync`.
   - Tested live: a byte-identical copy, and 0 gaps in the new host's index across both instances.
-- **backfill:** fills gaps that `HISTORY` didn't cover, from rustlesearch.dev. overrustlelogs.net is gone: the domain no longer resolves (checked 2026-11-08).
+- **backfill:** fills gaps that `HISTORY` didn't cover, from rustlesearch.dev (default) or linkers.ooo. overrustlelogs.net is gone: the domain no longer resolves (checked 2026-11-08).
   - **API:** `GET https://api-v2.rustlesearch.dev/anon/search?channel=Destinygg&search_after=<ms>`, with optional `start_date`/`end_date` (YYYY-MM-DD), `username` and `text`.
     - It returns `{data: {messages: [{channel, text, ts, username, searchAfter}]}}`: 100 per page, newest first. `searchAfter` is the ms cursor for the next, older page.
     - Found via github.com/Fritz-02/rustlesearch-exporter.
@@ -103,7 +103,16 @@ The layout is flat: each crate is a direct child of the root.
     - There are no flairs or roles.
   - **Freshness and depth:** it runs about 5 s behind live, and goes back to at least 2016.
   - **Rate limit:** 200 requests per day (`Ratelimit-Policy: 200;w=86400`).
-  - **Matching:** a backfilled message matches a native one on exact timestamp plus case-insensitive nick. Native rows win.
+  - **Second source, `--source linkers`:** linkers.ooo (`GET https://linkers.ooo/api/messages?messageType=MSG&endTime=<ISO>&limit=500`).
+    - It returns `{messages: [{id, timestamp, user, message, message_type, user_flairs, subscription_tier, ...}], total, totalCapped, limit, offset}`, newest first, up to 500 a page. `endTime` is inclusive.
+    - Timestamps and `endTime` are truncated to the second. Nicks keep their case, and newlines become spaces. A full page leaves its oldest second for the next page, so no second is ever split.
+    - Its own log starts 2026-01-06. `sources=all` adds a static copy of the rustle archive that ends at that date (with millisecond timestamps), so it doesn't get around rustlesearch's limit for recent gaps.
+    - **Rate limit:** 60 requests per minute per IP (`X-RateLimit-Remaining`). A logged-in `lk_session` cookie (`--linkers-session` / `LINKERS_SESSION`, valid 7 days) removes the limit.
+    - Also logs `BAN`, `MUTE`, `SUBSCRIPTION`, `GIFTSUB`, `MASSGIFT` and `DONATION`, which could feed the archive tools.
+    - Tested live: it agreed with a 9-minute native capture on all 266 messages (same second and nick); 5 requests filled a 38-minute gap.
+  - **Matching:** a backfilled message matches a native one on timestamp plus case-insensitive nick. A whole-second timestamp is taken as truncated and matches anything from that user within its second.
+    - Native rows win, and a backfilled row with a precise timestamp replaces a truncated one.
+    - Nick casing comes from native rows, failing that from a source that keeps case.
   - Journaled as one `fetched` line per message, plus a `fetchrange` per page, in the backfill run's own `live/` file.
 - **compact:** merges each closed UTC day (ended over `--grace-hours` ago, default 1) into `archive/YYYY/MM/YYYY-MM-DD.journal.zst`.
   - It merges the day's live files and any existing archive for that day, byte for byte, sorted by receive time.
@@ -131,7 +140,7 @@ The layout is flat: each crate is a direct child of the root.
 - **`logger capture`:** done, including local handoff.
 - **`logger index`:** done for live files, one-shot or `--follow` (polls every `--interval` seconds, default 1; prints a summary every `--report` seconds, default 60).
 - **`logger gaps`:** done. It reports stretches when no connection was open (a connection that never closed ends at its last line), and whether the next connection's `HISTORY` reached back far enough to cover each one.
-- **`logger backfill`:** fetches uncovered gaps from rustlesearch into the journal.
+- **`logger backfill`:** fetches uncovered gaps from rustlesearch or linkers.ooo into the journal.
   - It writes one `fetched` line per message and a `fetchrange` per page.
   - It's limited by `--max-requests` (default 50) and stops when the rate limit has fewer than `--reserve` (10) requests left.
   - `--dry-run` lists the gaps it would fetch.

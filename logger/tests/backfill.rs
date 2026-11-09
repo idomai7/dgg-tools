@@ -6,7 +6,7 @@ use {
   },
   ::logger::{
     backfill::{
-      Message, Options, Page, Source, run,
+      Message, Options, Page, Source, linkers, run,
       rustlesearch::{parse, parse_timestamp, remaining},
     },
     gaps::Gap,
@@ -283,4 +283,86 @@ fn parses_timestamps_and_rate_limits() {
     Some(191)
   );
   assert_eq!(remaining("limit=200"), None);
+}
+
+#[test]
+fn parses_linkers_responses() {
+  let item = |id, timestamp: &str, user: &str, kind: &str| {
+    ::serde_json::json!({
+      "id": id,
+      "timestamp": timestamp,
+      "user": user,
+      "message": format!("{user} {id}"),
+      "message_type": kind,
+      "channel": "Destinygg",
+      "user_flairs": [],
+    })
+  };
+  let body = |items: Vec<::serde_json::Value>| {
+    ::serde_json::json!({
+      "messages": items,
+      "total": 4,
+      "totalCapped": false,
+      "limit": 4,
+      "offset": 0,
+    })
+    .to_string()
+  };
+  let listed = |page: &Page| -> Vec<(i64, String)> {
+    page
+      .messages
+      .iter()
+      .map(|message| (message.timestamp, message.text.clone()))
+      .collect()
+  };
+  let items = vec![
+    item(4, "2026-11-08T20:05:00.000Z", "Spr1ggs", "MSG"),
+    item(3, "2026-11-08T20:04:59.000Z", "glommer", "MSG"),
+    item(1, "2026-11-08T20:04:57.000Z", "eerie", "MSG"),
+    item(2, "2026-11-08T20:04:57.000Z", "Radiant", "MSG"),
+  ];
+  let at = |seconds: i64| 1_794_168_240_000 + seconds * 1000;
+
+  // A short page is the last; nothing is trimmed.
+  let page = linkers::parse(&body(items.clone()), 5).unwrap();
+  assert!(page.exhausted);
+  assert_eq!(
+    listed(&page),
+    [
+      (at(60), "Spr1ggs 4".into()),
+      (at(59), "glommer 3".into()),
+      (at(57), "eerie 1".into()),
+      (at(57), "Radiant 2".into()),
+    ]
+  );
+  assert_eq!(page.messages[0].nick, "Spr1ggs");
+
+  // A full page leaves its oldest second for the next.
+  let page = linkers::parse(&body(items.clone()), 4).unwrap();
+  assert!(!page.exhausted);
+  assert_eq!(
+    listed(&page),
+    [(at(60), "Spr1ggs 4".into()), (at(59), "glommer 3".into())]
+  );
+
+  // Unless that second is all there is.
+  let same = vec![items[2].clone(), items[3].clone()];
+  let page = linkers::parse(&body(same), 2).unwrap();
+  assert_eq!(page.messages.len(), 2);
+
+  // Other kinds are dropped, but still count toward a full page.
+  let mixed = vec![
+    items[0].clone(),
+    item(9, "2026-11-08T20:04:58.000Z", "Bot", "BAN"),
+  ];
+  let page = linkers::parse(&body(mixed), 3).unwrap();
+  assert!(page.exhausted);
+  assert_eq!(listed(&page), [(at(60), "Spr1ggs 4".into())]);
+
+  assert!(linkers::parse(r#"{"error":"Failed"}"#, 5).is_err());
+  assert!(linkers::parse("<html>", 5).is_err());
+  assert_eq!(
+    linkers::format_timestamp(at(57) + 5),
+    "2026-11-08T20:04:57.005Z"
+  );
 }
