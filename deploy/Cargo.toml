@@ -16,3 +16,6 @@ sysinfo.workspace = true
 
 [build-dependencies]
 version-info.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+win32job.workspace = true

@@ -3,6 +3,7 @@
 //! Windows service, and showing its status.
 
 pub mod legacy;
+pub mod lifeline;
 pub mod log;
 pub mod processes;
 pub mod supervise;

@@ -16,7 +16,7 @@
 //! `reset_after`.
 
 use {
-  crate::log::Log,
+  crate::{lifeline::Lifeline, log::Log},
   ::std::{
     ffi::OsString,
     fs::{self, File, TryLockError},
@@ -165,6 +165,12 @@ pub fn run(config: &Config, stop: &Stop) -> io::Result<Exit> {
 
   // Stops the programs: on request, or once capture hands off.
   let programs = Stop::new();
+  let lifeline = Lifeline::new()?;
+  let context = Context {
+    supervisor: &supervisor,
+    stop: &programs,
+    lifeline: &lifeline,
+  };
   let handed_off = AtomicBool::new(false);
   thread::scope(|scope| {
     let [capture_log, index_log, compact_log] = &logs;
@@ -173,10 +179,9 @@ pub fn run(config: &Config, stop: &Stop) -> io::Result<Exit> {
         &config.capture,
         "capture",
         capture_log,
-        &supervisor,
         &config.backoff,
-        &programs,
         true,
+        &context,
       );
       if ended {
         log_line(&supervisor, "capture handed off; stopping");
@@ -193,10 +198,9 @@ pub fn run(config: &Config, stop: &Stop) -> io::Result<Exit> {
         &config.index,
         "index",
         index_log,
-        &supervisor,
         &config.backoff,
-        &programs,
         false,
+        &context,
       );
     });
     scope.spawn(|| {
@@ -206,13 +210,7 @@ pub fn run(config: &Config, stop: &Stop) -> io::Result<Exit> {
         wait = config.compact_every;
         match try_hold(&lock) {
           Ok(Some(_lock)) => {
-            run_once(
-              &config.compact,
-              "compact",
-              compact_log,
-              &supervisor,
-              &programs,
-            );
+            run_once(&config.compact, "compact", compact_log, &context);
           }
           Ok(None) => {
             log_line(&supervisor, "compact: another supervisor has it");
@@ -269,21 +267,31 @@ fn hold(path: &Path, supervisor: &SharedLog, stop: &Stop) -> Option<File> {
   }
 }
 
+/// What every program run shares: where the supervisor's own lines go, the
+/// stop request, and the lifeline the programs are tied to.
+struct Context<'a> {
+  supervisor: &'a SharedLog,
+  stop: &'a Stop,
+  lifeline: &'a Lifeline,
+}
+
 /// Runs `program` again and again, waiting longer after each quick failure,
-/// until `stop`. With `until_clean`, a clean exit ends it too: then `true`.
+/// until stopped. With `until_clean`, a clean exit ends it too: then `true`.
 fn keep_running(
   program: &Program,
   name: &str,
   log: &SharedLog,
-  supervisor: &SharedLog,
   backoff: &Backoff,
-  stop: &Stop,
   until_clean: bool,
+  context: &Context,
 ) -> bool {
+  let Context {
+    supervisor, stop, ..
+  } = context;
   let mut delay = backoff.first;
   loop {
     let started = Instant::now();
-    let Some(status) = run_once(program, name, log, supervisor, stop) else {
+    let Some(status) = run_once(program, name, log, context) else {
       return false;
     };
     if until_clean && status.is_some_and(|status| status.success()) {
@@ -310,9 +318,13 @@ fn run_once(
   program: &Program,
   name: &str,
   log: &SharedLog,
-  supervisor: &SharedLog,
-  stop: &Stop,
+  context: &Context,
 ) -> Option<Option<ExitStatus>> {
+  let Context {
+    supervisor,
+    stop,
+    lifeline,
+  } = context;
   let mut command = Command::new(&program.path);
   command
     .args(&program.args)
@@ -337,6 +349,10 @@ fn run_once(
     }
   };
   log_line(supervisor, &format!("{name}: started, pid {}", child.id()));
+  if let Err(e) = lifeline.tie(&child) {
+    // It runs anyway; it just might outlive a killed supervisor.
+    log_line(supervisor, &format!("{name}: {e}"));
+  }
   let readers: Vec<_> = [
     child
       .stdout
