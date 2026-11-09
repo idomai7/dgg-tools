@@ -197,3 +197,55 @@ fn draws_the_watch_screen() {
     assert!(screen.contains(expected), "{expected:?} not in\n{screen}");
   }
 }
+
+#[test]
+fn reports_the_peer() {
+  let dir = TempDir::new("peer");
+  let paths = Paths::under(dir.0.clone());
+  let mut watcher = Watcher::new().unwrap();
+  // No peer file: nothing about syncing.
+  let report = watcher.gather(&paths).unwrap();
+  assert_eq!(report.sync, None);
+  assert!(
+    !text(&report)
+      .join(
+        "
+"
+      )
+      .contains("sync")
+  );
+
+  dir.write(
+    "peer.env",
+    "LOGGER_PEER_URL=http://peer:8788
+LOGGER_PEER_TOKEN=secret
+",
+  );
+  let lines = journal_lines(&watcher.gather(&paths).unwrap());
+  assert_eq!(
+    lines.last().unwrap(),
+    "sync from http://peer:8788  last: no round yet"
+  );
+  dir.write(
+    "logs/sync.log",
+    "2026-11-10 12:00:00.000Z 3 files listed, 1 updated, 10 bytes pulled
+",
+  );
+  let all = text(&watcher.gather(&paths).unwrap()).join(
+    "
+",
+  );
+  assert!(
+    all.contains("last: 2026-11-10 12:00:00.000Z 3 files"),
+    "{all}"
+  );
+  assert!(!all.contains("secret"), "{all}");
+  // A broken file says so.
+  dir.write(
+    "peer.env",
+    "LOGGER_PEER_URL=http://peer:8788
+",
+  );
+  let report = watcher.gather(&paths).unwrap();
+  assert!(report.sync.unwrap().peer.is_err());
+}

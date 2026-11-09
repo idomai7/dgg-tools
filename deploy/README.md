@@ -110,12 +110,13 @@ It finds the installed logger and shows:
   stops;
 - the journal: today's files and their last write, days waiting for
   compact, archives, backfill;
-- the index, free disk space, and the ends of the logs.
+- the index, free disk space, the peer it syncs from (and how the last
+  round went), and the ends of the logs.
 
 `--watch` keeps it open, redrawing every 2 seconds (`--interval` to change)
 with how fast today's journal is growing and a log filling the rest of the
-window. Keys: `1`-`4` show the capture, index, compact or supervisor log,
-`r` redraws, `e` opens the data folder, `q` quits.
+window. Keys: `1`-`5` show the capture, index, compact, supervisor or
+sync log, `r` redraws, `e` opens the data folder, `q` quits.
 
 ## Running it in a shell instead
 

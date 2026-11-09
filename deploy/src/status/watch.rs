@@ -1,8 +1,9 @@
 //! `status --watch`: the report redrawn every few seconds, with a log
 //! filling the rest of the screen.
 //!
-//! Keys: `1`-`4` show the capture, index, compact or supervisor log, `r`
-//! redraws now, `e` opens the data folder, `q` (or Esc, or Ctrl-C) quits.
+//! Keys: `1`-`5` show the capture, index, compact, supervisor or sync
+//! log, `r` redraws now, `e` opens the data folder, `q` (or Esc, or
+//! Ctrl-C) quits.
 
 use {
   super::{LOGS, Report, Watcher, format, health, journal_lines, tail},
@@ -22,7 +23,7 @@ use {
   },
 };
 
-const KEYS: &str = " 1 capture  2 index  3 compact  4 supervisor   r redraw  e open data  q quit";
+const KEYS: &str = " 1 capture  2 index  3 compact  4 supervisor  5 sync   r redraw  e open data  q quit";
 
 /// Runs the screen until the user quits.
 pub fn run(paths: &Paths, interval: Duration) -> io::Result<()> {
@@ -64,7 +65,7 @@ fn event_loop(
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
           return Ok(());
         }
-        KeyCode::Char(digit @ '1'..='4') => {
+        KeyCode::Char(digit @ '1'..='5') => {
           log = digit as usize - '1' as usize;
           break;
         }

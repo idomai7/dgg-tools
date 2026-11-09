@@ -1,5 +1,6 @@
 //! What the logger is doing: its programs, each capture's health, the
-//! journal and index, free disk space and the ends of the logs.
+//! journal and index, the peer it syncs from, free disk space and the ends
+//! of the logs.
 //!
 //! [`Watcher::gather`] takes a snapshot ([`Report`]); [`text`] prints one,
 //! and [`watch`] redraws one every few seconds.
@@ -8,7 +9,7 @@ pub mod format;
 pub mod watch;
 
 use {
-  crate::{log::now_ms, paths::Paths, processes},
+  crate::{log::now_ms, paths::Paths, peer, processes},
   ::logger::control,
   ::logger_journal::{
     archive,
@@ -31,7 +32,8 @@ use {
 pub const STALE_MS: i64 = 5000;
 
 /// The logs a supervisor writes, in the order they're offered.
-pub const LOGS: [&str; 4] = ["capture", "index", "compact", "supervisor"];
+pub const LOGS: [&str; 5] =
+  ["capture", "index", "compact", "supervisor", "sync"];
 
 /// One of the logger's processes.
 #[derive(Clone, Debug, PartialEq)]
@@ -119,6 +121,16 @@ pub struct Report {
   pub index: Option<(u64, i64)>,
   /// Free space on the data directory's disk.
   pub free: Option<u64>,
+  pub sync: Option<Sync>,
+}
+
+/// The peer the install syncs from.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Sync {
+  /// Its URL, or why the peer file can't be read.
+  pub peer: Result<String, String>,
+  /// The last line of `sync.log`: how the last round went.
+  pub last: Option<String>,
 }
 
 /// Takes snapshots, remembering what it needs from the last one (CPU use,
@@ -174,6 +186,7 @@ impl Watcher {
         .ok()
         .and_then(|metadata| Some((metadata.len(), modified_ms(&metadata)?))),
       free: free_space(&paths.data),
+      sync: sync(paths),
     })
   }
 
@@ -253,6 +266,19 @@ impl Watcher {
     self.previous = Some((today, now, bytes));
     Ok(journal)
   }
+}
+
+/// The peer, if there's a peer file.
+fn sync(paths: &Paths) -> Option<Sync> {
+  let peer = match peer::read(&paths.peer_file()) {
+    Ok(None) => return None,
+    Ok(Some(peer)) => Ok(peer.url),
+    Err(e) => Err(e.to_string()),
+  };
+  let last = tail(&paths.logs.join("sync.log"), 1)
+    .ok()
+    .and_then(|lines| lines.into_iter().next());
+  Some(Sync { peer, last })
 }
 
 fn captures(journal_root: &Path, now: i64) -> io::Result<Vec<Capture>> {
@@ -438,5 +464,12 @@ pub fn journal_lines(report: &Report) -> Vec<String> {
     ),
     None => "index  none yet".into(),
   });
+  if let Some(sync) = &report.sync {
+    let last = sync.last.as_deref().unwrap_or("no round yet");
+    out.push(match &sync.peer {
+      Ok(url) => format!("sync from {url}  last: {last}"),
+      Err(e) => format!("sync  {e}"),
+    });
+  }
   out
 }
