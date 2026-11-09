@@ -1,0 +1,14 @@
+[package]
+name = "deploy"
+version = "0.1.0"
+edition.workspace = true
+
+[[bin]]
+name = "dgg-logger"
+path = "src/main.rs"
+
+[dependencies]
+journal.workspace = true
+
+clap.workspace = true
+ctrlc.workspace = true
