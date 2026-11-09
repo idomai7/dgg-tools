@@ -39,4 +39,10 @@ impl Paths {
   pub fn bin(&self) -> PathBuf {
     self.root.join("bin")
   }
+
+  /// The peer an install syncs from, if the file exists (see
+  /// [`crate::peer`]).
+  pub fn peer_file(&self) -> PathBuf {
+    self.root.join("peer.env")
+  }
 }

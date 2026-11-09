@@ -129,6 +129,7 @@ mod task {
       supervisor: root.join(r"bin\20261109-120000-0.1.0\dgg-supervisor.exe"),
       data: root.join("data"),
       logs: root.join("logs"),
+      peer_file: Some(root.join("peer.env")),
     }
   }
 
@@ -137,13 +138,24 @@ mod task {
     let task = task();
     assert_eq!(
       arguments(&task),
-      r#"--data "C:\Users\some one\AppData\Local\dgg-tools\data" --logs "C:\Users\some one\AppData\Local\dgg-tools\logs""#
+      r#"--data "C:\Users\some one\AppData\Local\dgg-tools\data" --logs "C:\Users\some one\AppData\Local\dgg-tools\logs" --peer-file "C:\Users\some one\AppData\Local\dgg-tools\peer.env""#
     );
     let xml = xml(&task, r"HOST\some one");
     assert!(xml.contains(r"<UserId>HOST\some one</UserId>"));
     assert!(xml.contains("&quot;"));
     assert_eq!(parse(&xml), Some(task));
     assert_eq!(parse(&xml.replace("dgg-supervisor", "something")), None);
+  }
+
+  /// A task from before syncing: no peer file.
+  #[test]
+  fn reads_tasks_without_a_peer_file() {
+    let task = Task {
+      peer_file: None,
+      ..task()
+    };
+    assert!(!arguments(&task).contains("--peer-file"));
+    assert_eq!(parse(&xml(&task, "someone")), Some(task));
   }
 
   /// Against Task Scheduler itself: registered under a name of its own (and
@@ -179,6 +191,7 @@ mod service {
       supervisor: root.join(r"bin\20261109-120000-0.1.0\dgg-supervisor.exe"),
       data: PathBuf::from(r"D:\chat data"),
       logs: root.join("logs"),
+      peer_file: None,
     };
     let line = command_line(&task);
     assert_eq!(

@@ -26,6 +26,9 @@ pub struct Task {
   pub supervisor: PathBuf,
   pub data: PathBuf,
   pub logs: PathBuf,
+  /// What it syncs from, if anything (`--peer-file`). Installs from before
+  /// syncing have none.
+  pub peer_file: Option<PathBuf>,
 }
 
 /// This user, as Task Scheduler names them.
@@ -53,7 +56,12 @@ fn quote(path: &Path) -> String {
 
 /// The supervisor's arguments.
 pub fn arguments(task: &Task) -> String {
-  format!("--data {} --logs {}", quote(&task.data), quote(&task.logs))
+  let mut arguments =
+    format!("--data {} --logs {}", quote(&task.data), quote(&task.logs));
+  if let Some(peer_file) = &task.peer_file {
+    arguments += &format!(" --peer-file {}", quote(peer_file));
+  }
+  arguments
 }
 
 /// The task's XML, for `user`.
@@ -161,6 +169,7 @@ pub fn parse_arguments(supervisor: PathBuf, arguments: &str) -> Option<Task> {
   Some(Task {
     data: field("data")?,
     logs: field("logs")?,
+    peer_file: field("peer-file"),
     supervisor,
   })
 }
