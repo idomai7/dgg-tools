@@ -32,7 +32,8 @@ use {
     record::v0::Body,
   },
   ::rusqlite::{
-    Connection, OptionalExtension, Transaction, TransactionBehavior, params,
+    Connection, OpenFlags, OptionalExtension, Transaction, TransactionBehavior,
+    params,
   },
   ::serde_json::Value,
   ::std::{collections::HashMap, fs, io, path::Path, time::Duration},
@@ -115,6 +116,25 @@ pub struct Stats {
   pub unparsed: u64,
   /// Files skipped because their header couldn't be read, with why.
   pub skipped: Vec<(String, String)>,
+}
+
+/// Opens the index at `path` only to read it, as it is: it must exist, with
+/// this schema. Waits up to `busy` for a writer's lock.
+pub fn open_read_only(
+  path: &Path,
+  busy: Duration,
+) -> Result<Connection, Error> {
+  let db = Connection::open_with_flags(
+    path,
+    OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+  )?;
+  db.busy_timeout(busy)?;
+  let version: i64 =
+    db.pragma_query_value(None, "user_version", |row| row.get(0))?;
+  if version != user_version(SCHEMA_VERSION) {
+    return Err(Error::Schema(schema_version(version)));
+  }
+  Ok(db)
 }
 
 /// Opens the index at `path`, creating it if needed.

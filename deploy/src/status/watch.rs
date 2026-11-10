@@ -3,14 +3,18 @@
 //!
 //! Keys: `1`-`5` show the capture, index, compact, supervisor or sync
 //! log, `f` the newest frames a capture wrote (again for the next
-//! capture), `r` redraws now, `e` opens the data folder, `q` (or Esc, or
-//! Ctrl-C) quits.
+//! capture), `g` the gaps in capture (again to look again), `r` redraws
+//! now, `e` opens the data folder, `q` (or Esc, or Ctrl-C) quits.
 
 use {
   super::{
-    LOGS, Report, Watcher, capture_tail, format, health, journal_lines, tail,
+    LOGS, Report, Watcher, capture_tail, format, gaps, health, journal_lines,
+    tail,
   },
-  crate::paths::Paths,
+  crate::{
+    log::{now_ms, timestamp},
+    paths::Paths,
+  },
   ::ratatui::{
     DefaultTerminal, Frame,
     crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
@@ -26,7 +30,7 @@ use {
   },
 };
 
-const KEYS: &str = " 1 capture  2 index  3 compact  4 supervisor  5 sync  f frames   r redraw  e open data  q quit";
+const KEYS: &str = " 1 capture  2 index  3 compact  4 supervisor  5 sync  f frames  g gaps   r redraw  e open data  q quit";
 
 /// What fills the bottom of the screen.
 enum View {
@@ -34,14 +38,39 @@ enum View {
   Log(usize),
   /// The newest frames of a capture instance.
   Frames(String),
+  /// The gaps, as of when `g` was pressed: looking takes a moment, so it
+  /// isn't redone every redraw.
+  Gaps(Pane<'static>),
 }
 
-/// The bottom of the screen: a title, its lines, and what to say if
-/// there are none.
+/// The bottom of the screen: a title, a line kept at the top, its lines
+/// (the last of them shown, as many as fit), and what to say if there are
+/// none.
+#[derive(Clone)]
 pub struct Pane<'a> {
   pub title: String,
+  pub header: Option<String>,
   pub lines: Vec<String>,
   pub empty: &'a str,
+}
+
+impl View {
+  /// `g` pressed: the gaps, as the index has them now.
+  fn gaps(paths: &Paths) -> Self {
+    let now = now_ms();
+    let (header, lines, empty) = match gaps(&paths.data.join("index.sqlite")) {
+      Ok(Some((summary, lines))) => (Some(summary), lines, "(no gaps)"),
+      Ok(None) => (None, Vec::new(), "(nothing captured yet)"),
+      Err(e) => (None, vec![format!("(can't read the index: {e})")], ""),
+    };
+    let pane = Pane {
+      title: format!("gaps as of {} (g to look again)", timestamp(now)),
+      header,
+      lines,
+      empty,
+    };
+    Self::Gaps(pane)
+  }
 }
 
 impl View {
@@ -49,16 +78,19 @@ impl View {
     match self {
       Self::Log(log) => Pane {
         title: format!("{}.log", LOGS[*log]),
+        header: None,
         lines: tail(&paths.logs.join(format!("{}.log", LOGS[*log])), 500)
           .unwrap_or_default(),
         empty: "(empty: shell runs print to their own windows)",
       },
       Self::Frames(instance) => Pane {
         title: format!("frames: {instance}"),
+        header: None,
         lines: capture_tail(&paths.data.join("journal"), instance, 500)
           .unwrap_or_else(|e| vec![format!("(can't read: {e})")]),
         empty: "(no live file yet)",
       },
+      Self::Gaps(pane) => pane.clone(),
     }
   }
 
@@ -75,7 +107,7 @@ impl View {
         .iter()
         .position(|instance| instance == current)
         .map_or(0, |at| (at + 1) % instances.len()),
-      Self::Log(_) => 0,
+      Self::Log(_) | Self::Gaps(_) => 0,
     };
     match instances.get(next) {
       Some(instance) => Self::Frames((*instance).to_owned()),
@@ -129,6 +161,10 @@ fn event_loop(
         }
         KeyCode::Char('f') => {
           view = view.next_frames(&report);
+          break;
+        }
+        KeyCode::Char('g') => {
+          view = View::gaps(paths);
           break;
         }
         KeyCode::Char('r') => break,
@@ -268,13 +304,18 @@ pub fn draw(frame: &mut Frame, report: &Report, pane: &Pane) {
     Paragraph::new(journal).block(heading("journal")),
     journal_area,
   );
-  let room = log_area.height.saturating_sub(2) as usize;
+  let mut body: Vec<Line> = Vec::new();
+  if let Some(header) = &pane.header {
+    body.push(Line::from(header.as_str()).bold());
+  }
+  let room =
+    (log_area.height.saturating_sub(2) as usize).saturating_sub(body.len());
   let shown = &pane.lines[pane.lines.len().saturating_sub(room)..];
-  let body: Vec<Line> = if shown.is_empty() {
-    vec![Line::from(pane.empty.dark_gray())]
+  if shown.is_empty() {
+    body.push(Line::from(pane.empty.dark_gray()));
   } else {
-    shown.iter().map(|line| Line::from(line.as_str())).collect()
-  };
+    body.extend(shown.iter().map(|line| Line::from(line.as_str())));
+  }
   frame
     .render_widget(Paragraph::new(body).block(heading(&pane.title)), log_area);
   frame.render_widget(Line::from(KEYS.dark_gray()), keys);

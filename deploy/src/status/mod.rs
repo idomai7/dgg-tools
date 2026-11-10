@@ -14,7 +14,7 @@ use {
     paths::Paths,
     peer, processes,
   },
-  ::logger::control,
+  ::logger::{control, index},
   ::logger_journal::{
     Reader, Record, archive,
     layout::{backfill_files, backfill_root, live_files, utc_day},
@@ -25,7 +25,7 @@ use {
     fs,
     io::{self, Read, Seek, SeekFrom},
     path::{Path, PathBuf},
-    time::UNIX_EPOCH,
+    time::{Duration, UNIX_EPOCH},
   },
   ::sysinfo::{
     Disks, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind,
@@ -438,6 +438,20 @@ fn record_line(record: &v0::Record) -> String {
     v0::Body::FetchRange { source, .. } => format!("(fetched from {source})"),
   };
   format!("{time} #{} {what}", record.connection)
+}
+
+/// The gaps in what the index at `path` holds, as `gaps` reports them: its
+/// summary, and two lines a gap; `None` if nothing is captured yet. Unlike
+/// `gaps`, it doesn't bring the index up to date first (`index --follow`
+/// does), so it needs no write access.
+pub fn gaps(path: &Path) -> Result<Option<(String, Vec<String>)>, String> {
+  if !path.exists() {
+    return Err("no index yet".into());
+  }
+  let db = index::open_read_only(path, Duration::from_secs(2))
+    .map_err(|e| e.to_string())?;
+  let coverage = ::logger::gaps::coverage(&db).map_err(|e| e.to_string())?;
+  Ok(coverage.map(|coverage| (coverage.summary(), coverage.lines(0))))
 }
 
 /// How one capture is doing, as text.

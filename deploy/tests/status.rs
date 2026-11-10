@@ -5,7 +5,7 @@ use {
     log::now_ms,
     paths::Paths,
     status::{
-      Health, Watcher, capture_tail, format, journal_lines, tail, text,
+      Health, Watcher, capture_tail, format, gaps, journal_lines, tail, text,
     },
   },
   ::logger_journal::layout::utc_day,
@@ -195,6 +195,7 @@ fn draws_the_watch_screen() {
   let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
   let pane = ::deploy::status::watch::Pane {
     title: "capture.log".into(),
+    header: None,
     lines: vec!["2026-11-09 12:00:00.000Z capturing as a-1".to_owned()],
     empty: "(empty)",
   };
@@ -308,5 +309,30 @@ fn tails_a_captures_frames() {
   assert_eq!(
     capture_tail(&root, "a-1", 10).unwrap(),
     ["12:00:00.000Z #2 PING {}"]
+  );
+}
+
+#[test]
+fn reports_gaps_without_writing_the_index() {
+  let dir = TempDir::new("gaps");
+  let index = dir.0.join("index.sqlite");
+  assert_eq!(gaps(&index), Err("no index yet".into()));
+  // Connected 1 s to 2 s, then again from 5 s: one 3 s gap, not filled.
+  dir.write(
+    "journal/live/1970-01-01/a.journal",
+    "journal 0.1\n1000 a 1 open wss://x\n2000 a 1 close reset\n\
+     5000 a 2 open wss://x\n6000 a 2 close shutdown\n",
+  );
+  let mut db = ::logger::index::open(&index).unwrap();
+  ::logger::index::index(&mut db, &dir.0.join("journal")).unwrap();
+  drop(db);
+  let (summary, lines) = gaps(&index).unwrap().unwrap();
+  assert!(summary.ends_with("1 gaps, 3.0s in all; 1 not filled, 3.0s"));
+  assert_eq!(
+    lines,
+    [
+      "1970-01-01 00:00:02.000Z +3.0s  NOT covered: no HISTORY, 0 messages recovered",
+      "  resumed by a#2",
+    ]
   );
 }
