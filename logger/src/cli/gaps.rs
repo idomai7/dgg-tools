@@ -2,7 +2,8 @@
 
 use {
   crate::{
-    gaps::{coverage, format_duration, format_utc},
+    capture::timestamp,
+    gaps::{coverage, format_duration},
     index::{index, open},
   },
   ::clap::Args,
@@ -37,9 +38,9 @@ impl Gaps {
       }
     };
     println!(
-      "captured {} to {} UTC ({}), {} gaps",
-      format_utc(coverage.first),
-      format_utc(coverage.last),
+      "captured {} to {} ({}), {} gaps",
+      timestamp(coverage.first),
+      timestamp(coverage.last),
       format_duration(coverage.last - coverage.first),
       coverage.gaps.len()
     );
@@ -57,14 +58,14 @@ impl Gaps {
       } else {
         match gap.history_from {
           Some(from) => {
-            format!("NOT covered: HISTORY from {}", format_utc(from))
+            format!("NOT covered: HISTORY from {}", timestamp(from))
           }
           None => "NOT covered: no HISTORY".to_owned(),
         }
       };
       println!(
         "  {} +{}  {filled}, {} messages recovered",
-        format_utc(gap.start),
+        timestamp(gap.start),
         format_duration(gap.duration_ms()),
         gap.recovered,
       );

@@ -1,6 +1,7 @@
 use {
   ::logger::{
-    gaps::{Gap, coverage, format_duration, format_utc, unfetched},
+    capture::timestamp,
+    gaps::{Gap, coverage, format_duration, unfetched},
     index::{index, open},
   },
   ::logger_journal::{Writer, record::v0::Body},
@@ -112,8 +113,8 @@ fn no_connections_no_coverage() {
 
 #[test]
 fn formats() {
-  assert_eq!(format_utc(0), "1970-01-01 00:00:00.000");
-  assert_eq!(format_utc(1_794_128_504_611), "2026-11-08 09:01:44.611");
+  assert_eq!(timestamp(0), "1970-01-01 00:00:00.000Z");
+  assert_eq!(timestamp(1_794_128_504_611), "2026-11-08 09:01:44.611Z");
   assert_eq!(format_duration(850), "850ms");
   assert_eq!(format_duration(12_345), "12.3s");
   assert_eq!(format_duration(245_000), "4m05s");

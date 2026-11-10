@@ -120,10 +120,13 @@ fn reports_captures_and_the_journal() {
 
   let lines = journal_lines(&report);
   assert!(lines[0].starts_with(&format!("today (UTC {today})  2 files")));
-  assert_eq!(lines[1], "waiting for compact  1 days from 2026-01-02  5 B");
+  assert_eq!(
+    lines[1],
+    "waiting for compact  1 days (UTC) from 2026-01-02  5 B"
+  );
   assert_eq!(
     lines[2],
-    "archived  2 days, 2026-01-01 to 2026-01-03  150 B"
+    "archived  2 days (UTC), 2026-01-01 to 2026-01-03  150 B"
   );
   let all = text(&report).join("\n");
   assert!(all.contains("STALE: last heard 1m 0s ago"), "{all}");
@@ -288,14 +291,14 @@ fn tails_a_captures_frames() {
   assert_eq!(
     capture_tail(&root, "a-1", 3).unwrap(),
     [
-      "12:00:00.002 #1 MSG {\"n\":2}",
-      "12:00:00.003 #1 MSG {\"n\":3}",
-      "12:00:00.009 #1 (disconnected: gone)",
+      "12:00:00.002Z #1 MSG {\"n\":2}",
+      "12:00:00.003Z #1 MSG {\"n\":3}",
+      "12:00:00.009Z #1 (disconnected: gone)",
     ]
   );
   assert_eq!(
     capture_tail(&root, "a-1", 10).unwrap()[0],
-    "12:00:00.000 #1 (connected to wss://x)"
+    "12:00:00.000Z #1 (connected to wss://x)"
   );
   // A newer day's file is the one shown.
   dir.write(
@@ -304,6 +307,6 @@ fn tails_a_captures_frames() {
   );
   assert_eq!(
     capture_tail(&root, "a-1", 10).unwrap(),
-    ["12:00:00.000 #2 PING {}"]
+    ["12:00:00.000Z #2 PING {}"]
   );
 }

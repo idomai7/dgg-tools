@@ -12,10 +12,7 @@
 //! Gap bounds are local receive times and message timestamps are dgg's, so
 //! coverage is only as exact as the two clocks agree.
 
-use {
-  ::logger_journal::layout::utc_day,
-  ::rusqlite::{Connection, params},
-};
+use ::rusqlite::{Connection, params};
 
 /// A stretch with no connection open.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -168,17 +165,6 @@ fn fetched_spans(
     }
   }
   Ok(merged)
-}
-
-/// `YYYY-MM-DD HH:MM:SS.mmm` in UTC.
-pub fn format_utc(ms: i64) -> String {
-  let in_day = ms.rem_euclid(86_400_000);
-  let (hours, minutes) = (in_day / 3_600_000, in_day / 60_000 % 60);
-  let (seconds, millis) = (in_day / 1000 % 60, in_day % 1000);
-  format!(
-    "{} {hours:02}:{minutes:02}:{seconds:02}.{millis:03}",
-    utc_day(ms)
-  )
 }
 
 /// A short human duration: `850ms`, `12.3s`, `4m05s`, `2h07m`, `3d04h`.

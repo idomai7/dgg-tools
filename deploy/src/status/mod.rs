@@ -393,7 +393,7 @@ pub fn tail(path: &Path, lines: usize) -> io::Result<Vec<String>> {
 }
 
 /// The last `lines` records `instance` wrote to its newest live file, one
-/// line each: receive time (UTC), connection, and the frame as received
+/// line each: receive time (`HH:MM:SS.mmmZ`, UTC), connection, and the frame as received
 /// (or what happened to the connection). Reads at most the last 64 KB.
 pub fn capture_tail(
   journal_root: &Path,
@@ -425,8 +425,8 @@ pub fn capture_tail(
 /// One record, as [`capture_tail`] shows it.
 fn record_line(record: &v0::Record) -> String {
   let time = timestamp(record.receive_time);
-  // Just the time of day: `HH:MM:SS.mmm`.
-  let time = time.get(11..23).unwrap_or(&time);
+  // Just the time of day: `HH:MM:SS.mmmZ`.
+  let time = time.get(11..).unwrap_or(&time);
   let what = match &record.body {
     v0::Body::Frame(frame) => frame.clone(),
     v0::Body::Binary(bytes) => format!("(binary frame, {} bytes)", bytes.len()),
@@ -537,7 +537,7 @@ pub fn journal_lines(report: &Report) -> Vec<String> {
   ));
   if let Some(first) = journal.waiting.first() {
     out.push(format!(
-      "waiting for compact  {} days from {first}  {}",
+      "waiting for compact  {} days (UTC) from {first}  {}",
       journal.waiting.len(),
       format::size(journal.waiting_files.bytes as f64)
     ));
@@ -545,7 +545,7 @@ pub fn journal_lines(report: &Report) -> Vec<String> {
   let archived = |label: &str, archived: &Archived| {
     archived.first.as_ref().map(|first| {
       format!(
-        "{label}  {} days, {first} to {}  {}",
+        "{label}  {} days (UTC), {first} to {}  {}",
         archived.days,
         archived.last.as_deref().unwrap_or(first),
         format::size(archived.bytes as f64)
