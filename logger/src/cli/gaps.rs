@@ -2,7 +2,6 @@
 
 use {
   crate::{
-    capture::timestamp,
     gaps::{coverage, format_duration},
     index::{index, open},
   },
@@ -37,39 +36,23 @@ impl Gaps {
         return ExitCode::FAILURE;
       }
     };
-    println!(
-      "captured {} to {} ({}), {} gaps",
-      timestamp(coverage.first),
-      timestamp(coverage.last),
-      format_duration(coverage.last - coverage.first),
-      coverage.gaps.len()
-    );
+    println!("{}", coverage.summary());
     let min_ms = (self.min * 1000.0) as i64;
-    for gap in coverage
-      .gaps
-      .iter()
-      .filter(|gap| gap.duration_ms() >= min_ms)
-    {
-      let (instance, connection) = &gap.resumed_by;
-      let filled = if gap.covered() {
-        "covered by HISTORY".to_owned()
-      } else if gap.backfilled {
-        "filled by backfill".to_owned()
-      } else {
-        match gap.history_from {
-          Some(from) => {
-            format!("NOT covered: HISTORY from {}", timestamp(from))
-          }
-          None => "NOT covered: no HISTORY".to_owned(),
-        }
-      };
+    let lines = coverage.lines(min_ms);
+    if min_ms > 0 {
+      let (shown, ms) = coverage
+        .gaps
+        .iter()
+        .filter(|gap| gap.duration_ms() >= min_ms)
+        .fold((0, 0), |(n, ms), gap| (n + 1, ms + gap.duration_ms()));
       println!(
-        "  {} +{}  {filled}, {} messages recovered",
-        timestamp(gap.start),
-        format_duration(gap.duration_ms()),
-        gap.recovered,
+        "{shown} at least {} long, {} in all",
+        format_duration(min_ms),
+        format_duration(ms)
       );
-      println!("    resumed by {instance}#{connection}");
+    }
+    for line in lines {
+      println!("  {line}");
     }
     ExitCode::SUCCESS
   }

@@ -12,7 +12,10 @@
 //! Gap bounds are local receive times and message timestamps are dgg's, so
 //! coverage is only as exact as the two clocks agree.
 
-use ::rusqlite::{Connection, params};
+use {
+  crate::capture::timestamp,
+  ::rusqlite::{Connection, params},
+};
 
 /// A stretch with no connection open.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -57,6 +60,56 @@ pub struct Coverage {
   /// When the last connection ended (or was last seen), unix ms.
   pub last: i64,
   pub gaps: Vec<Gap>,
+}
+
+impl Coverage {
+  /// The first line of a report: the span captured, then how many gaps and
+  /// how long they last in all, and how many of them aren't filled.
+  pub fn summary(&self) -> String {
+    let total = |gaps: &mut dyn Iterator<Item = &Gap>| {
+      gaps.fold((0, 0), |(n, ms), gap| (n + 1, ms + gap.duration_ms()))
+    };
+    let (gaps, gap_ms) = total(&mut self.gaps.iter());
+    let (unfilled, unfilled_ms) =
+      total(&mut self.gaps.iter().filter(|gap| !gap.filled()));
+    format!(
+      "captured {} to {} ({}), {gaps} gaps, {} in all; {unfilled} not filled, {}",
+      timestamp(self.first),
+      timestamp(self.last),
+      format_duration(self.last - self.first),
+      format_duration(gap_ms),
+      format_duration(unfilled_ms),
+    )
+  }
+
+  /// The gaps at least `min_ms` long, oldest first, two lines each: when
+  /// and how long, how it was filled; and what resumed capture.
+  pub fn lines(&self, min_ms: i64) -> Vec<String> {
+    let mut out = Vec::new();
+    for gap in self.gaps.iter().filter(|gap| gap.duration_ms() >= min_ms) {
+      let (instance, connection) = &gap.resumed_by;
+      let filled = if gap.covered() {
+        "covered by HISTORY".to_owned()
+      } else if gap.backfilled {
+        "filled by backfill".to_owned()
+      } else {
+        match gap.history_from {
+          Some(from) => {
+            format!("NOT covered: HISTORY from {}", timestamp(from))
+          }
+          None => "NOT covered: no HISTORY".to_owned(),
+        }
+      };
+      out.push(format!(
+        "{} +{}  {filled}, {} messages recovered",
+        timestamp(gap.start),
+        format_duration(gap.duration_ms()),
+        gap.recovered,
+      ));
+      out.push(format!("  resumed by {instance}#{connection}"));
+    }
+    out
+  }
 }
 
 /// The coverage of every connection in the index, or `None` if there are

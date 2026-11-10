@@ -102,6 +102,20 @@ fn finds_gaps_and_coverage() {
   );
   assert!(coverage.gaps[0].covered());
   assert!(!coverage.gaps[1].covered());
+  assert_eq!(
+    coverage.summary(),
+    "captured 1970-01-01 00:00:01.000Z to 1970-01-01 00:00:04.000Z (3.0s), 2 gaps, 1.0s in all; 1 not filled, 500ms"
+  );
+  assert_eq!(
+    coverage.lines(0),
+    [
+      "1970-01-01 00:00:02.000Z +500ms  covered by HISTORY, 1 messages recovered",
+      "  resumed by a#2",
+      "1970-01-01 00:00:03.000Z +500ms  NOT covered: HISTORY from 1970-01-01 00:00:03.200Z, 2 messages recovered",
+      "  resumed by b#1",
+    ]
+  );
+  assert!(coverage.lines(501).is_empty());
 }
 
 #[test]
