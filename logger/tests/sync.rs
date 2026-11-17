@@ -323,6 +323,77 @@ async fn takes_backfill_archives() {
   );
 }
 
+/// The lines of `root`'s archive of 1970-01-01, sorted.
+fn archived_lines(root: &::std::path::Path) -> Vec<String> {
+  let path = root.join("archive/1970/01/1970-01-01.journal.zst");
+  let bytes = ::zstd::decode_all(fs::File::open(path).unwrap()).unwrap();
+  let mut lines: Vec<String> = String::from_utf8(bytes)
+    .unwrap()
+    .lines()
+    .skip(1)
+    .map(str::to_owned)
+    .collect();
+  lines.sort();
+  lines
+}
+
+#[::tokio::test]
+async fn a_mesh_settles() {
+  // Three nodes capturing the same day, at the same times, so each can
+  // order its archive's ties differently.
+  let roots = [TempRoot::new(), TempRoot::new(), TempRoot::new()];
+  let mut urls = Vec::new();
+  for (n, root) in roots.iter().enumerate() {
+    let mut writer = Writer::new(root.0.clone(), &format!("node{n}"));
+    for at in [0, 5, 10] {
+      let frame = format!("MSG {n}-{at}");
+      writer.write(at, 1, Body::Frame(frame)).unwrap();
+    }
+    drop(writer);
+    // Compacted before hearing from the others: each starts with an
+    // archive the others' differ from.
+    compact_day(&root.0, "1970-01-01", 3).unwrap();
+    urls.push(serve(root).await);
+  }
+  let peer = |n: usize| Peer {
+    url: urls[n].clone(),
+    token: "secret".into(),
+  };
+
+  // Rounds of every node syncing from both others in turn, then
+  // compacting, until a round moves nothing.
+  let mut rounds = 0;
+  loop {
+    rounds += 1;
+    assert!(rounds <= 5, "still moving after {} rounds", rounds - 1);
+    let mut moved = 0;
+    for (n, root) in roots.iter().enumerate() {
+      for other in (0..3).filter(|&other| other != n) {
+        moved += sync(&peer(other), &root.0).await.unwrap().bytes;
+      }
+    }
+    for root in &roots {
+      compact_day(&root.0, "1970-01-01", 3).unwrap();
+    }
+    if moved == 0 {
+      break;
+    }
+  }
+  // Each node holds every line once, whatever order its ties are in.
+  let all = archived_lines(&roots[0].0);
+  assert_eq!(all.len(), 9);
+  for root in &roots[1..] {
+    assert_eq!(archived_lines(&root.0), all);
+  }
+  // A settled mesh stays settled.
+  for (n, root) in roots.iter().enumerate() {
+    for other in (0..3).filter(|&other| other != n) {
+      let stats = sync(&peer(other), &root.0).await.unwrap();
+      assert_eq!((stats.bytes, stats.merging), (0, 0));
+    }
+  }
+}
+
 /// Serves `routes` on a free port; returns its URL.
 async fn serve_routes(routes: ::axum::Router) -> String {
   let listener = ::tokio::net::TcpListener::bind("127.0.0.1:0")
