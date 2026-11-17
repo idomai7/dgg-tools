@@ -344,7 +344,7 @@ async fn a_mesh_settles() {
   let roots = [TempRoot::new(), TempRoot::new(), TempRoot::new()];
   let mut urls = Vec::new();
   for (n, root) in roots.iter().enumerate() {
-    let mut writer = Writer::new(root.0.clone(), &format!("node{n}"));
+    let mut writer = Writer::new(root.0.clone(), format!("node{n}"));
     for at in [0, 5, 10] {
       let frame = format!("MSG {n}-{at}");
       writer.write(at, 1, Body::Frame(frame)).unwrap();
