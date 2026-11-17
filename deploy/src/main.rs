@@ -146,6 +146,7 @@ enum Command {
   Sync(WithData<cli::Sync>),
   Backfill(WithData<cli::Backfill>),
   Gaps(WithData<cli::Gaps>),
+  Cert(cli::Cert),
 }
 
 // One of the logger's own commands, with the data directory it works on
@@ -306,6 +307,7 @@ fn main() -> ExitCode {
     Command::Sync(command) => command.run(cli::Sync::run),
     Command::Backfill(command) => command.run(cli::Backfill::run),
     Command::Gaps(command) => command.run(cli::Gaps::run),
+    Command::Cert(command) => command.run(),
   }
 }
 

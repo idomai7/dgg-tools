@@ -3,3 +3,4 @@
 /data/
 *.sqlite
 *.sqlite-*
+/infra/secrets/

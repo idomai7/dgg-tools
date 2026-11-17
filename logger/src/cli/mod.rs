@@ -3,6 +3,7 @@
 
 pub mod backfill;
 pub mod capture;
+pub mod cert;
 pub mod compact;
 pub mod gaps;
 pub mod index;
@@ -10,8 +11,8 @@ pub mod serve;
 pub mod sync;
 
 pub use {
-  backfill::Backfill, capture::Capture, compact::Compact, gaps::Gaps,
-  index::Index, serve::Serve, sync::Sync,
+  backfill::Backfill, capture::Capture, cert::Cert, compact::Compact,
+  gaps::Gaps, index::Index, serve::Serve, sync::Sync,
 };
 
 /// Runs an async command on a new runtime.
