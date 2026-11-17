@@ -1,10 +1,12 @@
 use {
   ::logger::{
     capture::now_ms,
+    cert,
     control::{self, Status, parse_push, push_body},
-    serve::{CONCURRENT, Tokens, router},
+    serve::{self, CONCURRENT, Tokens, router},
   },
   ::logger_journal::{Writer, record::v0::Body},
+  ::rcgen::KeyPair,
   ::std::{
     fs,
     path::PathBuf,
@@ -214,4 +216,69 @@ async fn serves_a_few_requests_at_once() {
   let size = held.pop().unwrap().bytes().await.unwrap().len();
   assert!(size > 64 << 20);
   assert_eq!(get().await.unwrap().status().as_u16(), 200);
+}
+
+/// Serves `root` over TLS on a free port, with a certificate for `host`
+/// from a new CA; returns its URL and the CA's certificate.
+async fn serve_tls(root: &TempRoot, host: &str) -> (String, String) {
+  let key = KeyPair::generate().unwrap();
+  let ca_cert = cert::ca(&key).unwrap();
+  let node = cert::node("node", &[host.into()], &ca_cert, &key).unwrap();
+  let tls = cert::server_config(&node.cert, &node.key).unwrap();
+  let listener = ::tokio::net::TcpListener::bind("127.0.0.1:0")
+    .await
+    .unwrap();
+  let base = format!("https://{}", listener.local_addr().unwrap());
+  let tokens = Tokens {
+    read: "reader".into(),
+    control: None,
+  };
+  let app = router(root.0.clone(), tokens);
+  ::tokio::spawn(
+    async move { serve::run(listener, app, Some(tls)).await.unwrap() },
+  );
+  (base, ca_cert)
+}
+
+/// A client trusting only `ca_cert`.
+fn trusting(ca_cert: &str) -> ::reqwest::Client {
+  let _ = ::rustls::crypto::ring::default_provider().install_default();
+  let ca = ::reqwest::Certificate::from_pem(ca_cert.as_bytes()).unwrap();
+  ::reqwest::Client::builder()
+    .tls_certs_only([ca])
+    .build()
+    .unwrap()
+}
+
+#[::tokio::test]
+async fn serves_over_tls() {
+  let root = TempRoot::new();
+  let (base, ca_cert) = serve_tls(&root, "127.0.0.1").await;
+  let manifest = |client: ::reqwest::Client, base: String| async move {
+    client
+      .get(format!("{base}/manifest"))
+      .bearer_auth("reader")
+      .send()
+      .await
+  };
+  let response = manifest(trusting(&ca_cert), base.clone()).await.unwrap();
+  assert_eq!(response.status().as_u16(), 200);
+  // Not to a client trusting another CA.
+  let other = cert::ca(&KeyPair::generate().unwrap()).unwrap();
+  assert!(manifest(trusting(&other), base.clone()).await.is_err());
+  // Nor over plain HTTP.
+  let plain = base.replace("https://", "http://");
+  assert!(manifest(::reqwest::Client::new(), plain).await.is_err());
+}
+
+#[::tokio::test]
+async fn a_certificate_for_another_host_is_refused() {
+  let root = TempRoot::new();
+  let (base, ca_cert) = serve_tls(&root, "192.0.2.1").await;
+  let sent = trusting(&ca_cert)
+    .get(format!("{base}/manifest"))
+    .bearer_auth("reader")
+    .send()
+    .await;
+  assert!(sent.is_err());
 }

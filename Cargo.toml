@@ -12,6 +12,7 @@ logger-journal = { path = "logger-journal" }
 version-info = { path = "version-info" }
 
 axum = "0.8.9"
+axum-server = { version = "0.8.0", features = ["tls-rustls-no-provider"] }
 base64 = "0.23.1"
 clap = { version = "4.6.7", features = ["derive", "env"] }
 ctrlc = "3.5.2"

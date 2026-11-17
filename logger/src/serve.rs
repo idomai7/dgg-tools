@@ -19,9 +19,9 @@
 //! Every request needs `Authorization: Bearer <token>`, with one of two
 //! [`Tokens`]: the read token reads (enough for `sync`); only the control
 //! token may push or remove a status, since a pushed status can make every
-//! capture here retire. Tokens travel in the clear over plain HTTP, so
-//! reach `serve` across hosts through something private (a VPN, an SSH
-//! tunnel) or a TLS proxy.
+//! capture here retire. Across hosts, [`run`] it over TLS, with a
+//! certificate from the mesh's CA ([`crate::cert`]): over plain HTTP, tokens
+//! travel in the clear.
 //!
 //! At most [`CONCURRENT`] requests are served at once (a file counts until
 //! it's all sent); more get `503`. Files are sent as they're read, so a
@@ -45,9 +45,15 @@ use {
   },
   ::futures_util::stream::unfold,
   ::logger_journal::record::v0::valid_instance,
-  ::std::{io::SeekFrom, path::PathBuf, sync::Arc},
+  ::rustls::ServerConfig,
+  ::std::{
+    io::{self, SeekFrom},
+    path::PathBuf,
+    sync::Arc,
+  },
   ::tokio::{
     io::{AsyncReadExt, AsyncSeekExt},
+    net::TcpListener,
     sync::{OwnedSemaphorePermit, Semaphore},
   },
 };
@@ -128,6 +134,25 @@ pub fn router(journal_root: PathBuf, tokens: Tokens) -> Router {
     .route("/manifest", get(manifest))
     .route("/files/{*path}", get(file))
     .with_state(shared)
+}
+
+/// Serves `app` on `listener` until that fails: over TLS with `tls`, else
+/// plain HTTP.
+pub async fn run(
+  listener: TcpListener,
+  app: Router,
+  tls: Option<ServerConfig>,
+) -> io::Result<()> {
+  match tls {
+    None => ::axum::serve(listener, app).await,
+    Some(tls) => {
+      let tls =
+        ::axum_server::tls_rustls::RustlsConfig::from_config(Arc::new(tls));
+      ::axum_server::tls_rustls::from_tcp_rustls(listener.into_std()?, tls)?
+        .serve(app.into_make_service())
+        .await
+    }
+  }
 }
 
 /// Whether `given` is `expected`, compared in constant time.

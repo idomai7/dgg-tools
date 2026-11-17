@@ -12,6 +12,7 @@ dgg-api = { workspace = true, features = ["client"] }
 logger-journal.workspace = true
 
 axum.workspace = true
+axum-server.workspace = true
 clap.workspace = true
 futures-util.workspace = true
 gethostname.workspace = true
@@ -30,9 +31,7 @@ zstd.workspace = true
 
 [dev-dependencies]
 futures-util.workspace = true
-rcgen.workspace = true
 tokio-tungstenite.workspace = true
 sha2.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
-zeroize.workspace = true
 zstd.workspace = true

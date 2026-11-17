@@ -18,10 +18,12 @@ use {
     ExtendedKeyUsagePurpose, IsCa, Issuer, KeyPair, KeyUsagePurpose,
   },
   ::rustls::{
-    RootCertStore,
+    RootCertStore, ServerConfig,
     client::{WebPkiServerVerifier, danger::ServerCertVerifier},
     crypto::CryptoProvider,
-    pki_types::{CertificateDer, ServerName, UnixTime, pem::PemObject},
+    pki_types::{
+      CertificateDer, PrivateKeyDer, ServerName, UnixTime, pem::PemObject,
+    },
   },
   ::std::{io, sync::Arc},
   ::time::{Duration, OffsetDateTime},
@@ -216,4 +218,27 @@ pub fn verify(ca_cert: &str, cert: &str, host: &str) -> Result<(), String> {
     .verify_server_cert(&cert, &[], &host, &[], UnixTime::now())
     .map(|_| ())
     .map_err(|e| e.to_string())
+}
+
+/// A TLS server config serving `cert` (PEM: the node's certificate, which
+/// may be followed by the CA's) with `key` (PEM, without a password), for
+/// HTTP/2 and HTTP/1.1.
+pub fn server_config(cert: &str, key: &str) -> Result<ServerConfig, String> {
+  let certs = CertificateDer::pem_slice_iter(cert.as_bytes())
+    .collect::<Result<Vec<_>, _>>()
+    .map_err(|e| format!("can't read the certificate: {e}"))?;
+  if certs.is_empty() {
+    return Err("no certificate in the certificate file".into());
+  }
+  let key = PrivateKeyDer::from_pem_slice(key.as_bytes()).map_err(|e| {
+    format!("can't read the key (it's PEM, without a password): {e}")
+  })?;
+  let mut config = ServerConfig::builder_with_provider(provider())
+    .with_safe_default_protocol_versions()
+    .map_err(|e| e.to_string())?
+    .with_no_client_auth()
+    .with_single_cert(certs, key)
+    .map_err(|e| format!("the key doesn't fit the certificate: {e}"))?;
+  config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+  Ok(config)
 }
