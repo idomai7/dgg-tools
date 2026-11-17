@@ -273,13 +273,14 @@ pub fn run(config: &Config, stop: &Stop) -> io::Result<Exit> {
             log_line(&supervisor, &said);
             *last = Some(said);
           }
+          let ca = peer::ca(peers);
           found
             .pull
             .iter()
             .map(|named| {
               (
                 Some(named.name.clone()),
-                sync_from(&config.sync, &named.peer),
+                sync_from(&config.sync, &named.peer, ca.as_deref()),
               )
             })
             .collect()
@@ -302,12 +303,18 @@ pub fn run(config: &Config, stop: &Stop) -> io::Result<Exit> {
   Ok(exit)
 }
 
-/// `sync` pulling from `peer`, its token in the environment.
-fn sync_from(sync: &Program, peer: &peer::Peer) -> Program {
+/// `sync` pulling from `peer`, its token in the environment; if it's
+/// `https://`, trusting the CA certificate `ca` alone, if given.
+fn sync_from(sync: &Program, peer: &peer::Peer, ca: Option<&Path>) -> Program {
   let mut program = sync.clone();
   program
     .args
     .extend(["--peer".into(), peer.url.clone().into()]);
+  if let Some(ca) = ca.filter(|_| peer.url.starts_with("https://")) {
+    program
+      .args
+      .extend(["--peer-ca".into(), ca.as_os_str().to_owned()]);
+  }
   program
     .env
     .push((peer::TOKEN.into(), peer.token.clone().into()));

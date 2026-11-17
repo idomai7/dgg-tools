@@ -12,6 +12,8 @@
 //!   being moved off.
 //! - `peer.env`: the single peer of installs from before there were
 //!   several, named for its URL's host. `install` moves it into `peers`.
+//! - `ca.pem`: the mesh CA's certificate. With it, every `https://` peer
+//!   is reached trusting that CA alone.
 //!
 //! The `.env` files hold `KEY=VALUE` lines; blank lines and `#` comments
 //! are skipped, and a value may be quoted.
@@ -37,6 +39,8 @@ pub const MESH: &str = "mesh.env";
 pub const PEERS: &str = "peers";
 /// The single peer of older installs, in an install's root.
 pub const LEGACY: &str = "peer.env";
+/// The mesh CA's certificate, in an install's root.
+pub const CA: &str = "ca.pem";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Peer {
@@ -270,6 +274,8 @@ pub enum Change {
   Mesh(Mesh),
   /// Leave the mesh: the node list and `mesh.env` go.
   NoMesh,
+  /// Trust this CA certificate (PEM) alone for `https://` peers.
+  Ca(String),
 }
 
 /// The files under `root` holding tokens.
@@ -317,6 +323,7 @@ pub fn apply(
       remove(&root.join(NODES))?;
       remove(&root.join(MESH))
     }
+    Change::Ca(text) => fs::write(root.join(CA), text),
   }
 }
 
@@ -339,7 +346,8 @@ pub fn migrate(root: &Path) -> io::Result<()> {
 /// same names, then removes them from `old`. Copied, they take `new`'s
 /// permissions.
 pub fn move_all(old: &Path, new: &Path) -> io::Result<()> {
-  let mut paths: Vec<PathBuf> = vec![NODES.into(), MESH.into(), LEGACY.into()];
+  let mut paths: Vec<PathBuf> =
+    vec![NODES.into(), MESH.into(), LEGACY.into(), CA.into()];
   for (name, _) in files(old)? {
     paths.push(Path::new(PEERS).join(format!("{name}.env")));
   }
@@ -355,7 +363,7 @@ pub fn move_all(old: &Path, new: &Path) -> io::Result<()> {
 
 /// Removes every peer under `root`: nothing's left to use their tokens.
 pub fn remove_all(root: &Path) -> io::Result<()> {
-  for path in [NODES, MESH, LEGACY] {
+  for path in [NODES, MESH, LEGACY, CA] {
     remove(&root.join(path))?;
   }
   match fs::remove_dir_all(root.join(PEERS)) {
@@ -369,6 +377,11 @@ fn remove(path: &Path) -> io::Result<()> {
     Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
     _ => Ok(()),
   }
+}
+
+/// The mesh CA's certificate under `root`, if there is one.
+pub fn ca(root: &Path) -> Option<PathBuf> {
+  Some(root.join(CA)).filter(|path| path.exists())
 }
 
 /// Where to look for peers, given `--peers` or the `--peer-file` of older

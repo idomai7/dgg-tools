@@ -90,6 +90,11 @@ enum Command {
     /// Leave the mesh: its node list and `mesh.env` are removed.
     #[arg(long, conflicts_with_all = ["name", "nodes"])]
     no_mesh: bool,
+    /// The mesh CA's certificate (from `cert ca`), copied to
+    /// `<root>\ca.pem`: `https://` peers are then trusted on its word
+    /// alone.
+    #[arg(long)]
+    ca: Option<PathBuf>,
     /// Also sync from this host's `serve` every 15 minutes (e.g.
     /// `https://old-host:8788`), with its token from `--peer-token`. Kept
     /// in `<root>\peers\<name>.env` until changed or removed.
@@ -205,6 +210,7 @@ fn main() -> ExitCode {
       mesh_token,
       nodes,
       no_mesh,
+      ca,
       peer,
       peer_name,
       peer_token,
@@ -229,6 +235,20 @@ fn main() -> ExitCode {
           return ExitCode::FAILURE;
         }
         peers.push(Change::Nodes(text));
+      }
+      if let Some(ca) = ca {
+        let text = match ::std::fs::read_to_string(&ca) {
+          Ok(text) => text,
+          Err(e) => {
+            eprintln!("{}: {e}", ca.display());
+            return ExitCode::FAILURE;
+          }
+        };
+        if let Err(e) = ::logger::cert::roots(&text) {
+          eprintln!("{}: {e}", ca.display());
+          return ExitCode::FAILURE;
+        }
+        peers.push(Change::Ca(text));
       }
       if let (Some(node), Some(token)) = (name, mesh_token) {
         peers.push(Change::Mesh(Mesh { node, token }));

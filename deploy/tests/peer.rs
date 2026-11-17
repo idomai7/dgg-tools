@@ -261,6 +261,11 @@ fn applies_changes() {
   };
   assert_eq!(names(&root), ["do", "old"]);
   assert_eq!(peer::secrets(&root.0).unwrap().len(), 2);
+  // The CA's certificate isn't a secret.
+  assert_eq!(peer::ca(&root.0), None);
+  apply(Change::Ca("the CA".into())).unwrap();
+  assert_eq!(peer::ca(&root.0), Some(root.0.join("ca.pem")));
+  assert_eq!(secured.borrow().len(), 2);
 
   // A bad node list isn't written.
   assert!(apply(Change::Nodes("do ftp://x\n".into())).is_err());
@@ -302,6 +307,7 @@ fn moves_peers_between_roots() {
   let (old, new) = (Root::new("move-old"), Root::new("move-new"));
   old.write("nodes", "do https://do:8788\n");
   old.write("mesh.env", "LOGGER_NODE=me\nLOGGER_PEER_TOKEN=mesh\n");
+  old.write("ca.pem", "the CA");
   old.write(
     "peers/a.env",
     "LOGGER_PEER_URL=http://a:8788\nLOGGER_PEER_TOKEN=old\n",
@@ -325,4 +331,6 @@ fn moves_peers_between_roots() {
   assert_eq!(tokens, [("do", "mesh"), ("a", "old"), ("b", "new")]);
   assert!(peer::gather(&old.0).pull.is_empty());
   assert!(!old.0.join("peers").exists());
+  assert_eq!(fs::read_to_string(new.0.join("ca.pem")).unwrap(), "the CA");
+  assert_eq!(peer::ca(&old.0), None);
 }

@@ -282,12 +282,28 @@ fn syncs_from_every_node_in_turn() {
     "LOGGER_NODE=me\nLOGGER_PEER_TOKEN=mesh\n",
   )
   .unwrap();
+  // With the mesh's CA, HTTPS peers trust it alone; others can't.
+  fs::write(dir.0.join("ca.pem"), "the CA").unwrap();
+  fs::create_dir(dir.0.join("peers")).unwrap();
+  fs::write(
+    dir.0.join("peers").join("old.env"),
+    "LOGGER_PEER_URL=http://old:8788\nLOGGER_PEER_TOKEN=old\n",
+  )
+  .unwrap();
   run_with_sync(&dir, Some(dir.0.clone()));
   let sync = dir.log("sync");
   let at = |text: &str| sync.find(text).unwrap_or_else(|| panic!("{sync}"));
-  let a = at(" a: sync --peer https://a:8788 mesh");
-  let b = at(" b: sync --peer https://b:8788 mesh");
+  let ca = dir.0.join("ca.pem");
+  let a = at(&format!(
+    " a: sync --peer https://a:8788 --peer-ca {} mesh",
+    ca.display()
+  ));
+  let b = at(&format!(
+    " b: sync --peer https://b:8788 --peer-ca {} mesh",
+    ca.display()
+  ));
   assert!(a < b, "{sync}");
+  at(" old: sync --peer http://old:8788 old");
   // Not itself, and not a node that can't be reached.
   assert!(
     !sync.contains("me:8788") && !sync.contains(" pi: "),
