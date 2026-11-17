@@ -225,12 +225,12 @@ fn runs_the_loggers_commands() {
   assert_eq!(args(&config.index), "index --follow --data data");
   assert_eq!(args(&config.compact), "compact --data data");
   assert_eq!(args(&config.sync), "sync --data data");
-  assert_eq!(config.peer_file, None);
+  assert_eq!(config.peers, None);
 }
 
 /// Runs `run` with a capture that hands off after a few seconds, and a sync
 /// that says how it was called, due soon after start.
-fn run_with_sync(dir: &TempDir, peer_file: Option<PathBuf>) {
+fn run_with_sync(dir: &TempDir, peers: Option<PathBuf>) {
   let capture = script(&dir.0, "capture", &[Step::Sleep(3), Step::Exit(0)]);
   let index = script(&dir.0, "index", &[Step::Sleep(20)]);
   let mut config = config(dir, capture, index);
@@ -238,7 +238,7 @@ fn run_with_sync(dir: &TempDir, peer_file: Option<PathBuf>) {
     script(&dir.0, "sync", &[Step::SayArgsAnd("LOGGER_PEER_TOKEN")]);
   sync.args = vec!["sync".into()];
   config.sync = sync;
-  config.peer_file = peer_file;
+  config.peers = peers;
   config.sync_first = Duration::from_millis(100);
   let exit = run(&config, &Stop::new()).unwrap();
   assert_eq!(exit, Exit::HandedOff);
@@ -247,36 +247,61 @@ fn run_with_sync(dir: &TempDir, peer_file: Option<PathBuf>) {
 #[test]
 fn syncs_from_the_peer_file() {
   let dir = TempDir::new("sync");
-  let peer_file = dir.0.join("peer.env");
   fs::write(
-    &peer_file,
+    dir.0.join("peer.env"),
     "# the old host\nLOGGER_PEER_URL=http://peer:8788\n\
      LOGGER_PEER_TOKEN=\"secret\"\n",
   )
   .unwrap();
-  run_with_sync(&dir, Some(peer_file));
+  run_with_sync(&dir, Some(dir.0.clone()));
   let sync = dir.log("sync");
-  // The URL as an argument; the token only in its environment.
+  // The URL as an argument; the token only in its environment. Each line
+  // says which peer it's about.
   assert!(
-    sync.contains(" sync --peer http://peer:8788 secret"),
+    sync.contains(" peer: sync --peer http://peer:8788 secret"),
     "{sync}"
   );
   let supervisor = dir.log("supervisor");
   assert!(
-    supervisor.contains("sync: from http://peer:8788"),
+    supervisor.contains("sync: from peer (http://peer:8788)"),
     "{supervisor}"
   );
   assert!(!supervisor.contains("secret"), "{supervisor}");
 }
 
 #[test]
+fn syncs_from_every_node_in_turn() {
+  let dir = TempDir::new("mesh");
+  fs::write(
+    dir.0.join("nodes"),
+    "a https://a:8788\nb https://b:8788\nme https://me:8788\npi push\n",
+  )
+  .unwrap();
+  fs::write(
+    dir.0.join("mesh.env"),
+    "LOGGER_NODE=me\nLOGGER_PEER_TOKEN=mesh\n",
+  )
+  .unwrap();
+  run_with_sync(&dir, Some(dir.0.clone()));
+  let sync = dir.log("sync");
+  let at = |text: &str| sync.find(text).unwrap_or_else(|| panic!("{sync}"));
+  let a = at(" a: sync --peer https://a:8788 mesh");
+  let b = at(" b: sync --peer https://b:8788 mesh");
+  assert!(a < b, "{sync}");
+  // Not itself, and not a node that can't be reached.
+  assert!(
+    !sync.contains("me:8788") && !sync.contains(" pi: "),
+    "{sync}"
+  );
+}
+
+#[test]
 fn skips_sync_without_a_peer() {
   let dir = TempDir::new("no-peer");
-  let peer_file = dir.0.join("peer.env");
-  run_with_sync(&dir, Some(peer_file));
+  run_with_sync(&dir, Some(dir.0.clone()));
   assert!(dir.log("sync").is_empty());
-  assert!(dir.log("supervisor").contains("sync: no peer file at"));
-  // Without a peer file configured, no sync at all.
+  assert!(dir.log("supervisor").contains("sync: no peers in"));
+  // With nowhere to look for peers, no sync at all.
   let dir = TempDir::new("no-peer-file");
   run_with_sync(&dir, None);
   assert!(!dir.0.join("logs").join("sync.log").exists());

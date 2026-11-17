@@ -224,55 +224,51 @@ fn draws_the_watch_screen() {
 }
 
 #[test]
-fn reports_the_peer() {
+fn reports_the_peers() {
   let dir = TempDir::new("peer");
   let paths = Paths::under(dir.0.clone());
   let mut watcher = Watcher::new().unwrap();
-  // No peer file: nothing about syncing.
+  // No peers: nothing about syncing.
   let report = watcher.gather(&paths).unwrap();
   assert_eq!(report.sync, None);
-  assert!(
-    !text(&report)
-      .join(
-        "
-"
-      )
-      .contains("sync")
-  );
+  assert!(!text(&report).join("\n").contains("sync"));
 
   dir.write(
     "peer.env",
-    "LOGGER_PEER_URL=http://peer:8788
-LOGGER_PEER_TOKEN=secret
-",
+    "LOGGER_PEER_URL=http://peer:8788\nLOGGER_PEER_TOKEN=secret\n",
   );
+  dir.write("nodes", "do https://do:8788\nme push\n");
+  dir.write("mesh.env", "LOGGER_NODE=me\nLOGGER_PEER_TOKEN=mesh\n");
   let lines = journal_lines(&watcher.gather(&paths).unwrap());
   assert_eq!(
-    lines.last().unwrap(),
-    "sync from http://peer:8788  last: no round yet"
+    lines[lines.len() - 2..],
+    [
+      "sync from do (https://do:8788)  last: no round yet",
+      "sync from peer (http://peer:8788)  last: no round yet",
+    ]
   );
+  // Each peer's last line in the log, without its name.
   dir.write(
     "logs/sync.log",
-    "2026-11-10 12:00:00.000Z 3 files listed, 1 updated, 10 bytes pulled
-",
+    "2026-11-10 12:00:00.000Z peer: 3 files listed, 1 updated\n\
+     2026-11-10 12:00:01.000Z do: 5 files listed, 0 updated\n\
+     2026-11-10 12:00:02.000Z sync: exited\n",
   );
-  let all = text(&watcher.gather(&paths).unwrap()).join(
-    "
-",
-  );
+  let all = text(&watcher.gather(&paths).unwrap()).join("\n");
   assert!(
-    all.contains("last: 2026-11-10 12:00:00.000Z 3 files"),
+    all.contains("(https://do:8788)  last: 2026-11-10 12:00:01.000Z 5 files"),
     "{all}"
   );
-  assert!(!all.contains("secret"), "{all}");
-  // A broken file says so.
-  dir.write(
-    "peer.env",
-    "LOGGER_PEER_URL=http://peer:8788
-",
+  assert!(
+    all.contains("(http://peer:8788)  last: 2026-11-10 12:00:00.000Z 3 files"),
+    "{all}"
   );
-  let report = watcher.gather(&paths).unwrap();
-  assert!(report.sync.unwrap().peer.is_err());
+  assert!(!all.contains("secret") && !all.contains("mesh "), "{all}");
+  // A broken file says so, and the rest are still shown.
+  dir.write("peer.env", "LOGGER_PEER_URL=http://peer:8788\n");
+  let sync = watcher.gather(&paths).unwrap().sync.unwrap();
+  assert_eq!(sync.peers.len(), 1);
+  assert!(sync.problems[0].contains("peer.env"), "{:?}", sync.problems);
 }
 
 #[test]

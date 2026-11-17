@@ -129,7 +129,7 @@ mod task {
       supervisor: root.join(r"bin\20261109-120000-0.1.0\dgg-supervisor.exe"),
       data: root.join("data"),
       logs: root.join("logs"),
-      peer_file: Some(root.join("peer.env")),
+      peers: Some(root),
     }
   }
 
@@ -138,7 +138,7 @@ mod task {
     let task = task();
     assert_eq!(
       arguments(&task),
-      r#"--data "C:\Users\some one\AppData\Local\dgg-tools\data" --logs "C:\Users\some one\AppData\Local\dgg-tools\logs" --peer-file "C:\Users\some one\AppData\Local\dgg-tools\peer.env""#
+      r#"--data "C:\Users\some one\AppData\Local\dgg-tools\data" --logs "C:\Users\some one\AppData\Local\dgg-tools\logs" --peers "C:\Users\some one\AppData\Local\dgg-tools""#
     );
     let xml = xml(&task, r"HOST\some one");
     assert!(xml.contains(r"<UserId>HOST\some one</UserId>"));
@@ -147,15 +147,29 @@ mod task {
     assert_eq!(parse(&xml.replace("dgg-supervisor", "something")), None);
   }
 
-  /// A task from before syncing: no peer file.
+  /// A task from before syncing: no peers.
   #[test]
-  fn reads_tasks_without_a_peer_file() {
+  fn reads_tasks_without_peers() {
     let task = Task {
-      peer_file: None,
+      peers: None,
       ..task()
     };
-    assert!(!arguments(&task).contains("--peer-file"));
+    assert!(!arguments(&task).contains("--peers"));
     assert_eq!(parse(&xml(&task, "someone")), Some(task));
+  }
+
+  /// A task from before several peers: its peer file's directory.
+  #[test]
+  fn reads_tasks_with_a_peer_file() {
+    let task = task();
+    let old = arguments(&task).replace(
+      r#"--peers "C:\Users\some one\AppData\Local\dgg-tools""#,
+      r#"--peer-file "C:\Users\some one\AppData\Local\dgg-tools\peer.env""#,
+    );
+    assert!(old.contains("--peer-file"), "{old}");
+    let parsed =
+      ::deploy::install::task::parse_arguments(task.supervisor.clone(), &old);
+    assert_eq!(parsed, Some(task));
   }
 
   /// Against Task Scheduler itself: registered under a name of its own (and
@@ -191,7 +205,7 @@ mod service {
       supervisor: root.join(r"bin\20261109-120000-0.1.0\dgg-supervisor.exe"),
       data: PathBuf::from(r"D:\chat data"),
       logs: root.join("logs"),
-      peer_file: None,
+      peers: None,
     };
     let line = command_line(&task);
     assert_eq!(

@@ -17,7 +17,7 @@ use {
 };
 
 /// Keep capture and index running against a data directory, compacting
-/// and (with a peer file) syncing on a schedule, until stopped or until
+/// and (given where its peers are) syncing on a schedule, until stopped or until
 /// capture hands off to a newer instance.
 #[derive(Parser)]
 #[command(name = "dgg-supervisor", version = ::deploy::BUILD)]
@@ -32,8 +32,13 @@ struct Args {
   /// Minutes between compactions.
   #[arg(long, default_value_t = 60)]
   compact_every: u64,
-  /// The peer to sync from (see `deploy::peer`); read before each round.
+  /// Where the peers to sync from are: the install's root (see
+  /// `deploy::peer`); looked at before each round.
   #[arg(long)]
+  peers: Option<PathBuf>,
+  /// The single peer file of installs from before there were several:
+  /// its directory is taken as `--peers`.
+  #[arg(long, hide = true, conflicts_with = "peers")]
   peer_file: Option<PathBuf>,
   /// Minutes between syncs.
   #[arg(long, default_value_t = 15)]
@@ -57,7 +62,7 @@ fn main() -> ExitCode {
   };
   let mut config = Config::new(&bin_dir, &args.data, &args.logs);
   config.compact_every = Duration::from_secs(args.compact_every * 60);
-  config.peer_file = args.peer_file;
+  config.peers = ::deploy::peer::root(args.peers, args.peer_file);
   config.sync_every = Duration::from_secs(args.sync_every * 60);
   if args.service {
     #[cfg(windows)]

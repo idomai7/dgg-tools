@@ -22,7 +22,7 @@ struct Args {
 #[derive(Subcommand)]
 enum Command {
   /// Keep capture and `index --follow` running against a data directory,
-  /// compacting every hour and (with `--peer-file`) syncing every 15
+  /// compacting every hour and (with `--peers`) syncing every 15
   /// minutes, until stopped (Ctrl-C) or until capture hands off to a newer
   /// instance.
   Supervise {
@@ -39,9 +39,14 @@ enum Command {
     /// Minutes between compactions.
     #[arg(long, default_value_t = 60)]
     compact_every: u64,
-    /// The peer to sync from: a file of `LOGGER_PEER_URL=` and
-    /// `LOGGER_PEER_TOKEN=` lines, read before each round.
+    /// Where the peers to sync from are: a directory holding a node list
+    /// (`nodes` and `mesh.env`), `peers\<name>.env` files or `peer.env`
+    /// (see the README), looked at before each round.
     #[arg(long)]
+    peers: Option<PathBuf>,
+    /// A single peer file, as older installs ran: its directory is taken as
+    /// `--peers`.
+    #[arg(long, hide = true, conflicts_with = "peers")]
     peer_file: Option<PathBuf>,
     /// Minutes between syncs.
     #[arg(long, default_value_t = 15)]
@@ -155,6 +160,7 @@ fn main() -> ExitCode {
       logs,
       bin_dir,
       compact_every,
+      peers,
       peer_file,
       sync_every,
     } => supervise(
@@ -163,7 +169,7 @@ fn main() -> ExitCode {
       bin_dir,
       Schedule {
         compact_every,
-        peer_file,
+        peers: ::deploy::peer::root(peers, peer_file),
         sync_every,
       },
     ),
@@ -339,7 +345,7 @@ fn print_status(paths: &Paths, lines: usize) -> ::std::io::Result<()> {
 /// What `supervise` runs on a schedule, in minutes.
 struct Schedule {
   compact_every: u64,
-  peer_file: Option<PathBuf>,
+  peers: Option<PathBuf>,
   sync_every: u64,
 }
 
@@ -361,7 +367,7 @@ fn supervise(
   };
   let mut config = Config::new(&bin_dir, &data, &logs);
   config.compact_every = Duration::from_secs(schedule.compact_every * 60);
-  config.peer_file = schedule.peer_file;
+  config.peers = schedule.peers;
   config.sync_every = Duration::from_secs(schedule.sync_every * 60);
   let stop = Stop::new();
   let on_signal = stop.clone();

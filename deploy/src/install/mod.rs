@@ -356,7 +356,7 @@ pub fn install(options: &Options) -> io::Result<Done> {
     supervisor: exe(&build, "dgg-supervisor"),
     data: paths.data.clone(),
     logs: paths.logs.clone(),
-    peer_file: Some(paths.peer_file()),
+    peers: Some(paths.root.clone()),
   };
   if options.scope == Scope::Machine {
     // Before the service's account can be granted anything, it must exist.

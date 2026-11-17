@@ -26,9 +26,10 @@ pub struct Task {
   pub supervisor: PathBuf,
   pub data: PathBuf,
   pub logs: PathBuf,
-  /// What it syncs from, if anything (`--peer-file`). Installs from before
-  /// syncing have none.
-  pub peer_file: Option<PathBuf>,
+  /// Where its peers are, if anywhere (`--peers`, the install's root; or
+  /// the directory of the `--peer-file` older installs gave). Installs from
+  /// before syncing have none.
+  pub peers: Option<PathBuf>,
 }
 
 /// This user, as Task Scheduler names them.
@@ -58,8 +59,8 @@ fn quote(path: &Path) -> String {
 pub fn arguments(task: &Task) -> String {
   let mut arguments =
     format!("--data {} --logs {}", quote(&task.data), quote(&task.logs));
-  if let Some(peer_file) = &task.peer_file {
-    arguments += &format!(" --peer-file {}", quote(peer_file));
+  if let Some(peers) = &task.peers {
+    arguments += &format!(" --peers {}", quote(peers));
   }
   arguments
 }
@@ -169,7 +170,7 @@ pub fn parse_arguments(supervisor: PathBuf, arguments: &str) -> Option<Task> {
   Some(Task {
     data: field("data")?,
     logs: field("logs")?,
-    peer_file: field("peer-file"),
+    peers: crate::peer::root(field("peers"), field("peer-file")),
     supervisor,
   })
 }

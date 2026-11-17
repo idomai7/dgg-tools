@@ -1,5 +1,5 @@
 //! What the logger is doing: its programs, each capture's health, the
-//! journal and index, the peer it syncs from, free disk space and the ends
+//! journal and index, the peers it syncs from, free disk space and the ends
 //! of the logs.
 //!
 //! [`Watcher::gather`] takes a snapshot ([`Report`]); [`text`] prints one,
@@ -131,12 +131,20 @@ pub struct Report {
   pub sync: Option<Sync>,
 }
 
-/// The peer the install syncs from.
+/// The peers the install syncs from.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Sync {
-  /// Its URL, or why the peer file can't be read.
-  pub peer: Result<String, String>,
-  /// The last line of `sync.log`: how the last round went.
+  pub peers: Vec<Peer>,
+  /// What couldn't be read (see [`peer::gather`]).
+  pub problems: Vec<String>,
+}
+
+/// One peer the install syncs from.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Peer {
+  pub name: String,
+  pub url: String,
+  /// Its last line in `sync.log`: how its last round went.
   pub last: Option<String>,
 }
 
@@ -323,17 +331,37 @@ impl Watcher {
   }
 }
 
-/// The peer, if there's a peer file.
+/// The peers, if there are any (or any problems finding them).
 fn sync(paths: &Paths) -> Option<Sync> {
-  let peer = match peer::read(&paths.peer_file()) {
-    Ok(None) => return None,
-    Ok(Some(peer)) => Ok(peer.url),
-    Err(e) => Err(e.to_string()),
-  };
-  let last = tail(&paths.logs.join("sync.log"), 1)
-    .ok()
-    .and_then(|lines| lines.into_iter().next());
-  Some(Sync { peer, last })
+  let found = peer::gather(&paths.root);
+  if found.pull.is_empty() && found.problems.is_empty() {
+    return None;
+  }
+  let log = tail(&paths.logs.join("sync.log"), 500).unwrap_or_default();
+  let peers = found
+    .pull
+    .into_iter()
+    .map(|named| Peer {
+      last: last_round(&log, &named.name),
+      name: named.name,
+      url: named.peer.url,
+    })
+    .collect();
+  Some(Sync {
+    peers,
+    problems: found.problems,
+  })
+}
+
+/// `name`'s last line in `log` (`<date> <time> <name>: ...`), without its
+/// name.
+fn last_round(log: &[String], name: &str) -> Option<String> {
+  let label = format!("{name}: ");
+  log.iter().rev().find_map(|line| {
+    let mut fields = line.splitn(3, ' ');
+    let (date, time, rest) = (fields.next()?, fields.next()?, fields.next()?);
+    Some(format!("{date} {time} {}", rest.strip_prefix(&label)?))
+  })
 }
 
 fn captures(journal_root: &Path, now: i64) -> io::Result<Vec<Capture>> {
@@ -584,11 +612,16 @@ pub fn journal_lines(report: &Report) -> Vec<String> {
     None => "index  none yet".into(),
   });
   if let Some(sync) = &report.sync {
-    let last = sync.last.as_deref().unwrap_or("no round yet");
-    out.push(match &sync.peer {
-      Ok(url) => format!("sync from {url}  last: {last}"),
-      Err(e) => format!("sync  {e}"),
-    });
+    for peer in &sync.peers {
+      let last = peer.last.as_deref().unwrap_or("no round yet");
+      out.push(format!(
+        "sync from {} ({})  last: {last}",
+        peer.name, peer.url
+      ));
+    }
+    for problem in &sync.problems {
+      out.push(format!("sync  {problem}"));
+    }
   }
   out
 }

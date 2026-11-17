@@ -255,6 +255,15 @@ pub fn file(root: &Path, name: &str) -> io::Result<PathBuf> {
   Ok(root.join(PEERS).join(format!("{name}.env")))
 }
 
+/// Where to look for peers, given `--peers` or the `--peer-file` of older
+/// installs (whose directory is the install's root).
+pub fn root(
+  peers: Option<PathBuf>,
+  peer_file: Option<PathBuf>,
+) -> Option<PathBuf> {
+  peers.or_else(|| Some(peer_file?.parent()?.to_owned()))
+}
+
 /// A name for a peer known only by its URL: its host.
 pub fn name_of(url: &str) -> String {
   let host = url

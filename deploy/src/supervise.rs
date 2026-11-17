@@ -9,10 +9,10 @@
 //!   new one waits for the old one to exit.
 //! - `dgg-logger compact` runs every `compact_every` (the first time a minute after
 //!   start), by whichever supervisor holds `compact.lock`.
-//! - With a peer file (see [`crate::peer`]), `dgg-logger sync` pulls from
-//!   the peer every `sync_every` (the first time two minutes after start),
-//!   by whichever supervisor holds `sync.lock`. The file is read before
-//!   each round; without one, there's nothing to sync.
+//! - Given where its peers are (see [`crate::peer`]), `dgg-logger sync`
+//!   pulls from each peer in turn every `sync_every` (the first time two
+//!   minutes after start), by whichever supervisor holds `sync.lock`. They
+//!   are looked for before each round; one failing doesn't stop the rest.
 //!
 //! Each program's stdout and stderr go, line by line, to `<name>.log` in the
 //! logs directory; the supervisor's own lines to `supervisor.log`. Restarts
@@ -78,10 +78,11 @@ pub struct Config {
   pub capture: Program,
   pub index: Program,
   pub compact: Program,
-  /// `sync`, without its peer: that's added from `peer_file`.
+  /// `sync`, without its peer: that's added from `peers`.
   pub sync: Program,
-  /// The peer to sync from, if any (see [`crate::peer`]).
-  pub peer_file: Option<PathBuf>,
+  /// Where the peers to sync from are, if anywhere: the install's root
+  /// (see [`crate::peer`]).
+  pub peers: Option<PathBuf>,
   /// Holds `index.lock`, `compact.lock` and `sync.lock`.
   pub lock_dir: PathBuf,
   pub logs: PathBuf,
@@ -107,7 +108,7 @@ impl Config {
       index: command(&["index", "--follow"]),
       compact: command(&["compact"]),
       sync: command(&["sync"]),
-      peer_file: None,
+      peers: None,
       lock_dir: data.to_owned(),
       logs: logs.to_owned(),
       compact_first: Duration::from_secs(60),
@@ -177,7 +178,7 @@ pub fn run(config: &Config, stop: &Stop) -> io::Result<Exit> {
   };
   let supervisor = open("supervisor")?;
   let logs = [open("capture")?, open("index")?, open("compact")?];
-  let sync_log = match &config.peer_file {
+  let sync_log = match &config.peers {
     Some(_) => Some(open("sync")?),
     None => None,
   };
@@ -239,10 +240,10 @@ pub fn run(config: &Config, stop: &Stop) -> io::Result<Exit> {
         every: config.compact_every,
       };
       periodically(&schedule, compact_log, &context, || {
-        Some(config.compact.clone())
+        vec![(None, config.compact.clone())]
       });
     });
-    if let (Some(peer_file), Some(sync_log)) = (&config.peer_file, &sync_log) {
+    if let (Some(peers), Some(sync_log)) = (&config.peers, &sync_log) {
       scope.spawn(|| {
         let schedule = Schedule {
           name: "sync",
@@ -250,26 +251,38 @@ pub fn run(config: &Config, stop: &Stop) -> io::Result<Exit> {
           first: config.sync_first,
           every: config.sync_every,
         };
-        // What the peer file said last round, to report only changes.
+        // What the peers were last round, to report only changes.
         let last = Mutex::new(None::<String>);
         periodically(&schedule, sync_log, &context, || {
-          let (program, said) = match peer::read(peer_file) {
-            Ok(Some(peer)) => (
-              Some(sync_from(&config.sync, &peer)),
-              format!("sync: from {}", peer.url),
-            ),
-            Ok(None) => (
-              None,
-              format!("sync: no peer file at {}", peer_file.display()),
-            ),
-            Err(e) => (None, format!("sync: {e}")),
+          let found = peer::gather(peers);
+          let mut said = if found.pull.is_empty() {
+            format!("sync: no peers in {}", peers.display())
+          } else {
+            let names: Vec<String> = found
+              .pull
+              .iter()
+              .map(|named| format!("{} ({})", named.name, named.peer.url))
+              .collect();
+            format!("sync: from {}", names.join(", "))
           };
+          for problem in &found.problems {
+            said += &format!("; {problem}");
+          }
           let mut last = last.lock().unwrap();
           if last.as_ref() != Some(&said) {
             log_line(&supervisor, &said);
             *last = Some(said);
           }
-          program
+          found
+            .pull
+            .iter()
+            .map(|named| {
+              (
+                Some(named.name.clone()),
+                sync_from(&config.sync, &named.peer),
+              )
+            })
+            .collect()
         });
       });
     }
@@ -310,12 +323,14 @@ struct Schedule {
   every: Duration,
 }
 
-/// Runs the program `program` gives (if any) on `schedule`, until stopped.
+/// Runs the programs `programs` gives on `schedule`, one after another,
+/// until stopped. Each one's lines in `log` start with its label, if it has
+/// one.
 fn periodically(
   schedule: &Schedule,
   log: &SharedLog,
   context: &Context,
-  program: impl Fn() -> Option<Program>,
+  programs: impl Fn() -> Vec<(Option<String>, Program)>,
 ) {
   let Schedule {
     name,
@@ -328,8 +343,16 @@ fn periodically(
     wait = *every;
     match try_hold(lock) {
       Ok(Some(_lock)) => {
-        if let Some(program) = program() {
-          run_once(&program, name, log, context);
+        for (label, program) in programs() {
+          let named = match &label {
+            Some(label) => format!("{name} {label}"),
+            None => (*name).to_owned(),
+          };
+          if run_once(&program, &named, label.as_deref(), log, context)
+            .is_none()
+          {
+            break;
+          }
         }
       }
       Ok(None) => log_line(
@@ -397,7 +420,7 @@ fn keep_running(
   let mut delay = backoff.first;
   loop {
     let started = Instant::now();
-    let Some(status) = run_once(program, name, log, context) else {
+    let Some(status) = run_once(program, name, None, log, context) else {
       return false;
     };
     if until_clean && status.is_some_and(|status| status.success()) {
@@ -417,12 +440,13 @@ fn keep_running(
   }
 }
 
-/// Runs `program` once, its output to `log`. `None` if stopped (the program
-/// is killed), else `Some` of its exit status, or `Some(None)` if it
-/// couldn't be started.
+/// Runs `program` once, its output to `log`, each line after `label` if
+/// given. `None` if stopped (the program is killed), else `Some` of its
+/// exit status, or `Some(None)` if it couldn't be started.
 fn run_once(
   program: &Program,
   name: &str,
+  label: Option<&str>,
   log: &SharedLog,
   context: &Context,
 ) -> Option<Option<ExitStatus>> {
@@ -474,7 +498,8 @@ fn run_once(
   .flatten()
   .map(|output| {
     let log = log.clone();
-    thread::spawn(move || copy_lines(output, &log))
+    let prefix = label.map(|label| format!("{label}: ")).unwrap_or_default();
+    thread::spawn(move || copy_lines(output, &prefix, &log))
   })
   .collect();
   match wait_or_kill(&mut child, stop) {
@@ -511,7 +536,7 @@ fn wait_or_kill(child: &mut Child, stop: &Stop) -> Option<ExitStatus> {
   }
 }
 
-fn copy_lines(output: Box<dyn Read + Send>, log: &SharedLog) {
+fn copy_lines(output: Box<dyn Read + Send>, prefix: &str, log: &SharedLog) {
   let mut reader = BufReader::new(output);
   let mut line = Vec::new();
   loop {
@@ -520,7 +545,8 @@ fn copy_lines(output: Box<dyn Read + Send>, log: &SharedLog) {
       Ok(0) | Err(_) => return,
       Ok(_) => {
         let text = String::from_utf8_lossy(&line);
-        log_line(log, text.trim_end_matches(['\r', '\n']));
+        let text = text.trim_end_matches(['\r', '\n']);
+        log_line(log, &format!("{prefix}{text}"));
       }
     }
   }
