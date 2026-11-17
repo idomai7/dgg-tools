@@ -76,17 +76,37 @@ enum Command {
     /// Builds to keep in `<root>\bin`.
     #[arg(long, default_value_t = 3)]
     keep: usize,
-    /// Sync from this host's `serve` every 15 minutes (e.g.
-    /// `http://old-host:8788`), with its token from `--peer-token`. Kept
-    /// in `<root>\peer.env` until changed or removed.
+    /// Be this node of a mesh, syncing from every other node in
+    /// `--nodes` with the mesh's token from `--mesh-token`. Kept in
+    /// `<root>\mesh.env` until changed or removed.
+    #[arg(long, requires = "mesh_token")]
+    name: Option<String>,
+    /// The mesh's read token, for `--name`.
+    #[arg(long, env = "LOGGER_MESH_TOKEN", hide_env_values = true)]
+    mesh_token: Option<String>,
+    /// The mesh's node list (see the README), copied to `<root>\nodes`.
+    #[arg(long)]
+    nodes: Option<PathBuf>,
+    /// Leave the mesh: its node list and `mesh.env` are removed.
+    #[arg(long, conflicts_with_all = ["name", "nodes"])]
+    no_mesh: bool,
+    /// Also sync from this host's `serve` every 15 minutes (e.g.
+    /// `https://old-host:8788`), with its token from `--peer-token`. Kept
+    /// in `<root>\peers\<name>.env` until changed or removed.
     #[arg(long)]
     peer: Option<String>,
+    /// The name for `--peer` (default: its host).
+    #[arg(long, requires = "peer")]
+    peer_name: Option<String>,
     /// The token for `--peer`.
     #[arg(long, env = "LOGGER_PEER_TOKEN", hide_env_values = true)]
     peer_token: Option<String>,
-    /// Stop syncing from a peer.
-    #[arg(long, conflicts_with = "peer")]
-    no_peer: bool,
+    /// Stop syncing from the peer of this name.
+    #[arg(long)]
+    no_peer: Vec<String>,
+    /// Stop syncing from every peer set with `--peer`.
+    #[arg(long)]
+    no_peers: bool,
   },
   /// Remove the install: its task or service, programs and binaries. The
   /// data and logs stay (a machine install's get ordinary permissions,
@@ -180,30 +200,62 @@ fn main() -> ExitCode {
       data,
       logs,
       keep,
+      name,
+      mesh_token,
+      nodes,
+      no_mesh,
       peer,
+      peer_name,
       peer_token,
       no_peer,
+      no_peers,
     } => {
-      let peer = match (peer, peer_token, no_peer) {
-        (Some(url), _, _)
-          if !url.starts_with("http://") && !url.starts_with("https://") =>
-        {
-          eprintln!("--peer is a URL: http://host:port");
+      use ::deploy::peer::{self, Change, Mesh, Peer};
+      let mut peers = Vec::new();
+      if no_mesh {
+        peers.push(Change::NoMesh);
+      }
+      if let Some(nodes) = nodes {
+        let text = match ::std::fs::read_to_string(&nodes) {
+          Ok(text) => text,
+          Err(e) => {
+            eprintln!("{}: {e}", nodes.display());
+            return ExitCode::FAILURE;
+          }
+        };
+        if let Err(e) = peer::parse_nodes(&text) {
+          eprintln!("{}: {e}", nodes.display());
           return ExitCode::FAILURE;
         }
-        (Some(url), Some(token), _) => {
-          install::PeerChange::Set(::deploy::peer::Peer { url, token })
+        peers.push(Change::Nodes(text));
+      }
+      if let (Some(node), Some(token)) = (name, mesh_token) {
+        peers.push(Change::Mesh(Mesh { node, token }));
+      }
+      if no_peers {
+        peers.push(Change::NoPeers);
+      }
+      peers.extend(no_peer.into_iter().map(Change::NoPeer));
+      match (peer, peer_token) {
+        (Some(url), _)
+          if !url.starts_with("http://") && !url.starts_with("https://") =>
+        {
+          eprintln!("--peer is a URL: https://host:port");
+          return ExitCode::FAILURE;
         }
-        (Some(_), None, _) => {
+        (Some(url), Some(token)) => peers.push(Change::Peer {
+          name: peer_name.unwrap_or_else(|| peer::name_of(&url)),
+          peer: Peer { url, token },
+        }),
+        (Some(_), None) => {
           eprintln!(
             "--peer needs --peer-token (or LOGGER_PEER_TOKEN, in the \
              environment or .env)"
           );
           return ExitCode::FAILURE;
         }
-        (None, _, true) => install::PeerChange::Remove,
-        (None, _, false) => install::PeerChange::Keep,
-      };
+        (None, _) => {}
+      }
       install(&install::Options {
         scope: if machine {
           install::Scope::Machine
@@ -214,7 +266,7 @@ fn main() -> ExitCode {
         data,
         logs,
         keep: keep.max(1),
-        peer,
+        peers,
         ..install::Options::default()
       })
     }
@@ -285,8 +337,11 @@ fn install(options: &install::Options) -> ExitCode {
       eprintln!("  data     {}", done.paths.data.display());
       eprintln!("  logs     {}", done.paths.logs.display());
       eprintln!("  capture  {} (healthy)", done.capture);
-      if let Some(peer) = &done.peer {
+      for peer in &done.peers {
         eprintln!("  syncs    from {peer} every 15 minutes");
+      }
+      for problem in &done.problems {
+        eprintln!("  warning  {problem}");
       }
       eprintln!("`dgg-logger status --watch` to see it");
       for build in done.left {

@@ -220,3 +220,109 @@ fn writes_the_mesh_file() {
   };
   assert!(peer::write_mesh(&path, &renamed).is_err());
 }
+
+#[test]
+fn applies_changes() {
+  use peer::{Change, Mesh};
+  let root = Root::new("apply");
+  let secured = ::std::cell::RefCell::new(Vec::new());
+  let secure = |path: &::std::path::Path| {
+    // Secured while still empty: before the token goes in.
+    assert_eq!(fs::read(path).unwrap(), b"");
+    secured.borrow_mut().push(path.to_owned());
+    Ok(())
+  };
+  let apply = |change: Change| peer::apply(&root.0, &change, &secure);
+  let old = Peer {
+    url: "http://old:8788".into(),
+    token: "one".into(),
+  };
+  apply(Change::Peer {
+    name: "old".into(),
+    peer: old.clone(),
+  })
+  .unwrap();
+  apply(Change::Nodes("do https://do:8788\nme push\n".into())).unwrap();
+  apply(Change::Mesh(Mesh {
+    node: "me".into(),
+    token: "mesh".into(),
+  }))
+  .unwrap();
+  assert_eq!(
+    *secured.borrow(),
+    [root.0.join("peers/old.env"), root.0.join("mesh.env")]
+  );
+  let names = |root: &Root| -> Vec<String> {
+    peer::gather(&root.0)
+      .pull
+      .into_iter()
+      .map(|named| named.name)
+      .collect()
+  };
+  assert_eq!(names(&root), ["do", "old"]);
+  assert_eq!(peer::secrets(&root.0).unwrap().len(), 2);
+
+  // A bad node list isn't written.
+  assert!(apply(Change::Nodes("do ftp://x\n".into())).is_err());
+  assert_eq!(names(&root), ["do", "old"]);
+  // Removing what isn't there is fine.
+  apply(Change::NoPeer("missing".into())).unwrap();
+  apply(Change::NoPeer("old".into())).unwrap();
+  assert_eq!(names(&root), ["do"]);
+  apply(Change::NoMesh).unwrap();
+  assert!(names(&root).is_empty());
+  assert!(peer::secrets(&root.0).unwrap().is_empty());
+  assert!(
+    peer::apply(&root.0, &Change::NoPeer("../x".into()), &secure).is_err()
+  );
+}
+
+#[test]
+fn moves_an_old_peer_file_in() {
+  let root = Root::new("migrate");
+  root.write(
+    "peer.env",
+    "LOGGER_PEER_URL=http://old-host:8788\nLOGGER_PEER_TOKEN=one\n",
+  );
+  peer::migrate(&root.0).unwrap();
+  assert!(!root.0.join("peer.env").exists());
+  assert_eq!(
+    peer::read(&root.0.join("peers/old-host.env"))
+      .unwrap()
+      .unwrap()
+      .token,
+    "one"
+  );
+  // Nothing to move: fine.
+  peer::migrate(&root.0).unwrap();
+}
+
+#[test]
+fn moves_peers_between_roots() {
+  let (old, new) = (Root::new("move-old"), Root::new("move-new"));
+  old.write("nodes", "do https://do:8788\n");
+  old.write("mesh.env", "LOGGER_NODE=me\nLOGGER_PEER_TOKEN=mesh\n");
+  old.write(
+    "peers/a.env",
+    "LOGGER_PEER_URL=http://a:8788\nLOGGER_PEER_TOKEN=old\n",
+  );
+  old.write(
+    "peers/b.env",
+    "LOGGER_PEER_URL=http://b:8788\nLOGGER_PEER_TOKEN=old\n",
+  );
+  // The new root's own peer of a name is kept.
+  new.write(
+    "peers/b.env",
+    "LOGGER_PEER_URL=http://b:8788\nLOGGER_PEER_TOKEN=new\n",
+  );
+  peer::move_all(&old.0, &new.0).unwrap();
+  let found = peer::gather(&new.0);
+  let tokens: Vec<(&str, &str)> = found
+    .pull
+    .iter()
+    .map(|named| (named.name.as_str(), named.peer.token.as_str()))
+    .collect();
+  assert_eq!(tokens, [("do", "mesh"), ("a", "old"), ("b", "new")]);
+  assert!(peer::gather(&old.0).pull.is_empty());
+  assert!(!old.0.join("peers").exists());
+}

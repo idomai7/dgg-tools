@@ -11,7 +11,7 @@
 //! - `peers\<name>.env`: one-off peers ([`URL`], [`TOKEN`]), such as a host
 //!   being moved off.
 //! - `peer.env`: the single peer of installs from before there were
-//!   several, named for its URL's host.
+//!   several, named for its URL's host. `install` moves it into `peers`.
 //!
 //! The `.env` files hold `KEY=VALUE` lines; blank lines and `#` comments
 //! are skipped, and a value may be quoted.
@@ -253,6 +253,122 @@ pub fn file(root: &Path, name: &str) -> io::Result<PathBuf> {
     ));
   }
   Ok(root.join(PEERS).join(format!("{name}.env")))
+}
+
+/// A change `install` makes to an install's peers.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Change {
+  /// Sync from `peer` as `peers\<name>.env`, replacing any of that name.
+  Peer { name: String, peer: Peer },
+  /// Stop syncing from the one-off peer `name`, if there is one.
+  NoPeer(String),
+  /// Stop syncing from every one-off peer.
+  NoPeers,
+  /// Use this node list (checked by [`parse_nodes`]).
+  Nodes(String),
+  /// Be this node, with this mesh token.
+  Mesh(Mesh),
+  /// Leave the mesh: the node list and `mesh.env` go.
+  NoMesh,
+}
+
+/// The files under `root` holding tokens.
+pub fn secrets(root: &Path) -> io::Result<Vec<PathBuf>> {
+  let mut secrets: Vec<PathBuf> =
+    files(root)?.into_iter().map(|(_, path)| path).collect();
+  secrets.extend([root.join(MESH), root.join(LEGACY)]);
+  secrets.retain(|path| path.exists());
+  Ok(secrets)
+}
+
+/// Makes `change` under `root`. A file holding a token is created empty and
+/// given to `secure` before the token goes in.
+pub fn apply(
+  root: &Path,
+  change: &Change,
+  secure: &dyn Fn(&Path) -> io::Result<()>,
+) -> io::Result<()> {
+  let secret = |path: &Path, write: &dyn Fn(&Path) -> io::Result<()>| {
+    fs::create_dir_all(path.parent().unwrap())?;
+    fs::write(path, "")?;
+    secure(path)?;
+    write(path)
+  };
+  match change {
+    Change::Peer { name, peer } => {
+      secret(&file(root, name)?, &|path| write(path, peer))
+    }
+    Change::NoPeer(name) => remove(&file(root, name)?),
+    Change::NoPeers => {
+      for (_, path) in files(root)? {
+        remove(&path)?;
+      }
+      Ok(())
+    }
+    Change::Nodes(text) => {
+      parse_nodes(text)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+      fs::write(root.join(NODES), text)
+    }
+    Change::Mesh(mesh) => {
+      secret(&root.join(MESH), &|path| write_mesh(path, mesh))
+    }
+    Change::NoMesh => {
+      remove(&root.join(NODES))?;
+      remove(&root.join(MESH))
+    }
+  }
+}
+
+/// Moves an older install's `peer.env` to `peers\<host>.env`, unless a peer
+/// of that name is there already. Renamed, it keeps its permissions.
+pub fn migrate(root: &Path) -> io::Result<()> {
+  let legacy = root.join(LEGACY);
+  let Some(peer) = read(&legacy)? else {
+    return Ok(());
+  };
+  let to = file(root, &name_of(&peer.url))?;
+  if !to.exists() {
+    fs::create_dir_all(to.parent().unwrap())?;
+    fs::rename(&legacy, &to)?;
+  }
+  remove(&legacy)
+}
+
+/// Brings `old`'s peers along to `new`, unless `new` has its own of the
+/// same names, then removes them from `old`. Copied, they take `new`'s
+/// permissions.
+pub fn move_all(old: &Path, new: &Path) -> io::Result<()> {
+  let mut paths: Vec<PathBuf> = vec![NODES.into(), MESH.into(), LEGACY.into()];
+  for (name, _) in files(old)? {
+    paths.push(Path::new(PEERS).join(format!("{name}.env")));
+  }
+  for path in &paths {
+    let (from, to) = (old.join(path), new.join(path));
+    if from.exists() && !to.exists() {
+      fs::create_dir_all(to.parent().unwrap())?;
+      fs::copy(&from, &to)?;
+    }
+  }
+  remove_all(old)
+}
+
+/// Removes every peer under `root`: nothing's left to use their tokens.
+pub fn remove_all(root: &Path) -> io::Result<()> {
+  for path in [NODES, MESH, LEGACY] {
+    remove(&root.join(path))?;
+  }
+  match fs::remove_dir_all(root.join(PEERS)) {
+    Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
+    _ => Ok(()),
+  }
+}
+
+fn remove(path: &Path) -> io::Result<()> {
+  match fs::remove_file(path) {
+    Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
+    _ => Ok(()),
+  }
 }
 
 /// Where to look for peers, given `--peers` or the `--peer-file` of older

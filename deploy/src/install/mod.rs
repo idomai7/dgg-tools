@@ -23,10 +23,10 @@
 //! 4. The new task or service starts. Its capture, the newest, takes over
 //!    from the bridge, which exits.
 //!
-//! An install syncs from a peer once `<root>\peer.env` exists (see
-//! [`crate::peer`]): [`Options::peer`] sets or removes it. It moves with
-//! the root, and in a machine install only administrators and the service
-//! can read it, as it holds the peer's token.
+//! An install syncs from the peers in its root (see [`crate::peer`]):
+//! [`Options::peers`] changes them. They move with the root, and in a
+//! machine install only administrators and the service can read the files
+//! holding tokens.
 
 #[cfg(windows)]
 pub mod acl;
@@ -41,8 +41,7 @@ use {
   crate::{
     log::{now_ms, timestamp},
     paths::{Paths, user_root},
-    peer::{self, Peer},
-    processes,
+    peer, processes,
   },
   ::logger::control,
   ::std::{
@@ -143,19 +142,9 @@ pub struct Options {
   pub healthy_within: Duration,
   /// How long an old capture may take to hand off and exit.
   pub handoff_within: Duration,
-  pub peer: PeerChange,
-}
-
-/// What an install does to the peer it syncs from.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub enum PeerChange {
-  /// Keeps whatever there is (moving it, if the root moves).
-  #[default]
-  Keep,
-  /// Syncs from this one.
-  Set(Peer),
-  /// Stops syncing.
-  Remove,
+  /// Changes to the peers it syncs from, in order. Whatever else is there
+  /// is kept (and moved, if the root moves).
+  pub peers: Vec<peer::Change>,
 }
 
 impl Default for Options {
@@ -168,7 +157,7 @@ impl Default for Options {
       keep: 3,
       healthy_within: Duration::from_secs(120),
       handoff_within: Duration::from_secs(120),
-      peer: PeerChange::Keep,
+      peers: Vec::new(),
     }
   }
 }
@@ -185,8 +174,10 @@ pub struct Done {
   pub capture: String,
   /// Old builds still in use, left for next time.
   pub left: Vec<PathBuf>,
-  /// The URL it syncs from, if any.
-  pub peer: Option<String>,
+  /// The peers it syncs from: `<name> (<URL>)`.
+  pub peers: Vec<String>,
+  /// What about its peers couldn't be read.
+  pub problems: Vec<String>,
 }
 
 /// `YYYYMMDD-HHMMSS-<build>` for a build made now (see [`crate::BUILD`]).
@@ -347,7 +338,7 @@ pub fn install(options: &Options) -> io::Result<Done> {
     acl::protect(&paths.root)?;
     // Protecting opened it to every user; until the service exists, only
     // administrators.
-    secure_peer(&paths, &[])?;
+    secure_peers(&paths, &[])?;
   }
   let build = copy_build(&from, &paths.bin(), &build_name(now_ms()))?;
   fs::create_dir_all(&paths.data)?;
@@ -397,7 +388,7 @@ pub fn install(options: &Options) -> io::Result<Done> {
     }
     moving::merge_logs(&old.logs, &paths.logs)?;
     if !moving::same(&old.root, &paths.root) {
-      move_peer(&old, &paths)?;
+      peer::move_all(&old.root, &paths.root)?;
       if options.scope == Scope::Machine {
         allow_service(&paths)?;
       }
@@ -414,10 +405,12 @@ pub fn install(options: &Options) -> io::Result<Done> {
     }
   }
 
-  match &options.peer {
-    PeerChange::Keep => {}
-    PeerChange::Set(peer) => set_peer(&paths, options.scope, peer)?,
-    PeerChange::Remove => remove_peer(&paths)?,
+  peer::migrate(&paths.root)?;
+  for change in &options.peers {
+    peer::apply(&paths.root, change, &|file| match options.scope {
+      Scope::Machine => acl::secret(file, &[&service::account(service::NAME)]),
+      Scope::User => Ok(()),
+    })?;
   }
 
   // 4. The new install starts, and takes over from the bridge.
@@ -442,7 +435,12 @@ pub fn install(options: &Options) -> io::Result<Done> {
   };
   bridge::wait_gone(&mut bridge, options.handoff_within);
   let left = prune(&paths.bin(), options.keep)?;
-  let peer = peer::read(&paths.peer_file())?.map(|peer| peer.url);
+  let found = peer::gather(&paths.root);
+  let peers = found
+    .pull
+    .iter()
+    .map(|named| format!("{} ({})", named.name, named.peer.url))
+    .collect();
   Ok(Done {
     scope: options.scope,
     paths,
@@ -450,7 +448,8 @@ pub fn install(options: &Options) -> io::Result<Done> {
     replaced: current,
     capture,
     left,
-    peer,
+    peers,
+    problems: found.problems,
   })
 }
 
@@ -466,48 +465,17 @@ fn allow_service(paths: &Paths) -> io::Result<()> {
     }
     acl::grant(dir, &account)?;
   }
-  secure_peer(paths, &[&account])
+  secure_peers(paths, &[&account])
 }
 
-/// In a machine install, the peer file readable only by administrators,
-/// SYSTEM and `readers`.
+/// In a machine install, the files holding tokens readable only by
+/// administrators, SYSTEM and `readers`.
 #[cfg(windows)]
-fn secure_peer(paths: &Paths, readers: &[&str]) -> io::Result<()> {
-  let file = paths.peer_file();
-  match file.exists() {
-    true => acl::secret(&file, readers),
-    false => Ok(()),
+fn secure_peers(paths: &Paths, readers: &[&str]) -> io::Result<()> {
+  for file in peer::secrets(&paths.root)? {
+    acl::secret(&file, readers)?;
   }
-}
-
-/// Syncs from `peer`: in a machine install, the file is made secret before
-/// the token goes in.
-#[cfg(windows)]
-fn set_peer(paths: &Paths, scope: Scope, peer: &Peer) -> io::Result<()> {
-  let file = paths.peer_file();
-  if scope == Scope::Machine {
-    fs::write(&file, "")?;
-    secure_peer(paths, &[&service::account(service::NAME)])?;
-  }
-  peer::write(&file, peer)
-}
-
-/// Stops syncing.
-fn remove_peer(paths: &Paths) -> io::Result<()> {
-  match fs::remove_file(paths.peer_file()) {
-    Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
-    _ => Ok(()),
-  }
-}
-
-/// Brings the old root's peer file along, unless the new one has its own.
-/// Copied, it takes the new root's permissions.
-fn move_peer(old: &Paths, new: &Paths) -> io::Result<()> {
-  let (from, to) = (old.peer_file(), new.peer_file());
-  if from.exists() && !to.exists() {
-    fs::copy(&from, &to)?;
-  }
-  remove_peer(old)
+  Ok(())
 }
 
 /// Stops `current` and everything it runs, except from `keep` (the new
@@ -575,8 +543,8 @@ pub fn uninstall(root: Option<PathBuf>) -> io::Result<Removed> {
     None => {}
   }
   processes::kill_under(&paths.bin(), &["dgg-supervisor"])?;
-  // It holds a token; nothing's left to use it.
-  remove_peer(&paths)?;
+  // They hold tokens; nothing's left to use them.
+  peer::remove_all(&paths.root)?;
   remove_root(&paths)?;
   if machine {
     let user = task::user();
