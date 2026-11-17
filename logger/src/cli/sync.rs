@@ -3,7 +3,11 @@
 use {
   crate::{capture::Peer, sync::sync},
   ::clap::Args,
-  ::std::{path::Path, process::ExitCode, time::Duration},
+  ::std::{
+    path::{Path, PathBuf},
+    process::ExitCode,
+    time::Duration,
+  },
 };
 
 /// Pull another host's live journal files into this one's, for migrating
@@ -11,9 +15,13 @@ use {
 /// `index --follow` running) to index what arrived.
 #[derive(Args)]
 pub struct Sync {
-  /// The other host's `serve`, e.g. `http://old-host:8788`.
+  /// The other host's `serve`, e.g. `https://203.0.113.5:8788`.
   #[arg(long)]
   peer: String,
+  /// The mesh CA's certificate: reaches --peer over HTTPS, trusting that
+  /// CA alone.
+  #[arg(long)]
+  peer_ca: Option<PathBuf>,
   /// Bearer token for `--peer`.
   #[arg(long, env = "LOGGER_PEER_TOKEN", hide_env_values = true)]
   peer_token: String,
@@ -32,9 +40,17 @@ impl Sync {
   }
 
   async fn sync(self, data: &Path) -> ExitCode {
+    let ca = match super::read_peer_ca(self.peer_ca.as_deref(), &self.peer) {
+      Ok(ca) => ca,
+      Err(e) => {
+        eprintln!("{e}");
+        return ExitCode::FAILURE;
+      }
+    };
     let peer = Peer {
       url: self.peer,
       token: self.peer_token,
+      ca,
     };
     let journal_root = data.join("journal");
     let interval = Duration::from_secs_f64(self.interval);

@@ -1,9 +1,10 @@
 use {
   ::logger::{
     capture::Peer,
+    cert,
     compact::compact_day,
     manifest::{self, File, archive_path, valid_live_path},
-    serve::{Tokens, router},
+    serve::{self, Tokens, router},
     sync::{MAX_FILE, TAKEN, sync, unpack},
   },
   ::logger_journal::{Writer, record::v0::Body},
@@ -168,12 +169,66 @@ async fn file_endpoint() {
   assert_eq!(code(anonymous), 401);
 }
 
+/// Serves `root` over TLS on a free port, with a certificate for
+/// 127.0.0.1 from a new CA; returns its URL and the CA's certificate.
+async fn serve_tls(root: &TempRoot) -> (String, String) {
+  let key = ::rcgen::KeyPair::generate().unwrap();
+  let ca_cert = cert::ca(&key).unwrap();
+  let node = cert::node("node", &["127.0.0.1".into()], &ca_cert, &key).unwrap();
+  let tls = cert::server_config(&node.cert, &node.key).unwrap();
+  let listener = ::tokio::net::TcpListener::bind("127.0.0.1:0")
+    .await
+    .unwrap();
+  let url = format!("https://{}", listener.local_addr().unwrap());
+  let tokens = Tokens {
+    read: "secret".into(),
+    control: None,
+  };
+  let app = router(root.0.clone(), tokens);
+  ::tokio::spawn(
+    async move { serve::run(listener, app, Some(tls)).await.unwrap() },
+  );
+  (url, ca_cert)
+}
+
+#[::tokio::test]
+async fn pulls_over_tls_from_its_ca_alone() {
+  let (remote, local) = (TempRoot::new(), TempRoot::new());
+  let (url, ca_cert) = serve_tls(&remote).await;
+  let mut writer = Writer::new(remote.0.clone(), "a");
+  writer.write(0, 1, Body::Frame("MSG 1".into())).unwrap();
+  drop(writer);
+  let peer = Peer {
+    url: url.clone(),
+    token: "secret".into(),
+    ca: Some(ca_cert),
+  };
+  let stats = sync(&peer, &local.0).await.unwrap();
+  assert_eq!((stats.files, stats.updated), (1, 1));
+  // Not from a server another CA vouches for, nor the system's roots.
+  let other = cert::ca(&::rcgen::KeyPair::generate().unwrap()).unwrap();
+  let refused = |ca: Option<String>| Peer {
+    url: url.clone(),
+    token: "secret".into(),
+    ca,
+  };
+  assert!(sync(&refused(Some(other)), &local.0).await.is_err());
+  assert!(sync(&refused(None), &local.0).await.is_err());
+  // And with a CA, never over plain HTTP.
+  let plain = Peer {
+    url: serve(&remote).await,
+    ..peer
+  };
+  assert!(sync(&plain, &local.0).await.is_err());
+}
+
 #[::tokio::test]
 async fn pulls_only_what_is_missing() {
   let (remote, local) = (TempRoot::new(), TempRoot::new());
   let peer = Peer {
     url: serve(&remote).await,
     token: "secret".into(),
+    ca: None,
   };
   let mut writer = Writer::new(remote.0.clone(), "a");
   writer.write(0, 1, Body::Frame("MSG 1".into())).unwrap();
@@ -225,6 +280,7 @@ async fn pulls_backfill_files() {
   let peer = Peer {
     url: serve(&remote).await,
     token: "secret".into(),
+    ca: None,
   };
   let mut writer = Writer::backfill(remote.0.clone(), "backfill-a").unwrap();
   let range = Body::FetchRange {
@@ -254,6 +310,7 @@ async fn takes_archives_without_overwriting() {
   let peer = Peer {
     url: serve(&remote).await,
     token: "secret".into(),
+    ca: None,
   };
   let mut writer = Writer::new(remote.0.clone(), "a");
   writer.write(0, 1, Body::Frame("MSG 1".into())).unwrap();
@@ -304,6 +361,7 @@ async fn takes_backfill_archives() {
   let peer = Peer {
     url: serve(&remote).await,
     token: "secret".into(),
+    ca: None,
   };
   let mut writer = Writer::backfill(remote.0.clone(), "backfill-a").unwrap();
   let range = Body::FetchRange {
@@ -358,6 +416,7 @@ async fn a_mesh_settles() {
   let peer = |n: usize| Peer {
     url: urls[n].clone(),
     token: "secret".into(),
+    ca: None,
   };
 
   // Rounds of every node syncing from both others in turn, then
@@ -412,6 +471,7 @@ async fn takes_no_more_than_the_manifest_says() {
     let peer = Peer {
       url: serve_routes(routes).await,
       token: "secret".into(),
+      ca: None,
     };
     sync(&peer, &local.0).await
   };

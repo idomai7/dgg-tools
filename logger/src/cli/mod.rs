@@ -15,6 +15,26 @@ pub use {
   gaps::Gaps, index::Index, serve::Serve, sync::Sync,
 };
 
+/// The CA certificate at `peer_ca`, if given, checked, for reaching `url`,
+/// which must then be HTTPS.
+fn read_peer_ca(
+  peer_ca: Option<&::std::path::Path>,
+  url: &str,
+) -> Result<Option<String>, String> {
+  let Some(path) = peer_ca else {
+    return Ok(None);
+  };
+  if !url.starts_with("https://") {
+    return Err(format!(
+      "{url}: with --peer-ca, a peer is reached over HTTPS only"
+    ));
+  }
+  let pem = ::std::fs::read_to_string(path)
+    .map_err(|e| format!("{}: {e}", path.display()))?;
+  crate::cert::roots(&pem).map_err(|e| format!("{}: {e}", path.display()))?;
+  Ok(Some(pem))
+}
+
 /// Runs an async command on a new runtime.
 fn block_on(
   future: impl ::std::future::Future<Output = ::std::process::ExitCode>,

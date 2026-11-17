@@ -76,14 +76,14 @@ pub struct Stats {
 
 /// A client that doesn't follow redirects (the token would go along), and
 /// gives up on a peer that stops sending, however long a download takes.
-fn client() -> ::reqwest::Client {
-  let _ = ::rustls::crypto::ring::default_provider().install_default();
-  ::reqwest::Client::builder()
-    .redirect(::reqwest::redirect::Policy::none())
-    .connect_timeout(Duration::from_secs(20))
-    .read_timeout(Duration::from_secs(60))
-    .build()
-    .expect("http client")
+/// Trusts `peer`'s CA alone, if it has one.
+fn client(peer: &Peer) -> Result<::reqwest::Client, String> {
+  peer.client(
+    ::reqwest::Client::builder()
+      .redirect(::reqwest::redirect::Policy::none())
+      .connect_timeout(Duration::from_secs(20))
+      .read_timeout(Duration::from_secs(60)),
+  )
 }
 
 /// Hands `response`'s body to `each`, a chunk at a time, up to `limit`
@@ -107,7 +107,7 @@ async fn body(
 
 /// Pulls everything `peer` has that `journal_root` doesn't.
 pub async fn sync(peer: &Peer, journal_root: &Path) -> Result<Stats, String> {
-  let client = client();
+  let client = client(peer)?;
   let base = peer.url.trim_end_matches('/');
   let get = |path: String| client.get(format!("{base}/{path}"));
   let response = get("manifest".into())

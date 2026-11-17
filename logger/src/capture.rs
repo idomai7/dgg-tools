@@ -125,11 +125,31 @@ pub struct Config {
 }
 
 /// Another host's `serve`.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct Peer {
-  /// e.g. `http://old-host:8788`.
+  /// e.g. `https://203.0.113.5:8788`.
   pub url: String,
   pub token: String,
+  /// The mesh CA's certificate (PEM): if given, the peer is reached over
+  /// HTTPS only, trusting that CA alone (see [`crate::cert`]).
+  pub ca: Option<String>,
+}
+
+impl Peer {
+  /// A client for this peer: trusting its CA alone, if it has one.
+  pub fn client(
+    &self,
+    builder: ::reqwest::ClientBuilder,
+  ) -> Result<::reqwest::Client, String> {
+    let _ = ::rustls::crypto::ring::default_provider().install_default();
+    let builder = match &self.ca {
+      Some(ca) => crate::cert::trusting(builder, ca)?,
+      None => builder,
+    };
+    builder
+      .build()
+      .map_err(|e| format!("can't make a client: {e}"))
+  }
 }
 
 /// Why [`run`] returned.
@@ -270,12 +290,8 @@ pub async fn run(
   Ok(exit)
 }
 
-fn peer_client() -> ::reqwest::Client {
-  let _ = ::rustls::crypto::ring::default_provider().install_default();
-  ::reqwest::Client::builder()
-    .timeout(Duration::from_secs(5))
-    .build()
-    .expect("http client")
+fn peer_client(peer: &Peer) -> Result<::reqwest::Client, String> {
+  peer.client(::reqwest::Client::builder().timeout(Duration::from_secs(5)))
 }
 
 fn peer_url(peer: &Peer, instance: &str) -> String {
@@ -291,7 +307,13 @@ async fn push_status(
   say: Say,
   interval: Duration,
 ) {
-  let client = peer_client();
+  let client = match peer_client(&peer) {
+    Ok(client) => client,
+    Err(e) => {
+      say.line(format_args!("peer {}: {e}", peer.url));
+      return;
+    }
+  };
   let instance = &say.instance;
   let url = peer_url(&peer, instance);
   let mut tick = ::tokio::time::interval(interval);
@@ -329,11 +351,16 @@ async fn push_status(
 
 /// Removes this instance's status from `peer`, best effort.
 async fn withdraw_status(peer: &Peer, say: &Say) {
-  let sent = peer_client()
-    .delete(peer_url(peer, &say.instance))
-    .bearer_auth(&peer.token)
-    .send()
-    .await;
+  let sent = match peer_client(peer) {
+    Ok(client) => client
+      .delete(peer_url(peer, &say.instance))
+      .bearer_auth(&peer.token)
+      .send()
+      .await
+      .map(drop)
+      .map_err(|e| e.to_string()),
+    Err(e) => Err(e),
+  };
   if let Err(e) = sent {
     say.line(format_args!("peer {}: {e}", peer.url));
   }

@@ -220,6 +220,17 @@ pub fn verify(ca_cert: &str, cert: &str, host: &str) -> Result<(), String> {
     .map_err(|e| e.to_string())
 }
 
+/// `builder` trusting only the CA in `ca_cert` (PEM), and only over HTTPS.
+pub fn trusting(
+  builder: ::reqwest::ClientBuilder,
+  ca_cert: &str,
+) -> Result<::reqwest::ClientBuilder, String> {
+  roots(ca_cert)?;
+  let certs = ::reqwest::Certificate::from_pem_bundle(ca_cert.as_bytes())
+    .map_err(|e| format!("can't read the CA certificate: {e}"))?;
+  Ok(builder.tls_certs_only(certs).https_only(true))
+}
+
 /// A TLS server config serving `cert` (PEM: the node's certificate, which
 /// may be followed by the CA's) with `key` (PEM, without a password), for
 /// HTTP/2 and HTTP/1.1.

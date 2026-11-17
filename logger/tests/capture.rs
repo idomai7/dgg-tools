@@ -252,6 +252,7 @@ async fn hands_off_to_an_instance_on_another_host() {
   let peer = Peer {
     url: serve_url,
     token: "secret".into(),
+    ca: None,
   };
   let (stop, stopped) = oneshot::channel::<()>();
   let new = config(&new_host, "new", 2, Some(peer));

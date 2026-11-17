@@ -6,7 +6,11 @@ use {
   },
   ::clap::Args,
   ::dgg_api::chat::{DEFAULT_URL, Options},
-  ::std::{path::Path, process::ExitCode, time::Duration},
+  ::std::{
+    path::{Path, PathBuf},
+    process::ExitCode,
+    time::Duration,
+  },
 };
 
 /// Capture dgg chat into the journal.
@@ -27,10 +31,14 @@ pub struct Capture {
   /// Never retire in favour of a newer instance.
   #[arg(long)]
   keep_running: bool,
-  /// Another host's `serve` (e.g. `http://old-host:8788`) to push this
-  /// instance's status to, so the capture there hands off to this one.
+  /// Another host's `serve` (e.g. `https://203.0.113.5:8788`) to push
+  /// this instance's status to, so the capture there hands off to this one.
   #[arg(long)]
   peer: Option<String>,
+  /// The mesh CA's certificate: reaches --peer over HTTPS, trusting that
+  /// CA alone.
+  #[arg(long, requires = "peer")]
+  peer_ca: Option<PathBuf>,
   /// The control token of `--peer`'s `serve` (its `--control-token`).
   #[arg(long, env = "LOGGER_PEER_TOKEN", hide_env_values = true)]
   peer_token: Option<String>,
@@ -71,7 +79,13 @@ impl Capture {
     ));
     let peer = match (self.peer, self.peer_token) {
       (Some(url), Some(token)) if !token.is_empty() => {
-        Some(Peer { url, token })
+        match super::read_peer_ca(self.peer_ca.as_deref(), &url) {
+          Ok(ca) => Some(Peer { url, token, ca }),
+          Err(e) => {
+            say.line(e);
+            return ExitCode::FAILURE;
+          }
+        }
       }
       (Some(_), _) => {
         say.line("--peer needs --peer-token (or LOGGER_PEER_TOKEN)");
