@@ -36,7 +36,9 @@ An install lives in one folder:
     index.sqlite           the searchable index; can be rebuilt from the journal
   logs\                    capture.log, index.log, compact.log, supervisor.log,
                            sync.log
-  peer.env                 the peer to sync from, if any (holds its token)
+  nodes, mesh.env          the mesh this node is in, if any (mesh.env holds
+                           its token)
+  peers\                   other hosts to sync from (each holds a token)
 ```
 
 The journal is the record. The index can always be deleted and rebuilt with
@@ -155,26 +157,62 @@ limited to 200 requests a day.
 Don't start a history import (`backfill --from`) by hand yet: it's
 meant to run for weeks and comes later.
 
-## Syncing from another host
+## Syncing from other hosts
 
-An install can also pull another host's journal every 15 minutes, so it
-has whatever that host captured while this one was off. The other host
-runs `dgg-logger serve` with a token; then, here:
+An install can also pull other hosts' journals every 15 minutes, so it
+has whatever they captured while this one was off. Each other host runs
+`dgg-logger serve` with a token (see below). Peers are synced from one
+after another; one that fails doesn't stop the rest.
+
+### A mesh of nodes
+
+When several hosts all capture, give every one the same node list: one
+line per node, its name and where its `serve` is, or `push` for a node
+that can't be reached (behind NAT):
+
+```
+# name    where
+do        https://203.0.113.5:8788
+oracle    https://198.51.100.7:8788
+pi        push
+```
+
+Then, on each node, with the mesh's read token (the same on every node):
 
 ```powershell
-$env:LOGGER_PEER_TOKEN = "<the token>"   # or LOGGER_PEER_TOKEN=... in .env
+$env:LOGGER_MESH_TOKEN = "<the mesh token>"   # or LOGGER_MESH_TOKEN=... in .env
+target\release\dgg-logger install --name pi --nodes nodes
+```
+
+Each node syncs from every other node with a URL. The list is copied to
+`nodes` in the install's folder, and `--name` and the token go in
+`mesh.env`; to change the list, edit it and run `install --nodes` again on
+each node (or edit `nodes` by hand: it's read before each round).
+`install --no-mesh` leaves the mesh.
+
+### One-off peers
+
+To also sync from a host outside the mesh, such as one being moved off:
+
+```powershell
+$env:LOGGER_PEER_TOKEN = "<its token>"   # or LOGGER_PEER_TOKEN=... in .env
 target\release\dgg-logger install --peer http://other-host:8788
 ```
 
-That writes `peer.env` in the install's folder, which the supervisor reads
-before each round, so it can be edited by hand too. In a machine install
-only administrators and the service can read it. The next `install` keeps
-it; `install --no-peer` removes it, and so does `uninstall`. Each round's
-output is in `sync.log`; the index picks up what arrives.
+That writes `peers\other-host.env` (`--peer-name` names it otherwise).
+`install --no-peer other-host` removes it, and `--no-peers` all of them.
+An older install's `peer.env` is moved there by the next `install`.
+
+Every file is read before each round, so they can be edited by hand too.
+In a machine install, only administrators and the service can read the
+ones holding tokens. The next `install` keeps them; `uninstall` removes
+them. Each round's output is in `sync.log`, each line after the peer's
+name; `status` shows each peer's last round. The index picks up what
+arrives.
 
 ### Running serve safely
 
-On the other host, make a token and serve with it:
+On each host synced from, make a token and serve with it:
 
 ```powershell
 $env:LOGGER_TOKEN = [Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
@@ -213,7 +251,7 @@ target\release\dgg-logger uninstall
 ```
 
 It stops everything running from the install's `bin\`, removes the task or
-service, and deletes the binaries and `peer.env`. Only the data and logs
+service, and deletes the binaries and the peers' files. Only the data and logs
 are left, and the
 folder holding them; a machine install's get ordinary permissions back,
 owned by you, so you can move or delete them without elevation. A machine

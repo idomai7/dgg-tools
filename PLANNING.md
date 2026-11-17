@@ -20,6 +20,11 @@ The layout is flat: each crate is a direct child of the root.
   - One `use { … }` block per scope, and a `::` prefix on every external crate, `std` included.
   - Tests go in each crate's `tests/` directory, never inline in the source.
 - **Deployment:** must stay portable across Windows and Linux.
+  - Auditable, with nothing beyond the hosting itself: no VPN service, DNS provider or alerting service.
+  - Nodes: a DigitalOcean droplet, an Oracle Always Free VM and a Raspberry Pi at home, each capturing, plus any others added later.
+  - Every node syncs from every reachable node, as listed in a node list kept in the repo. Nodes behind NAT push their own captures.
+  - `serve` gets TLS from a private CA kept on the PC.
+  - The plan, in steps: multiple peers, TLS, push, Linux builds, a systemd install, OpenTofu with a Rust `dgg-deploy`, `status --mesh`, then rollout.
 - **Logger storage:** an append-only raw journal is the source of truth. SQLite (rusqlite, `bundled`) is an index that can be rebuilt from it.
 - **Kick:** deferred (see below).
 
@@ -191,6 +196,7 @@ Sources: what `cdn.destiny.gg` served, chat-gui (d3f4451, 2026-11-08), and the w
   - Live test: after backfill, the index holds exactly a reference capture's 583 messages over the same span. 16 nicks stay lowercase because those users were never seen natively.
 - **Cross-host handoff:** done. Tested live: the old instance retired about 38 s after the new one started.
 - **`serve` / `sync`:** done.
+  - The supervisor syncs from every peer in turn: the mesh's node list (`nodes` + `mesh.env`) and one-off `peers\<name>.env` files. A mesh of three settles in three rounds (tested).
 - **`compact`:** done, and `index` reads archives (schema 0.4).
   - Archives are found through the monthly manifests.
   - Each archive's checkpoint carries its SHA-256, so a fully read archive is skipped unopened and a re-merged one is reread from the start.
