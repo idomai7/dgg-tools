@@ -70,7 +70,8 @@ impl Compact {
           let archive = &done.archive;
           let ratio = archive.bytes as f64 / archive.compressed.max(1) as f64;
           eprintln!(
-            "  {day}: {} files, {} lines, {} -> {} bytes              ({ratio:.1}x){}{}{}{}{}",
+            "  {day}: {} files, {} lines, {} -> {} bytes \
+             ({ratio:.1}x){}{}{}{}{}",
             done.files,
             archive.lines,
             archive.bytes,

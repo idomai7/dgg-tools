@@ -53,7 +53,9 @@ impl Serve {
     };
     if let Err(why) = tokens.check() {
       eprintln!(
-        "{why} (--token or LOGGER_TOKEN, --control-token or          LOGGER_CONTROL_TOKEN; a random {MIN_TOKEN}+ character string will do)"
+        "{why} (--token or LOGGER_TOKEN, --control-token or \
+         LOGGER_CONTROL_TOKEN; a random {MIN_TOKEN}+ character string will \
+         do)"
       );
       return ExitCode::FAILURE;
     }
@@ -77,7 +79,8 @@ impl Serve {
     };
     if tls.is_none() && !self.listen.ip().is_loopback() {
       eprintln!(
-        "warning: serving plain HTTP to other hosts, so tokens travel in          the clear; give --tls-cert and --tls-key"
+        "warning: serving plain HTTP to other hosts, so tokens travel in \
+         the clear; give --tls-cert and --tls-key"
       );
     }
     eprintln!(
