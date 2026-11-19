@@ -8,6 +8,9 @@ description = "Kick's APIs, shared by the Kick tools"
 [features]
 # Decoding the unofficial channel lookup, channel.
 channel = ["dep:serde", "dep:serde_json"]
+# Decoding realtime frames into Centrifugo's client protocol,
+# realtime::centrifugo.
+centrifugo = ["dep:serde", "dep:serde_json"]
 
 [dependencies]
 serde = { workspace = true, optional = true }
@@ -16,3 +19,7 @@ serde_json = { workspace = true, optional = true }
 [[test]]
 name = "channel"
 required-features = ["channel"]
+
+[[test]]
+name = "centrifugo"
+required-features = ["centrifugo"]

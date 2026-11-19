@@ -14,7 +14,7 @@ This document holds the rules for every tool. Each major tool's scope and decisi
 ## Layout
 The layout is flat: each crate is a direct child of the root.
 - `dgg-api/`: destiny.gg's APIs, kept lightweight for any tool to depend on: the chat socket client and event types, and more of dgg's endpoints to come.
-- `kick-api/`: Kick's APIs, kept lightweight for any tool to depend on. So far, decoding the unofficial channel lookup.
+- `kick-api/`: Kick's APIs, kept lightweight for any tool to depend on. So far, decoding the unofficial channel lookup, and decoding realtime frames into Centrifugo's client protocol.
 - `kick-mod/`: a chat client and moderation tools for Kick channels. So far, `kick-mod ids`, which looks up channels' ids with curl.
 - `logger-journal/`: the logger's journal file format, with a writer and a reader.
 - `logger/`: the logger as a library: capture, index, serve, sync, backfill, compact and gaps, each with its command-line arguments in `logger::cli`. They run as `dgg-logger` subcommands, so the parts of an install can't be from different builds.
