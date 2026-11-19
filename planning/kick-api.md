@@ -27,10 +27,13 @@ Kick's APIs, kept lightweight for any tool to depend on: [kick-mod](kick-mod.md)
     - `Disconnected { connection, code, reason }`: the connection dropped and will be retried. `code` is the server's code or the websocket close code.
     - `ConnectFailed { stage, error, retry_in }`. `stage` is Kick's `connection` endpoint, the token, the transport or the connect reply, so "Kick changed its setup" can be told apart from "the network is down".
     - `Subscribed { connection, channel }`.
-    - `Unsubscribed { connection, channel, code, reason }`: a refused subscribe, or the server unsubscribing the channel.
-      - Codes 2500 and up are resubscribed.
-      - Below that, the channel isn't resubscribed and stays a gap.
-    - `Stopped { code, reason }`: a disconnect code of 3500 or up, which centrifuge-js doesn't retry either. The stream ends after it. Starting a new client is the supervisor's call.
+    - `Unsubscribed { connection, channel, code, reason, resubscribing }`: a refused subscribe, the server unsubscribing the channel, or the caller unsubscribing it (code 0).
+      - The client decides whether to resubscribe, as centrifuge-js does, and says so in `resubscribing`. Otherwise the channel stays a gap.
+      - Resubscribed: a server unsubscribe with code 2500 or up, at once; a subscribe refused with a `temporary` error (100 internal, 111 too many requests) or 109 (token expired), after a backoff with jitter.
+    - `Stopped { code, reason }`: the session ended in a way centrifuge-js doesn't retry either. The stream ends after it. Starting a new client is the supervisor's call.
+      - A disconnect code of 3500 or up.
+      - A connect refused with an error that isn't `temporary` or 109, such as 101 unauthorized.
+      - A refresh refused with an error that isn't `temporary`. A temporary one is retried after 5–10 s, as is a token that couldn't be fetched, and the connection stays up meanwhile.
     - Channel names are opaque strings. That a chatroom is `chatrooms.<chatroom id>.v2` plus `channel_<channel id>` belongs in the tools' config.
     - The client answers pings, refreshes the token before it expires, and reconnects with backoff, then resubscribes.
     - It decodes frames with level 2 only to run the connection. If one doesn't decode, it's still yielded.
