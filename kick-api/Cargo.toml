@@ -11,6 +11,8 @@ channel = ["dep:serde", "dep:serde_json"]
 # Decoding realtime frames into Centrifugo's client protocol,
 # realtime::centrifugo.
 centrifugo = ["dep:serde", "dep:serde_json"]
+# Decoding Kick's events from Centrifugo's publications, realtime::event.
+protocol = ["centrifugo"]
 # The realtime client, realtime::Client: raw frames, after Kick's setup,
 # realtime::connection.
 client = [
@@ -46,6 +48,10 @@ required-features = ["channel"]
 [[test]]
 name = "centrifugo"
 required-features = ["centrifugo"]
+
+[[test]]
+name = "event"
+required-features = ["protocol"]
 
 [[test]]
 name = "client"

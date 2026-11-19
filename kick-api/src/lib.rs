@@ -2,7 +2,8 @@
 //! depend on it.
 //!
 //! - `realtime`: Kick's realtime chat. Feature `centrifugo` decodes its
-//!   frames into Centrifugo's client protocol; feature `client` reads them.
+//!   frames into Centrifugo's client protocol, feature `protocol` what Kick
+//!   publishes into its events, and feature `client` reads the frames.
 //! - `channel` (feature `channel`): the unofficial channel lookup, the only
 //!   place a channel's chatroom id is found.
 //!
