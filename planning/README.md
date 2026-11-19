@@ -9,6 +9,7 @@ This document holds the rules for every tool. Each major tool's scope and decisi
 - [viewer](viewer.md): the read-only chat viewer.
 - [archives](archives.md): archives and stats derived from chat and other dgg endpoints.
 - [kick-api](kick-api.md): Kick's APIs.
+- [kick-mod](kick-mod.md): the Kick chat client and moderation tools.
 
 ## Layout
 The layout is flat: each crate is a direct child of the root.
@@ -34,7 +35,7 @@ The layout is flat: each crate is a direct child of the root.
   - While the major is 0 (pre-release, where we are now), any minor may break. Readers accept only the exact minor they know, and existing files are rewritten rather than read across versions.
   - Major 1 marks production. From then on, minor bumps may only add things old readers skip (new kinds, keys or entries), and anything else is a major bump, which readers without that major's module refuse.
   - Everything was re-versioned from 1.x to 0.x on 2026-11-09, and existing files were rewritten to match.
-- **Kick:** deferred (see [kick-api](kick-api.md)).
+- **Kick:** its own crates, separate from dgg's: [kick-api](kick-api.md) and [kick-mod](kick-mod.md).
 
 ## Roadmap
 1. **Logger** (current focus): see [logger](logger.md).
@@ -49,6 +50,7 @@ The layout is flat: each crate is a direct child of the root.
    - embed stats viewer: when embeds are live, how many viewers, and perhaps which viewers;
    - services dashboard: the status of running services, such as capture instances and their health, `index --follow` and `sync --follow` progress, gaps, and the backfill budget. It could build on `serve`'s `/control` and `/manifest`.
 4. **Archives and stats, not yet ordered:** see [archives](archives.md).
+5. **Kick moderation tools** (in planning): see [kick-mod](kick-mod.md).
 
 ## Status
 - **Workspace restructure:** done.
