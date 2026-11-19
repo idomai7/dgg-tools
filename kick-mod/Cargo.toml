@@ -1,0 +1,11 @@
+[package]
+name = "kick-mod"
+version = "0.1.0"
+edition.workspace = true
+description = "A chat client and moderation tools for Kick channels"
+
+[dependencies]
+kick-api = { workspace = true, features = ["channel"] }
+
+clap.workspace = true
+dotenvy.workspace = true

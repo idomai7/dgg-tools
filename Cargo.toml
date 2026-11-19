@@ -4,6 +4,7 @@ members = [
   "deploy",
   "dgg-api",
   "kick-api",
+  "kick-mod",
   "logger",
   "logger-journal",
   "version-info",
