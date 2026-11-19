@@ -15,6 +15,44 @@ Kick's APIs, kept lightweight for any tool to depend on: [kick-mod](kick-mod.md)
   - They need a public HTTPS receiver with a publicly trusted certificate, which the mesh's private CA can't provide.
 - **Lossless:** the raw client delivers every message from every channel it's subscribed to.
 - **Writes:** only through the official public API, with a user's OAuth token. Built now, though the webhooks are deferred.
+- **Structure:** like `dgg-api`, fetching frames and decoding them are separate, so a logger can journal every frame raw, unknown ones included. The typed protocol is derived from those frames, and if Kick changes its protocol, the logger keeps working and the raw journals stay intact.
+  - The realtime path has three levels, each carried inside the one above. Each level is named in its source's own terms: level 1 in dgg-api's, level 2 in Centrifugo's `client.proto` (github.com/centrifugal/protocol), and level 3 in Kick's.
+  - **Level 1, the websocket** (`realtime::client`, feature `client`): lifecycle events plus raw frames, in the shape of dgg-api's `chat::client::Item`. Centrifugo adds a session above the socket (a connect handshake, a token that has to be refreshed, subscriptions per channel, disconnects that mustn't be retried), so it adds only the events those require.
+    - `Connected { connection, endpoint }`: after Centrifugo's connect reply, not when the socket opens.
+    - `Frame(Frame)`: one websocket message's text as received, kept whole, with its connection number and time of arrival.
+      - A frame can hold several newline-separated replies.
+      - Every frame is yielded except pings (the empty `{}`), which are answered internally and not journaled, as dgg-api does with `PING`. Replies to the client's own commands and errors are yielded too.
+    - `Binary { connection, data }`: binary (protobuf) frames. A JSON client shouldn't get them; they're passed through as in dgg-api.
+    - `Disconnected { connection, code, reason }`: the connection dropped and will be retried. `code` is the server's code or the websocket close code.
+    - `ConnectFailed { stage, error, retry_in }`. `stage` is Kick's `connection` endpoint, the token, the transport or the connect reply, so "Kick changed its setup" can be told apart from "the network is down".
+    - `Subscribed { connection, channel }`.
+    - `Unsubscribed { connection, channel, code, reason }`: a refused subscribe, or the server unsubscribing the channel.
+      - Codes 2500 and up are resubscribed.
+      - Below that, the channel isn't resubscribed and stays a gap.
+    - `Stopped { code, reason }`: a disconnect code of 3500 or up, which centrifuge-js doesn't retry either. The stream ends after it. Starting a new client is the supervisor's call.
+    - Channel names are opaque strings. That a chatroom is `chatrooms.<chatroom id>.v2` plus `channel_<channel id>` belongs in the tools' config.
+    - The client answers pings, refreshes the token before it expires, and reconnects with backoff, then resubscribes.
+    - It decodes frames with level 2 only to run the connection. If one doesn't decode, it's still yielded.
+    - Details such as the client id, `ttl` and the subscribe results are left to level 2, in the frames.
+    - `realtime::connection`: Kick's setup, with its endpoints' names: `connection` answers the endpoint, `auth/connection` the token. It's kept apart from the socket code, so a supplied endpoint and token can bypass it.
+  - **Level 2, Centrifugo's client protocol** (`realtime::centrifugo`, feature `centrifugo`): the types and names of `client.proto`. Messages are structs and one-ofs are enums.
+    - A `Frame` decodes into `Reply`s: `id`, `error` (`Error { code, message, temporary }`), and one of the results (`connect`, `subscribe`, `refresh`, `unsubscribe`, `history`, …) or a `push`. An empty `Reply` is a ping.
+    - `Push`: `channel`, and one of `pub` (`Publication`), `join`, `leave`, `unsubscribe`, `message`, `subscribe`, `connect`, `disconnect` or `refresh`.
+    - `Publication`: `data` (raw JSON here), `info`, `offset`, `tags`, ….
+    - `Command` with the requests the client sends (`ConnectRequest`, `SubscribeRequest`, `RefreshRequest`).
+    - A feature of its own, so a journal reader can decode frames without tokio. `client` depends on it.
+  - **Level 3, Kick's events** (`realtime::event`, feature `protocol`): a `Publication`'s `data`, `{event, data}`, with `data` a JSON string, decoded into `Event`.
+    - Variants take Kick's names without the `App\Events\` prefix: `ChatMessageEvent`, `MessageDeletedEvent`, `UserBannedEvent`, `UserUnbannedEvent`, `PinnedMessageCreatedEvent`, `PinnedMessageDeletedEvent`, `ChatroomUpdatedEvent`, `ChatroomClearEvent`, `ChatSettingsChanged`.
+    - `Other { event, data }` for an event not typed yet, and `Unreadable { event, data, error }` for a known one whose data doesn't decode, as in `dgg-api`.
+    - Fields take Kick's JSON names, in snake_case where Kick isn't (`pinnedBy`, `aiModerated`).
+  - **Decoding, levels 2 and 3:**
+    - Only the fields an object needs to mean anything are required. Everything else is optional, so a change degrades the one field instead of the whole event.
+    - Fields an object doesn't name aren't dropped. Each struct keeps them in `rest: Option<Map>`, which is `None` when nothing was left over, so a field Kick adds or renames moves into `rest` rather than being lost.
+    - `Event::complete()` says whether the event is well-formed by the known rules and nothing unknown is left over: it's a typed variant (not `Other` or `Unreadable`) and every nested `rest` is `None`.
+      - It doesn't mean every field is filled in. An optional field that's absent is still complete.
+    - `dgg-api` drops unnamed fields from its typed events. It stays that way for now: its flattened structs make leftovers fiddly to place.
+  - `official`: the official API over reqwest: OAuth (app and user tokens, and refreshing them), channel lookup, sending chat, deleting, banning, timing out and unbanning.
+  - `channel`: decoding the unofficial channel lookup, as now.
 
 ## Known
 ### Centrifugo (probed 2026-11-19)
