@@ -13,6 +13,7 @@ Kick's APIs, kept lightweight for any tool to depend on: [kick-mod](kick-mod.md)
   - Not Pusher: it's the legacy path that Kick's site no longer uses, and its key changes without notice (last on 2026-10-17, to `34bf7a0ff419a2a775b9` on cluster `us2`).
 - **Second read backend:** the official webhooks, in case the socket closes off. Deferred.
   - They need a public HTTPS receiver with a publicly trusted certificate, which the mesh's private CA can't provide.
+- **Lossless:** the raw client delivers every message from every channel it's subscribed to.
 - **Writes:** only through the official public API, with a user's OAuth token. Built now, though the webhooks are deferred.
 
 ## Known
