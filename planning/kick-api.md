@@ -60,7 +60,7 @@ Kick's APIs, kept lightweight for any tool to depend on: [kick-mod](kick-mod.md)
       - `ChatroomUpdatedEvent`'s `id`, `ChatSettingsChanged`'s `settings`, a channel's `id`;
       - each setting's `enabled`.
     - `PinnedMessageDeletedEvent`'s `[]` decodes to an empty event. An object decodes too, with its fields in `rest`.
-    - Times stay strings, as Kick sent them.
+    - Times (`created_at`, `expires_at`) are unix milliseconds, as in `dgg-api`, parsed from Kick's RFC 3339 strings (`+00:00` or `Z`). The offset and spelling aren't kept, but the raw frame has them. A string that doesn't parse stays in `rest`.
   - **Decoding, levels 2 and 3:**
     - Only the fields an object needs to mean anything are required. Everything else is optional, so a change degrades the one field instead of the whole event.
     - Fields an object doesn't name aren't dropped. Each struct keeps them in `rest: Option<Map>`, which is `None` when nothing was left over, so a field Kick adds or renames moves into `rest` rather than being lost.
