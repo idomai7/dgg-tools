@@ -11,10 +11,33 @@ channel = ["dep:serde", "dep:serde_json"]
 # Decoding realtime frames into Centrifugo's client protocol,
 # realtime::centrifugo.
 centrifugo = ["dep:serde", "dep:serde_json"]
+# The realtime client, realtime::Client: raw frames, after Kick's setup,
+# realtime::connection.
+client = [
+  "centrifugo",
+  "dep:futures-util",
+  "dep:getrandom",
+  "dep:reqwest",
+  "dep:rustls",
+  "dep:tokio",
+  "dep:tokio-tungstenite",
+]
 
 [dependencies]
 serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
+
+futures-util = { workspace = true, optional = true }
+getrandom = { workspace = true, optional = true }
+reqwest = { workspace = true, optional = true }
+rustls = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
+tokio-tungstenite = { workspace = true, optional = true }
+
+[dev-dependencies]
+futures-util.workspace = true
+tokio.workspace = true
+tokio-tungstenite.workspace = true
 
 [[test]]
 name = "channel"
@@ -23,3 +46,11 @@ required-features = ["channel"]
 [[test]]
 name = "centrifugo"
 required-features = ["centrifugo"]
+
+[[test]]
+name = "client"
+required-features = ["client"]
+
+[[example]]
+name = "probe"
+required-features = ["client"]
