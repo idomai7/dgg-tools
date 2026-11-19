@@ -50,6 +50,17 @@ Kick's APIs, kept lightweight for any tool to depend on: [kick-mod](kick-mod.md)
     - `Other { event, data }` for an event not typed yet, and `Unreadable { event, data, error }` for a known one whose data doesn't decode, as in `dgg-api`.
     - Fields take Kick's JSON names, in snake_case where Kick isn't (`pinnedBy`, `aiModerated`).
     - `metadata.message_ref` is an opaque string. Kick's web client happens to put a timestamp there, but any sender can put anything, so nothing reads it as a time or checks whether it looks like one.
+    - Names are matched whole, prefix included. A typed event sent under another name, such as `ChatMessageEvent` without its prefix, is `Other`.
+    - Required (built 2026-11-20):
+      - a message's `id`, `content` and `sender`;
+      - a user's `id` and `username`;
+      - a deleted message's `id`;
+      - a ban's `user` and `permanent`, and an unban's `user`;
+      - a pinned message;
+      - `ChatroomUpdatedEvent`'s `id`, `ChatSettingsChanged`'s `settings`, a channel's `id`;
+      - each setting's `enabled`.
+    - `PinnedMessageDeletedEvent`'s `[]` decodes to an empty event. An object decodes too, with its fields in `rest`.
+    - Times stay strings, as Kick sent them.
   - **Decoding, levels 2 and 3:**
     - Only the fields an object needs to mean anything are required. Everything else is optional, so a change degrades the one field instead of the whole event.
     - Fields an object doesn't name aren't dropped. Each struct keeps them in `rest: Option<Map>`, which is `None` when nothing was left over, so a field Kick adds or renames moves into `rest` rather than being lost.
