@@ -30,6 +30,7 @@ The layout is flat: each crate is a direct child of the root.
   - rustfmt with `max_width = 80` and `tab_spaces = 2` (`rustfmt.toml`).
   - One `use { … }` block per scope, and a `::` prefix on every external crate, `std` included.
   - Tests go in each crate's `tests/` directory, never inline in the source.
+  - Test fixtures made from real data are anonymised before they're committed: users' names and ids, channels, and any other ids or uuids that trace back to a real account or session.
 - **Deployment:** must stay portable across Windows and Linux.
   - Auditable, with nothing beyond the hosting itself: no VPN service, DNS provider or alerting service.
   - See [deploy](deploy.md).
