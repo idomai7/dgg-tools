@@ -82,6 +82,7 @@ Two minutes on a busy live channel, plus an offline one (`destiny`), from a scra
     - `created_at` is whole seconds only, set by the server.
     - `message_ref` is set by the sender's client, not the server. Kick's web client (its bundle, read 2026-11-20) sends `message_ref: String(Date.now())` with each message, reply and emote click, and the server echoes it back in `metadata`. The client uses it to match the echo to the message it showed optimistically.
       - So it's the sender's clock, in milliseconds since the epoch (no timezone), about 0.5–1.2 s before the push arrives. A sender can put anything there, and other clients may leave it out.
+      - Tested on our own channel through the web API (2026-11-20): Kick's server takes any string of up to 36 characters (a uuid's length) and echoes it unchanged. That includes `""`, `"not-a-time"` and `"9999999999999"`. A number is echoed as a string, and a longer string is refused with a 422. Leaving it out is accepted, and then the echoed `metadata` is `null`. A repeated value is accepted too, so it isn't used to drop duplicates.
     - Emotes are inline in `content` as `[emote:<id>:<name>]`. Unicode and emoji arrive as-is, and a long message (about 450 characters) arrives whole.
     - The broadcaster's link went through with `allow_links` off.
   - `App\Events\MessageDeletedEvent`: `id`, `message.id`, and for Kick's AI moderation `aiModerated: true` and `violatedRules` (e.g. `hate`). Nothing says who deleted the message, even when the broadcaster did.
