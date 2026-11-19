@@ -75,7 +75,9 @@ Two minutes on a busy live channel, plus an offline one (`destiny`), from a scra
   - `App\Events\ChatMessageEvent`:
     - `id` (uuid), `chatroom_id`, `content`, `type` (`message` or `reply`), `created_at`, `metadata.message_ref`.
     - `sender`: `id`, `username`, `slug`, and `identity` (`color`, `badges` with `type` such as `broadcaster`, `moderator`, `subscriber`, `verified` or `founder`, plus `badges_v2`).
-    - `created_at` is whole seconds only. `message_ref` is a millisecond timestamp about 0.5–1.2 s before the push arrives, so it's probably set by the sender's client.
+    - `created_at` is whole seconds only, set by the server.
+    - `message_ref` is set by the sender's client, not the server. Kick's web client (its bundle, read 2026-11-20) sends `message_ref: String(Date.now())` with each message, reply and emote click, and the server echoes it back in `metadata`. The client uses it to match the echo to the message it showed optimistically.
+      - So it's the sender's clock, in milliseconds since the epoch (no timezone), about 0.5–1.2 s before the push arrives. A sender can put anything there, and other clients may leave it out.
     - Emotes are inline in `content` as `[emote:<id>:<name>]`. Unicode and emoji arrive as-is, and a long message (about 450 characters) arrives whole.
     - The broadcaster's link went through with `allow_links` off.
   - `App\Events\MessageDeletedEvent`: `id`, `message.id`, and for Kick's AI moderation `aiModerated: true` and `violatedRules` (e.g. `hate`). Nothing says who deleted the message, even when the broadcaster did.
