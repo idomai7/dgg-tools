@@ -63,4 +63,4 @@ required-features = ["client"]
 
 [[example]]
 name = "probe"
-required-features = ["client"]
+required-features = ["client", "protocol"]
