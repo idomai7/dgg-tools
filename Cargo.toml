@@ -1,12 +1,21 @@
 [workspace]
 resolver = "3"
-members = ["deploy", "dgg-api", "logger", "logger-journal", "version-info", "viewer"]
+members = [
+  "deploy",
+  "dgg-api",
+  "kick-api",
+  "logger",
+  "logger-journal",
+  "version-info",
+  "viewer",
+]
 
 [workspace.package]
 edition = "2024"
 
 [workspace.dependencies]
 dgg-api = { path = "dgg-api" }
+kick-api = { path = "kick-api" }
 logger = { path = "logger" }
 logger-journal = { path = "logger-journal" }
 version-info = { path = "version-info" }
