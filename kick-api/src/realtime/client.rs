@@ -11,8 +11,15 @@
 //! yielded as-is. Frames are decoded only to run the session; one that
 //! doesn't decode is still yielded.
 //!
-//! A disconnect code of 3500 or up ends the stream with [`Item::Stopped`],
-//! as centrifuge-js doesn't retry those either.
+//! What's retried follows centrifuge-js:
+//! - A disconnect code of 3500 or up isn't retried, nor is a connect or
+//!   refresh refused with an error that isn't `temporary` (except 109, token
+//!   expired, on connect): the stream ends with [`Item::Stopped`].
+//! - A subscribe refused with a `temporary` error, or 109, is retried with
+//!   backoff, and so is a refresh refused with a `temporary` one. A token
+//!   that couldn't be fetched for a refresh is fetched again later.
+//! - A channel the server unsubscribes with a code of 2500 or up is
+//!   resubscribed at once.
 
 use {
   super::{
@@ -28,7 +35,7 @@ use {
   },
   ::futures_util::{SinkExt, StreamExt},
   ::std::{
-    collections::{BTreeSet, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap},
     fmt,
     future::pending,
     time::Duration,
@@ -50,6 +57,8 @@ const STABLE_AFTER: Duration = Duration::from_secs(30);
 const TERMINAL: u32 = 3500;
 /// Unsubscribe codes from here up are resubscribed.
 const RESUBSCRIBE: u32 = 2500;
+/// The error for an expired token, which a new one fixes.
+const TOKEN_EXPIRED: u32 = 109;
 /// The connect command's id; the session's later commands count up from
 /// the next.
 const CONNECT_ID: u32 = 1;
@@ -78,6 +87,14 @@ pub struct Options {
   /// How long each step of connecting may take: a setup request, opening
   /// the socket, the connect reply.
   pub connect_timeout: Duration,
+  /// Bounds on the backoff, with jitter, before a refused subscribe is
+  /// retried. centrifuge-js's defaults.
+  pub min_resubscribe: Duration,
+  pub max_resubscribe: Duration,
+  /// Bounds on the delay, with jitter, before a failed refresh is retried.
+  /// centrifuge-js's.
+  pub min_refresh_retry: Duration,
+  pub max_refresh_retry: Duration,
 }
 
 impl Default for Options {
@@ -91,6 +108,10 @@ impl Default for Options {
       max_backoff: Duration::from_secs(60),
       idle_timeout: Duration::from_secs(60),
       connect_timeout: Duration::from_secs(10),
+      min_resubscribe: Duration::from_millis(500),
+      max_resubscribe: Duration::from_secs(20),
+      min_refresh_retry: Duration::from_secs(5),
+      max_refresh_retry: Duration::from_secs(10),
     }
   }
 }
@@ -180,17 +201,19 @@ pub enum Item {
     connection: u64,
     channel: String,
   },
-  /// The channel isn't subscribed any more: a refused subscribe, the server
-  /// unsubscribing it, or [`Client::unsubscribe`] (code 0). From code 2500
-  /// up it's resubscribed; below, it stays a gap until subscribed again.
+  /// The channel isn't subscribed any more: a refused subscribe (with the
+  /// error's code), the server unsubscribing it, or [`Client::unsubscribe`]
+  /// (code 0). Unless `resubscribing`, it stays a gap until subscribed
+  /// again.
   Unsubscribed {
     connection: u64,
     channel: String,
     code: u32,
     reason: String,
+    resubscribing: bool,
   },
-  /// The server disconnected with a code that isn't retried. The stream
-  /// ends after this.
+  /// The server ended the session in a way that isn't retried: a disconnect
+  /// code, or a refused connect or refresh. The stream ends after this.
   Stopped {
     code: u32,
     reason: String,
@@ -311,6 +334,8 @@ async fn run(options: Options, tx: Tx, mut controls: Controls) {
             tx: &tx,
             next_id: CONNECT_ID + 1,
             pending: HashMap::new(),
+            resubscribes: BTreeMap::new(),
+            attempts: HashMap::new(),
           };
           let end = session
             .pump(
@@ -366,6 +391,16 @@ async fn run(options: Options, tx: Tx, mut controls: Controls) {
 /// When to refresh the token, if it expires: a little before it does.
 fn refresh_in(expires: bool, ttl: u32) -> Option<Duration> {
   expires.then(|| Duration::from_secs(ttl.into()) * 9 / 10)
+}
+
+/// The `step`th backoff between `min` and `max`, with full jitter, as
+/// centrifuge-js does.
+fn backoff(step: u32, min: Duration, max: Duration) -> Duration {
+  let ceiling = min.saturating_mul(1 << step.min(31)).min(max);
+  let mut bytes = [0; 8];
+  ::getrandom::fill(&mut bytes).expect("the OS has randomness");
+  let fraction = u64::from_le_bytes(bytes) as f64 / u64::MAX as f64;
+  (min + ceiling.mul_f64(fraction)).min(max)
 }
 
 /// Asks for a socket and a token, and opens the socket.
@@ -432,10 +467,14 @@ async fn handshake(
               continue;
             }
             if let Some(error) = reply.error {
-              return Err(End::dropped(format!(
-                "{} {}",
-                error.code, error.message
-              )));
+              if error.temporary || error.code == TOKEN_EXPIRED {
+                let reason = format!("{} {}", error.code, error.message);
+                return Err(End::dropped(reason));
+              }
+              return Err(End::Stopped {
+                code: error.code,
+                reason: error.message,
+              });
             }
             return match reply.body {
               Some(reply::Body::Connect(result)) => {
@@ -496,6 +535,10 @@ struct Session<'a> {
   tx: &'a Tx,
   next_id: u32,
   pending: HashMap<u32, Pending>,
+  /// Refused subscribes to retry, and when.
+  resubscribes: BTreeMap<String, Instant>,
+  /// How many times in a row each channel's subscribe was refused.
+  attempts: HashMap<String, u32>,
 }
 
 impl Session<'_> {
@@ -533,6 +576,12 @@ impl Session<'_> {
           None => pending().await,
         }
       };
+      let resubscribe_due = async {
+        match self.resubscribes.values().min() {
+          Some(&at) => sleep_until(at).await,
+          None => pending().await,
+        }
+      };
       let renewed = async {
         match &mut renewing {
           Some(task) => task.await,
@@ -549,6 +598,8 @@ impl Session<'_> {
             self.subscribe(channel).await.map(|()| None)
           }
           Control::Unsubscribe(channel) if channels.remove(&channel) => {
+            self.resubscribes.remove(&channel);
+            self.attempts.remove(&channel);
             self.unsubscribe(channel).await.map(|()| None)
           }
           _ => Ok(None),
@@ -568,12 +619,33 @@ impl Session<'_> {
           }));
           Ok(None)
         }
+        () = resubscribe_due => {
+          let now = Instant::now();
+          let due: Vec<_> = self
+            .resubscribes
+            .iter()
+            .filter(|&(_, &at)| at <= now)
+            .map(|(channel, _)| channel.clone())
+            .collect();
+          let mut result = Ok(None);
+          for channel in due {
+            self.resubscribes.remove(&channel);
+            if channels.contains(&channel) {
+              result = self.subscribe(channel).await.map(|()| None);
+              if result.is_err() {
+                break;
+              }
+            }
+          }
+          result
+        }
         token = renewed => {
           renewing = None;
           match token {
             Ok(Ok(token)) => self.refresh(token).await.map(|()| None),
-            Ok(Err(e)) => Err(End::dropped(format!("token refresh failed: {e}"))),
-            Err(e) => Err(End::dropped(format!("token refresh failed: {e}"))),
+            // Fetched again later; if the token runs out meanwhile, the
+            // server disconnects and the reconnect gets a new one.
+            Ok(Err(_)) | Err(_) => Ok(Some(self.refresh_retry())),
           }
         }
         () = sleep_until(last + self.options.idle_timeout) => {
@@ -660,6 +732,7 @@ impl Session<'_> {
         channel: channel.clone(),
         code: unsubscribe.code,
         reason: unsubscribe.reason,
+        resubscribing: resubscribe,
       })?;
       if resubscribe {
         self.subscribe(channel).await?;
@@ -671,18 +744,36 @@ impl Session<'_> {
     };
     match (pending, reply.error) {
       (Pending::Subscribe(channel), None) => {
+        self.attempts.remove(&channel);
         self.yield_item(Item::Subscribed {
           connection,
           channel,
         })?;
       }
       (Pending::Subscribe(channel), Some(error)) => {
-        channels.remove(&channel);
+        let resubscribing = (error.temporary || error.code == TOKEN_EXPIRED)
+          && channels.contains(&channel);
+        if resubscribing {
+          let attempts = self.attempts.entry(channel.clone()).or_default();
+          let wait = backoff(
+            *attempts,
+            self.options.min_resubscribe,
+            self.options.max_resubscribe,
+          );
+          *attempts += 1;
+          self
+            .resubscribes
+            .insert(channel.clone(), Instant::now() + wait);
+        } else {
+          channels.remove(&channel);
+          self.attempts.remove(&channel);
+        }
         self.yield_item(Item::Unsubscribed {
           connection,
           channel,
           code: error.code,
           reason: error.message,
+          resubscribing,
         })?;
       }
       (Pending::Unsubscribe(channel), _) => {
@@ -691,6 +782,7 @@ impl Session<'_> {
           channel,
           code: 0,
           reason: "unsubscribed by the client".into(),
+          resubscribing: false,
         })?;
       }
       (Pending::Refresh, None) => {
@@ -698,14 +790,23 @@ impl Session<'_> {
           return Ok(refresh_in(result.expires, result.ttl));
         }
       }
+      (Pending::Refresh, Some(error)) if error.temporary => {
+        return Ok(Some(self.refresh_retry()));
+      }
       (Pending::Refresh, Some(error)) => {
-        return Err(End::dropped(format!(
-          "token refresh refused: {} {}",
-          error.code, error.message
-        )));
+        return Err(End::Stopped {
+          code: error.code,
+          reason: error.message,
+        });
       }
     }
     Ok(None)
+  }
+
+  /// How long to wait before retrying a failed refresh.
+  fn refresh_retry(&self) -> Duration {
+    let options = self.options;
+    backoff(0, options.min_refresh_retry, options.max_refresh_retry)
   }
 
   async fn subscribe(&mut self, channel: String) -> Result<(), End> {

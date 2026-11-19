@@ -63,6 +63,8 @@ fn options(endpoint: &str, channels: &[&str]) -> Options {
     },
     channels: channels.iter().map(|&c| c.into()).collect(),
     min_backoff: Duration::from_millis(10),
+    min_resubscribe: Duration::from_millis(10),
+    max_resubscribe: Duration::from_millis(50),
     ..Options::default()
   }
 }
@@ -173,7 +175,8 @@ async fn session() {
       connection: 1,
       channel: CHANNEL.into(),
       code: 2500,
-      reason: "insufficient state".into()
+      reason: "insufficient state".into(),
+      resubscribing: true
     })
   );
   frame(&mut client, 1, r#"{"id":3,"subscribe":{}}"#).await;
@@ -212,33 +215,40 @@ const UNSUBSCRIBE: &str = r#"{"push":{"channel":"chatrooms.1000.v2","unsubscribe
 const DISCONNECT: &str =
   r#"{"push":{"disconnect":{"code":3501,"reason":"bad request"}}}"#;
 
-/// A refused subscribe isn't asked again on the next connection.
+/// A subscribe refused with a temporary error is retried; one refused
+/// otherwise isn't, not even on the next connection.
 #[::tokio::test]
-async fn refused_subscribe_stays_a_gap() {
+async fn refused_subscribes() {
   let (listener, url) = listen().await;
   let server = ::tokio::spawn(async move {
     let mut ws = accept(&listener).await;
-    assert_eq!(
-      receive(&mut ws).await,
-      r#"{"id":2,"subscribe":{"channel":"a"}}"#
-    );
-    assert_eq!(
-      receive(&mut ws).await,
-      r#"{"id":3,"subscribe":{"channel":"b"}}"#
-    );
+    for (id, channel) in [(2, "a"), (3, "b"), (4, "c")] {
+      assert_eq!(
+        receive(&mut ws).await,
+        format!(r#"{{"id":{id},"subscribe":{{"channel":"{channel}"}}}}"#)
+      );
+    }
     send(&mut ws, r#"{"id":2,"subscribe":{}}"#).await;
     send(&mut ws, REFUSED).await;
+    send(&mut ws, TEMPORARY).await;
+    assert_eq!(
+      receive(&mut ws).await,
+      r#"{"id":5,"subscribe":{"channel":"c"}}"#
+    );
+    send(&mut ws, r#"{"id":5,"subscribe":{}}"#).await;
     close(&mut ws, 3000, "").await;
 
     let mut ws = accept(&listener).await;
-    assert_eq!(
-      receive(&mut ws).await,
-      r#"{"id":2,"subscribe":{"channel":"a"}}"#
-    );
+    for (id, channel) in [(2, "a"), (3, "c")] {
+      assert_eq!(
+        receive(&mut ws).await,
+        format!(r#"{{"id":{id},"subscribe":{{"channel":"{channel}"}}}}"#)
+      );
+    }
     close(&mut ws, 3500, "invalid token").await;
   });
 
-  let mut client = Client::spawn(options(&url, &["b", "a"]));
+  let mut client = Client::spawn(options(&url, &["c", "b", "a"]));
   let mut items = Vec::new();
   while let Some(item) = client.next().await {
     if !matches!(item, Item::Frame(_)) {
@@ -260,7 +270,19 @@ async fn refused_subscribe_stays_a_gap() {
         connection: 1,
         channel: "b".into(),
         code: 103,
-        reason: "permission denied".into()
+        reason: "permission denied".into(),
+        resubscribing: false
+      },
+      Item::Unsubscribed {
+        connection: 1,
+        channel: "c".into(),
+        code: 100,
+        reason: "internal server error".into(),
+        resubscribing: true
+      },
+      Item::Subscribed {
+        connection: 1,
+        channel: "c".into()
       },
       Item::Disconnected {
         connection: 1,
@@ -282,8 +304,9 @@ async fn refused_subscribe_stays_a_gap() {
 
 const REFUSED: &str =
   r#"{"id":3,"error":{"code":103,"message":"permission denied"}}"#;
+const TEMPORARY: &str = r#"{"id":4,"error":{"code":100,"message":"internal server error","temporary":true}}"#;
 
-/// A connect command answered with an error is a failed connect, retried.
+/// A connect refused with an expired token is a failed connect, retried.
 #[::tokio::test]
 async fn refused_connect() {
   let (listener, url) = listen().await;
@@ -312,6 +335,33 @@ async fn refused_connect() {
     client.next().await,
     Some(Item::Connected { connection: 1, .. })
   ));
+  server.await.unwrap();
+}
+
+/// A connect refused otherwise isn't retried.
+#[::tokio::test]
+async fn refused_connect_stops() {
+  let (listener, url) = listen().await;
+  let server = ::tokio::spawn(async move {
+    let (tcp, _) = listener.accept().await.unwrap();
+    let mut ws = ::tokio_tungstenite::accept_async(tcp).await.unwrap();
+    receive(&mut ws).await;
+    send(
+      &mut ws,
+      r#"{"id":1,"error":{"code":101,"message":"unauthorized"}}"#,
+    )
+    .await;
+  });
+
+  let mut client = Client::spawn(options(&url, &[]));
+  assert_eq!(
+    client.next().await,
+    Some(Item::Stopped {
+      code: 101,
+      reason: "unauthorized".into()
+    })
+  );
+  assert_eq!(client.next().await, None);
   server.await.unwrap();
 }
 
