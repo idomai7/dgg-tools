@@ -4,6 +4,17 @@ The logger: `logger-journal` and `logger`, run as `dgg-logger` subcommands. See 
 
 ## Decisions
 - **Storage:** an append-only raw journal is the source of truth. SQLite (rusqlite, `bundled`) is an index that can be rebuilt from it.
+- **Kick journals (planned):** the journal format also covers Kick, for [kick-mod](kick-mod.md) now and a Kick logger later. It stays in `logger-journal`.
+  - **Variants:** each platform is a variant of the format, versioned on its own as `<variant>.<major>.<minor>`, so one platform's changes never break the other's. Their events have little in common anyway.
+    - Each variant's majors get their own modules in `logger-journal`, like `record/v0.rs` today.
+    - Kick starts at `kick.0.0`. dgg's current `journal 0.1` files are dgg's, read as they are until dgg's logger moves to `dgg.0.<minor>`.
+  - **Header line:** the required fields, then a lone `;`, then informational `key=value` fields. For example: `journal kick.0.0 ; endpoint=wss://… channel=destiny`.
+    - Required: the format name and the variant's version. A new required field changes the format.
+    - Informational: redundant information and notes, always written but safe to ignore. Readers skip keys they don't know, so new keys never change the format.
+    - `endpoint`: the websocket address for dgg, the socket URL for Kick. It's the same URL the `open` lines record: the one connected to, as given. So a file only ever holds connections to one endpoint, and connecting to a different endpoint starts the next file, `<instance>.<n>.journal`, numbered in sequence.
+    - `channel` (Kick): the channel the file's connection is subscribed to, also given by the path.
+  - **Layout:** each platform has its own journal root, so sync and compact never mix them. Under Kick's, each channel is a journal root of its own, laid out like dgg's: `<channel>/live/<day>/<instance>.journal`, and so on.
+  - **Versions:** dgg's logger isn't changed for now and keeps writing `journal 0.1`. `logger-journal` reads that alongside `kick.0.0`.
 
 ## Design
 - **Journal layout:**
