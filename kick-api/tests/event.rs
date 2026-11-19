@@ -72,10 +72,8 @@ fn chat_message() {
   assert_eq!(message.chatroom_id, Some(1000));
   assert_eq!(message.content, "probe 1 plain");
   assert_eq!(message.r#type.as_deref(), Some("message"));
-  assert_eq!(
-    message.created_at.as_deref(),
-    Some("2026-11-19T12:01:56+00:00")
-  );
+  // 2026-11-19T12:01:56+00:00
+  assert_eq!(message.created_at, Some(1_795_089_716_000));
   assert_eq!(
     (message.sender.id, &*message.sender.username),
     (3000, "channel")
@@ -135,7 +133,8 @@ fn deleted_and_banned() {
       banned_by: Some(user(0, "channel")),
       permanent: false,
       duration: Some(1),
-      expires_at: Some("2026-11-19T12:06:45+00:00".into()),
+      // 2026-11-19T12:06:45+00:00
+      expires_at: Some(1_795_090_005_000),
       rest: None,
     })
   );
@@ -143,7 +142,7 @@ fn deleted_and_banned() {
     panic!();
   };
   assert!(ban.permanent);
-  assert_eq!((ban.duration, &ban.expires_at), (None, &None));
+  assert_eq!((ban.duration, ban.expires_at), (None, None));
 }
 
 #[test]
@@ -178,6 +177,8 @@ fn settings() {
     panic!();
   };
   assert_eq!(changed.channel.as_ref().unwrap().id, 2000);
+  // 2026-11-19T12:07:30Z
+  assert_eq!(changed.created_at, Some(1_795_090_050_000));
   let slow = changed.settings.slow_mode.as_ref().unwrap();
   assert_eq!((slow.enabled, slow.duration_seconds), (true, Some(120)));
   assert!(!changed.settings.allow_links.as_ref().unwrap().enabled);
@@ -206,6 +207,34 @@ fn keeps_unnamed_fields() {
   assert_eq!(message.rest.unwrap()["new"], 1);
   let badge = &message.sender.identity.unwrap().badges[0];
   assert_eq!(badge.rest.as_ref().unwrap()["count"], 3);
+}
+
+#[test]
+fn keeps_unreadable_timestamps() {
+  let message = |created_at: serde_json::Value| {
+    let data = json!({
+      "id": "m", "content": "hi",
+      "sender": { "id": 1, "username": "user1" },
+      "created_at": created_at,
+    });
+    let event =
+      Event::parse("App\\Events\\ChatMessageEvent", &data.to_string());
+    let complete = event.complete();
+    let Event::ChatMessageEvent(message) = event else {
+      panic!("{event:?}");
+    };
+    (message.created_at, message.rest, complete)
+  };
+  assert_eq!(
+    message(json!("1970-01-01T00:00:01Z")),
+    (Some(1000), None, true)
+  );
+  assert_eq!(message(json!(null)), (None, None, true));
+  let (created_at, rest, complete) = message(json!("yesterday"));
+  assert_eq!((created_at, complete), (None, false));
+  assert_eq!(rest.unwrap()["created_at"], "yesterday");
+  let (_, rest, _) = message(json!(1795089716));
+  assert_eq!(rest.unwrap()["created_at"], 1795089716);
 }
 
 #[test]

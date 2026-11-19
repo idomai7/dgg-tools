@@ -54,6 +54,10 @@ name = "event"
 required-features = ["protocol"]
 
 [[test]]
+name = "time"
+required-features = ["protocol"]
+
+[[test]]
 name = "client"
 required-features = ["client"]
 

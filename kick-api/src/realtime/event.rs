@@ -9,12 +9,16 @@
 //!
 //! Only the fields an object needs to mean anything are required; the rest
 //! are optional, so a change degrades one field instead of the event.
-//! Fields a type doesn't name are kept in its `rest`. Decoding never loses
+//! Fields a type doesn't name are kept in its `rest`. Timestamps are unix
+//! milliseconds, as in `dgg-api`. Decoding never loses
 //! an event: one that doesn't match its type is [`Event::Unreadable`], with
 //! the error. The frame itself, raw, is the caller's to keep.
 
 use {
-  crate::realtime::rest::{self, Rest},
+  crate::realtime::{
+    rest::{self, Rest},
+    time,
+  },
   ::serde::{
     Deserialize, Deserializer,
     de::{DeserializeOwned, Error as _},
@@ -242,6 +246,7 @@ impl Complete for BadgeV2 {
 
 /// A chat message: `ChatMessageEvent`'s data, and a pinned message.
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(remote = "Self")]
 pub struct Message {
   /// A uuid.
   pub id: String,
@@ -250,8 +255,10 @@ pub struct Message {
   pub content: String,
   /// `message` or `reply`.
   pub r#type: Option<String>,
-  /// Set by the server, in whole seconds.
-  pub created_at: Option<String>,
+  /// Set by the server, in whole seconds; unix ms. A string that isn't
+  /// RFC 3339 stays in `rest`.
+  #[serde(skip)]
+  pub created_at: Option<i64>,
   pub sender: User,
   /// `null` when the sender sent no `message_ref`.
   pub metadata: Option<Metadata>,
@@ -260,6 +267,16 @@ pub struct Message {
   pub thread_parent_id: Option<String>,
   #[serde(flatten, deserialize_with = "rest::deserialize")]
   pub rest: Rest,
+}
+
+impl<'de> Deserialize<'de> for Message {
+  fn deserialize<D: Deserializer<'de>>(
+    deserializer: D,
+  ) -> Result<Self, D::Error> {
+    let mut decoded = Self::deserialize(deserializer)?;
+    decoded.created_at = time::take(&mut decoded.rest, "created_at");
+    Ok(decoded)
+  }
 }
 
 impl Complete for Message {
@@ -324,6 +341,7 @@ impl Complete for Deleted {
 
 /// A user was banned (`permanent`) or timed out.
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(remote = "Self")]
 pub struct UserBanned {
   /// The ban's own uuid.
   pub id: Option<String>,
@@ -334,10 +352,22 @@ pub struct UserBanned {
   pub permanent: bool,
   /// A timeout's, in minutes.
   pub duration: Option<u64>,
-  /// When a timeout ends.
-  pub expires_at: Option<String>,
+  /// When a timeout ends, in unix ms. A string that isn't RFC 3339 stays
+  /// in `rest`.
+  #[serde(skip)]
+  pub expires_at: Option<i64>,
   #[serde(flatten, deserialize_with = "rest::deserialize")]
   pub rest: Rest,
+}
+
+impl<'de> Deserialize<'de> for UserBanned {
+  fn deserialize<D: Deserializer<'de>>(
+    deserializer: D,
+  ) -> Result<Self, D::Error> {
+    let mut decoded = Self::deserialize(deserializer)?;
+    decoded.expires_at = time::take(&mut decoded.rest, "expires_at");
+    Ok(decoded)
+  }
 }
 
 impl Complete for UserBanned {
@@ -507,14 +537,27 @@ impl Complete for ChatroomClear {
 /// `ChatroomUpdatedEvent` has (`rules`, `allow_links`), with durations in
 /// seconds. Nothing says who changed them, or which.
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(remote = "Self")]
 pub struct ChatSettingsChanged {
   /// The change's own uuid.
   pub id: Option<String>,
   pub channel: Option<Channel>,
   pub settings: Settings,
-  pub created_at: Option<String>,
+  /// Unix ms. A string that isn't RFC 3339 stays in `rest`.
+  #[serde(skip)]
+  pub created_at: Option<i64>,
   #[serde(flatten, deserialize_with = "rest::deserialize")]
   pub rest: Rest,
+}
+
+impl<'de> Deserialize<'de> for ChatSettingsChanged {
+  fn deserialize<D: Deserializer<'de>>(
+    deserializer: D,
+  ) -> Result<Self, D::Error> {
+    let mut decoded = Self::deserialize(deserializer)?;
+    decoded.created_at = time::take(&mut decoded.rest, "created_at");
+    Ok(decoded)
+  }
 }
 
 impl Complete for ChatSettingsChanged {
