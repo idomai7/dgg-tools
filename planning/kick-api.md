@@ -19,7 +19,8 @@ Kick's APIs, kept lightweight for any tool to depend on: [kick-mod](kick-mod.md)
   - The realtime path has three levels, each carried inside the one above. Each level is named in its source's own terms: level 1 in dgg-api's, level 2 in Centrifugo's `client.proto` (github.com/centrifugal/protocol), and level 3 in Kick's.
   - **Level 1, the websocket** (`realtime::client`, feature `client`): lifecycle events plus raw frames, in the shape of dgg-api's `chat::client::Item`. Centrifugo adds a session above the socket (a connect handshake, a token that has to be refreshed, subscriptions per channel, disconnects that mustn't be retried), so it adds only the events those require.
     - `Connected { connection, endpoint }`: after Centrifugo's connect reply, not when the socket opens.
-    - `Frame(Frame)`: one websocket message's text as received, kept whole, with its connection number and time of arrival.
+    - `Frame(Frame)`: one websocket message's text as received, kept whole, with its connection number, as in dgg-api.
+      - It has no arrival time: the consumer stamps it, as dgg's logger does. Stamping it in the client, as the frame is read, would be more accurate. Perhaps later, in both `dgg-api` and `kick-api`.
       - A frame can hold several newline-separated replies.
       - Every frame is yielded except pings (the empty `{}`), which are answered internally and not journaled, as dgg-api does with `PING`. Replies to the client's own commands and errors are yielded too.
     - `Binary { connection, data }`: binary (protobuf) frames. A JSON client shouldn't get them; they're passed through as in dgg-api.

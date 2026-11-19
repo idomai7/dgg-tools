@@ -37,4 +37,5 @@ Sources: what `cdn.destiny.gg` served, chat-gui (d3f4451, 2026-11-08), and the w
 ## Status
 - The chat client (reconnect with backoff, PING/PONG, idle timeout, sending raw frames), behind feature `client`; decoding events and encoding commands, behind `protocol`; emotes and flairs decoded behind `assets`, their stylesheets split into generated and hand-written, and all four fetched from the CDN behind `http` (fresh copies on `REFRESHCHATASSETS`'s cache key).
   - Events seen in a capture (2026-11-09) are typed from it; the rest from chat-gui's handlers (github.com/destinygg/chat-gui), as are the commands.
+  - Frames carry no arrival time; the logger stamps them as it receives them. Stamping them in the client, as each is read, would be more accurate. Perhaps later, in `kick-api` too.
   - Logging in: a destiny.gg login key (Profile > Developer > Connections), sent as the cookie `authtoken=<key>`. Tried 2026-11-09 with `examples/send.rs`: `ME` named the user, and a public `MSG` echoed back. Whispers are untried.
