@@ -26,14 +26,14 @@ A chat client and moderation tools for Kick channels. Kick only, built on [kick-
     [server]
     listen = "127.0.0.1:8787"
     ```
-  - **Channels:** `data/kick-mod/channels.toml`, a table per channel, written by kick-mod and editable by hand:
-    ```toml
-    [<slug>]
-    broadcaster_user_id = 456
-    chatroom_id = 123
+  - **Channels:** `data/kick-mod/channels.json`, an object per channel by slug, written by kick-mod and editable by hand:
+    ```json
+    {
+      "<slug>": { "broadcaster_user_id": 456, "chatroom_id": 123 }
+    }
     ```
     - kick-mod adds a channel when asked, by `kick-mod ids <slug>` now and from the page later. The unofficial lookup (curl) has both ids. If it fails, `broadcaster_user_id` comes from the official API, with the app's token, and the chatroom id is left for entering by hand.
-    - Written with `toml_edit`, re-read just before each write, so hand edits and comments survive.
+    - Written whole, pretty-printed and sorted by slug. It's re-read just before each write, so hand edits made while kick-mod runs survive, and fields kick-mod doesn't know are kept.
   - **Token:** `data/kick-mod/token.json`, saved again on each refresh.
   - **Mod log:** `data/kick-mod/modlog.jsonl`.
   - With several moderators, some settings become theirs, such as which channels they see. They'll go in a per-moderator part of `data/kick-mod/`, since moderators will change them from the page; for now there's one moderator, who sees every channel.
@@ -43,7 +43,7 @@ A chat client and moderation tools for Kick channels. Kick only, built on [kick-
 
 ## Steps
 Each is a pause for review.
-1. **Server:** `kick-mod serve`, reading the config and the channels and serving one plain page, with the `Host`/`Origin` check. `ids` records channels' ids in `channels.toml`.
+1. **Server:** `kick-mod serve`, reading the config and the channels and serving one plain page, with the `Host`/`Origin` check. `ids` records channels' ids in `channels.json`.
 2. **Sign-in:** a "Sign in" button on the page goes to Kick, which redirects back to the server's own `/oauth/callback`. Later starts use the saved token. When it can't be refreshed, the page asks to sign in again.
 3. **Live chat:** a realtime connection per channel, and a column per channel on the page, fed over SSE: messages, with deletions, bans and timeouts shown as they happen.
 4. **Manual actions:** delete, timeout (preset durations), ban and unban on each message, with an optional reason. Each is appended to the mod log: when, by whom, what, on whom, why, and Kick's answer. A failure shows Kick's error.
