@@ -153,7 +153,7 @@ Two minutes on a busy live channel, plus an offline one (`destiny`), from a scra
   - Signing in, `GET /users`, `GET /channels`, `POST /chat` and `DELETE /chat` all worked.
   - `POST /chat`'s `message_id` is the realtime message's `id`, and `DELETE /chat` takes it; the deletion arrives with the same id.
   - The realtime sender's `id` is the official API's `user_id`.
-  - The token came back without `moderation:ban`, though it was asked for: probably not enabled in the app's settings.
+  - Kick grants only the scopes enabled in the app's settings: `moderation:ban` was asked for but missing until it was enabled there.
 
 ## Open questions
 - The other events: subscriptions and gifts, going live and offline, title and category changes, follows, replies (seen as `type: reply` but not looked at), polls, and moderators being added or removed.
