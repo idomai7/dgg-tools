@@ -2,7 +2,7 @@
 //! connection.
 
 use {
-  crate::realtime::rest::{self, Rest},
+  crate::rest::{self, Rest},
   ::serde::{Deserialize, Deserializer, de::Error as _},
   ::serde_json::Value,
   ::std::collections::BTreeMap,

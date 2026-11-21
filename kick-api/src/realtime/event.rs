@@ -15,7 +15,7 @@
 //! the error. The frame itself, raw, is the caller's to keep.
 
 use {
-  crate::realtime::{
+  crate::{
     rest::{self, Rest},
     time,
   },

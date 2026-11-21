@@ -1,4 +1,4 @@
-use ::kick_api::realtime::time::unix_ms;
+use ::kick_api::time::unix_ms;
 
 #[test]
 fn kicks_forms() {
