@@ -1,6 +1,8 @@
 //! Signing in and tokens, against a local server standing in for Kick's.
 //! Ids, secrets and tokens are made up.
 
+mod fake;
+
 use {
   ::kick_api::official::{
     Error,
@@ -8,91 +10,26 @@ use {
   },
   ::reqwest::Url,
   ::std::collections::HashMap,
-  ::tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    net::TcpListener,
-  },
 };
 
 const REDIRECT: &str = "http://localhost:8787/oauth/callback";
 
-/// A request, as the server read it.
-#[derive(Debug)]
-struct Request {
-  method: String,
-  path: String,
-  query: HashMap<String, String>,
-  content_type: Option<String>,
-  form: HashMap<String, String>,
-}
+const USER_TOKEN: &str = r#"{"access_token":"access-1","token_type":"Bearer",
+  "refresh_token":"refresh-1","expires_in":3600,
+  "scope":"user:read moderation:ban"}"#;
 
-/// An app whose sign-in is served locally, and the server, which answers
-/// one request with `status` and `body` and returns what it was sent.
-async fn serve(
-  status: u16,
-  body: &'static str,
-) -> (App, ::tokio::task::JoinHandle<Request>) {
-  let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+/// An app whose sign-in is served by a local server that answers every
+/// request with `status` and `body`.
+async fn serve(status: u16, body: &'static str) -> (App, fake::Server) {
+  let server = fake::serve(move |_| (status, body.into())).await;
   let mut app = App::new("app-id", "app-secret");
-  app.base = format!("http://{}", listener.local_addr().unwrap());
-  let server = ::tokio::spawn(async move {
-    let (mut socket, _) = listener.accept().await.unwrap();
-    let mut read = Vec::new();
-    let head = loop {
-      let mut chunk = [0; 4096];
-      let n = socket.read(&mut chunk).await.unwrap();
-      read.extend_from_slice(&chunk[..n]);
-      if let Some(end) = read.windows(4).position(|w| w == b"\r\n\r\n") {
-        break end;
-      }
-    };
-    let text = String::from_utf8(read[..head].to_vec()).unwrap();
-    let mut lines = text.split("\r\n");
-    let mut start = lines.next().unwrap().split(' ');
-    let (method, target) = (start.next().unwrap(), start.next().unwrap());
-    let headers: HashMap<_, _> = lines
-      .filter_map(|line| line.split_once(": "))
-      .map(|(name, value)| (name.to_lowercase(), value.to_owned()))
-      .collect();
-    let length = headers
-      .get("content-length")
-      .map_or(0, |length| length.parse().unwrap());
-    while read.len() < head + 4 + length {
-      let mut chunk = [0; 4096];
-      let n = socket.read(&mut chunk).await.unwrap();
-      read.extend_from_slice(&chunk[..n]);
-    }
-    let reason = if status == 200 { "OK" } else { "Error" };
-    let answer = format!(
-      "HTTP/1.1 {status} {reason}\r\ncontent-length: {}\r\n\
-       connection: close\r\n\r\n{body}",
-      body.len()
-    );
-    socket.write_all(answer.as_bytes()).await.unwrap();
-    let url = Url::parse(&format!("http://server{target}")).unwrap();
-    let form = Url::parse(&format!(
-      "http://server/?{}",
-      String::from_utf8_lossy(&read[head + 4..])
-    ))
-    .unwrap();
-    Request {
-      method: method.into(),
-      path: url.path().into(),
-      query: url.query_pairs().into_owned().collect(),
-      content_type: headers.get("content-type").cloned(),
-      form: form.query_pairs().into_owned().collect(),
-    }
-  });
+  app.base = server.base.clone();
   (app, server)
 }
 
 fn pairs(pairs: &[(&str, &str)]) -> HashMap<String, String> {
   pairs.iter().map(|&(k, v)| (k.into(), v.into())).collect()
 }
-
-const USER_TOKEN: &str = r#"{"access_token":"access-1","token_type":"Bearer",
-  "refresh_token":"refresh-1","expires_in":3600,
-  "scope":"user:read moderation:ban"}"#;
 
 #[test]
 fn challenge_is_s256() {
@@ -181,15 +118,17 @@ async fn exchanges_the_code() {
   let (app, server) = serve(200, USER_TOKEN).await;
   let http = ::reqwest::Client::new();
   let token = app.exchange(&http, REDIRECT, "verifier-1", "code-1").await;
-  let request = server.await.unwrap();
   assert_eq!(token.unwrap().access_token, "access-1");
+  let [request] = &server.requests()[..] else {
+    panic!("{:?}", server.requests());
+  };
   assert_eq!((&*request.method, &*request.path), ("POST", "/oauth/token"));
   assert_eq!(
-    request.content_type.as_deref(),
-    Some("application/x-www-form-urlencoded")
+    request.headers["content-type"],
+    "application/x-www-form-urlencoded"
   );
   assert_eq!(
-    request.form,
+    request.form(),
     pairs(&[
       ("grant_type", "authorization_code"),
       ("client_id", "app-id"),
@@ -208,7 +147,7 @@ async fn refreshes_and_app_tokens() {
   let token = app.refresh(&http, "refresh-0").await.unwrap();
   assert_eq!(token.refresh_token.as_deref(), Some("refresh-1"));
   assert_eq!(
-    server.await.unwrap().form,
+    server.requests()[0].form(),
     pairs(&[
       ("grant_type", "refresh_token"),
       ("client_id", "app-id"),
@@ -221,7 +160,7 @@ async fn refreshes_and_app_tokens() {
   let (app, server) = serve(200, answer).await;
   assert_eq!(app.app_token(&http).await.unwrap().access_token, "app-1");
   assert_eq!(
-    server.await.unwrap().form,
+    server.requests()[0].form(),
     pairs(&[
       ("grant_type", "client_credentials"),
       ("client_id", "app-id"),
@@ -238,16 +177,19 @@ async fn revokes() {
     .revoke(&http, "refresh-1", Some(Hint::RefreshToken))
     .await
     .unwrap();
-  let request = server.await.unwrap();
+  let request = &server.requests()[0];
   assert_eq!(
     (&*request.method, &*request.path),
     ("POST", "/oauth/revoke")
   );
   assert_eq!(
     request.query,
-    pairs(&[("token", "refresh-1"), ("token_hint_type", "refresh_token")])
+    [
+      ("token".into(), "refresh-1".into()),
+      ("token_hint_type".into(), "refresh_token".into())
+    ]
   );
-  assert!(request.form.is_empty());
+  assert!(request.body.is_empty());
 }
 
 #[tokio::test]
