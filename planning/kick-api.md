@@ -149,14 +149,18 @@ Two minutes on a busy live channel, plus an offline one (`destiny`), from a scra
 - Webhook verification: RSA PKCS#1 v1.5 SHA-256 over `messageId.timestamp.body`, using the `Kick-Event-*` headers. The public key comes from `/public/v1/public-key`.
 - Webhook payload: `content`, with emotes inline as `[emote:ID:NAME]`, plus `sender.identity` and `created_at`.
 - Cloudflare has reportedly refused some clients, with 403s on `POST /public/v1/chat` and on channel lookups (KickDevDocs issues #281, #434).
+- Checked live with the sign-in example (2026-11-21), over reqwest and rustls, which weren't refused:
+  - Signing in, `GET /users`, `GET /channels`, `POST /chat` and `DELETE /chat` all worked.
+  - `POST /chat`'s `message_id` is the realtime message's `id`, and `DELETE /chat` takes it; the deletion arrives with the same id.
+  - The realtime sender's `id` is the official API's `user_id`.
+  - The token came back without `moderation:ban`, though it was asked for: probably not enabled in the app's settings.
 
 ## Open questions
 - The other events: subscriptions and gifts, going live and offline, title and category changes, follows, replies (seen as `type: reply` but not looked at), polls, and moderators being added or removed.
 - Whether a moderator who isn't the broadcaster shows up the same way in `banned_by`, `unbanned_by` and `pinnedBy`.
 - How kick-mod learns who deleted a message, unpinned, cleared chat or changed settings, since the events don't say. Perhaps only for its own actions.
 - Where to get a chatroom id from a slug without the unofficial lookup. Perhaps the official channel lookup has it; otherwise the user enters it once and the tool keeps it.
-- Whether the official API refuses reqwest/rustls clients.
-- Whether a realtime message's `id` is the `message_id` that `DELETE /chat` takes, and a sender's `id` the `user_id` that the bans take. Likely, but kick-mod depends on it, so the first live run of the OAuth example checks it.
+- Whether bans take the realtime sender's `id`. It's the official `user_id`, so likely; checked once the app has `moderation:ban`.
 - How long a refresh token lasts when it isn't used.
 - For the webhooks: whether an app token may subscribe to any channel's webhooks.
 
