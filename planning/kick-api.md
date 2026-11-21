@@ -68,6 +68,21 @@ Kick's APIs, kept lightweight for any tool to depend on: [kick-mod](kick-mod.md)
       - It doesn't mean every field is filled in. An optional field that's absent is still complete.
     - `dgg-api` drops unnamed fields from its typed events. It stays that way for now: its flattened structs make leftovers fiddly to place.
   - `official`: the official API over reqwest: OAuth (app and user tokens, and refreshing them), channel lookup, sending chat, deleting, banning, timing out and unbanning.
+    - `official::oauth`: Kick's sign-in, as data and requests, with no server of its own.
+      - It builds the authorize URL from the client id, redirect URI and scopes, with a random `state` and a PKCE verifier (`S256`), and returns those for the caller to keep until the callback.
+      - It exchanges the code for a user token, refreshes one, revokes one, and fetches app tokens.
+      - A `Token` holds the access and refresh tokens, the scopes, and when it expires, in unix milliseconds.
+      - The callback on `http://localhost:8787/oauth/callback` belongs to the tool: kick-mod serves it from its own web server. An example shows the whole flow with a one-shot listener.
+    - `official::Api`: one method per endpoint: users, channels, sending chat, deleting a message, banning or timing out, and unbanning.
+      - Responses are typed, and fields they don't name are kept in `rest`, as in the realtime events.
+      - An error keeps the HTTP status and Kick's `message`, and tells apart a 429 (wait) and a 403 that looks like the Cloudflare block.
+      - Base URLs can be set, so the tests run against a local fake server, as the realtime client's do.
+    - **Refreshing the token:** `Api` isn't a service. It has no task and no timer, and does nothing between calls.
+      - A call checks the user token first. If it expires within a minute, the call refreshes it before sending the request. A 401 refreshes it once and retries.
+      - Concurrent calls share one refresh.
+      - Kick replaces the refresh token on every refresh, so `Api` hands each new `Token` to a callback the caller supplies, which saves it. Otherwise a restart would start from a refresh token that no longer works.
+      - A refresh that fails is returned as the call's error and isn't retried. The tool then asks the user to sign in again.
+      - An app token is fetched again the same way, with no callback, since there's nothing to keep.
   - `channel`: decoding the unofficial channel lookup, as now.
 
 ## Known
@@ -113,7 +128,18 @@ Two minutes on a busy live channel, plus an offline one (`destiny`), from a scra
 
 ### Official API
 - App token via `POST https://id.kick.com/oauth/token` (`client_credentials`).
-- Channel lookup via `GET /public/v1/channels?slug=` (gives `broadcaster_user_id`).
+- User sign-in (docs read 2026-11-21): `GET https://id.kick.com/oauth/authorize` with `response_type=code`, `client_id`, `redirect_uri`, `scope`, `state` (required) and `code_challenge` with `code_challenge_method=S256` (the only method).
+  - The code goes to `POST https://id.kick.com/oauth/token` (form) with `grant_type=authorization_code`, `client_id`, `client_secret`, `redirect_uri`, `code_verifier` and `code`. `grant_type=refresh_token` takes `refresh_token` instead.
+  - Both answer `access_token`, `token_type`, `refresh_token`, `expires_in` and `scope`.
+  - `POST https://id.kick.com/oauth/revoke` with `token` and `token_hint_type` (`access_token` or `refresh_token`) as query parameters.
+  - Scopes kick-mod needs: `user:read`, `channel:read`, `chat:write`, `moderation:ban`, `moderation:chat_message:manage`.
+- Every response is `{data, message}`.
+- Channel lookup via `GET /public/v1/channels?slug=` or `?broadcaster_user_id=`, up to 50 of one or the other (both is a 400). It gives `broadcaster_user_id`, `slug`, `stream` and more, but no channel or chatroom id. With no parameters, it's the signed-in user's channel.
+- `GET /public/v1/users?id=`: `user_id`, `name`, `email`, `profile_picture`. With no `id`, it's the signed-in user.
+- `POST /public/v1/chat` (`chat:write`): `content` (at most 500 graphemes and 2048 bytes of UTF-8), `type` (`user` or `bot`), `broadcaster_user_id` (needed as a user, ignored as a bot), and `reply_to_message_id`. It answers `is_sent` and `message_id`.
+- `DELETE /public/v1/chat/{message_id}` (`moderation:chat_message:manage`): 204.
+- `POST /public/v1/moderation/bans` (`moderation:ban`): `broadcaster_user_id`, `user_id`, `duration` in minutes (1 to 10080, omitted for a permanent ban) and `reason` (at most 100 characters).
+- `DELETE /public/v1/moderation/bans` (`moderation:ban`): `broadcaster_user_id` and `user_id`. It lifts a ban or a timeout.
 - Webhooks: subscribe with `POST /public/v1/events/subscriptions` (e.g. `chat.message.sent`). The webhook URL is set in the app settings.
 - Webhook verification: RSA PKCS#1 v1.5 SHA-256 over `messageId.timestamp.body`, using the `Kick-Event-*` headers. The public key comes from `/public/v1/public-key`.
 - Webhook payload: `content`, with emotes inline as `[emote:ID:NAME]`, plus `sender.identity` and `created_at`.
@@ -125,6 +151,8 @@ Two minutes on a busy live channel, plus an offline one (`destiny`), from a scra
 - How kick-mod learns who deleted a message, unpinned, cleared chat or changed settings, since the events don't say. Perhaps only for its own actions.
 - Where to get a chatroom id from a slug without the unofficial lookup. Perhaps the official channel lookup has it; otherwise the user enters it once and the tool keeps it.
 - Whether the official API refuses reqwest/rustls clients.
+- Whether a realtime message's `id` is the `message_id` that `DELETE /chat` takes, and a sender's `id` the `user_id` that the bans take. Likely, but kick-mod depends on it, so the first live run of the OAuth example checks it.
+- How long a refresh token lasts when it isn't used.
 - For the webhooks: whether an app token may subscribe to any channel's webhooks.
 
 ## The webhook probe
