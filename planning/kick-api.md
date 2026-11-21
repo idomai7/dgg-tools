@@ -152,7 +152,7 @@ Two minutes on a busy live channel, plus an offline one (`destiny`), from a scra
 - Checked live with the sign-in example (2026-11-21), over reqwest and rustls, which weren't refused:
   - Signing in, `GET /users`, `GET /channels`, `POST /chat` and `DELETE /chat` all worked.
   - `POST /chat`'s `message_id` is the realtime message's `id`, and `DELETE /chat` takes it; the deletion arrives with the same id.
-  - The realtime sender's `id` is the official API's `user_id`.
+  - The realtime sender's `id` is the official API's `user_id`. Assumed, not checked, to be the `user_id` the bans take.
   - Kick grants only the scopes enabled in the app's settings: `moderation:ban` was asked for but missing until it was enabled there.
 
 ## Open questions
@@ -160,7 +160,6 @@ Two minutes on a busy live channel, plus an offline one (`destiny`), from a scra
 - Whether a moderator who isn't the broadcaster shows up the same way in `banned_by`, `unbanned_by` and `pinnedBy`.
 - How kick-mod learns who deleted a message, unpinned, cleared chat or changed settings, since the events don't say. Perhaps only for its own actions.
 - Where to get a chatroom id from a slug without the unofficial lookup. Perhaps the official channel lookup has it; otherwise the user enters it once and the tool keeps it.
-- Whether bans take the realtime sender's `id`. It's the official `user_id`, so likely; checked once the app has `moderation:ban`.
 - How long a refresh token lasts when it isn't used.
 - For the webhooks: whether an app token may subscribe to any channel's webhooks.
 
