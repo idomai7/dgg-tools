@@ -78,11 +78,16 @@ Kick's APIs, kept lightweight for any tool to depend on: [kick-mod](kick-mod.md)
       - An error keeps the HTTP status and Kick's `message`, and tells apart a 429 (wait) and a 403 that looks like the Cloudflare block.
       - Base URLs can be set, so the tests run against a local fake server, as the realtime client's do.
     - **Refreshing the token:** `Api` isn't a service. It has no task and no timer, and does nothing between calls.
-      - A call checks the user token first. If it expires within a minute, the call refreshes it before sending the request. A 401 refreshes it once and retries.
-      - Concurrent calls share one refresh.
-      - Kick replaces the refresh token on every refresh, so `Api` hands each new `Token` to a callback the caller supplies, which saves it. Otherwise a restart would start from a refresh token that no longer works.
-      - A refresh that fails is returned as the call's error and isn't retried. The tool then asks the user to sign in again.
-      - An app token is fetched again the same way, with no callback, since there's nothing to keep.
+      - `Api::refresh()` refreshes now, however long the token has left. It's the only path to a new token: everything below goes through it.
+        - A caller can use it to keep the token alive without other calls, or at startup to check that a saved token still works. This helps only if Kick expires refresh tokens that go unused, which is unknown.
+      - `Api::token()` is the current `Token`, so the caller can see `expires_at` and choose when to refresh.
+      - A call checks the user token first. If it expires within a minute, the call goes through `refresh()` before sending the request. A 401 goes through `refresh()` once and retries.
+      - Concurrent calls share one refresh, whether a call or the caller started it.
+      - Kick answers each refresh with a new refresh token, so `refresh()` hands each new `Token` to a callback the caller supplies, which saves it. Whether the old one still works isn't documented, so it's always replaced.
+      - A refresh that fails is returned as the error of the call that asked for it, and isn't retried. The tool then asks the user to sign in again.
+      - With an app token, `refresh()` fetches a new app token, and there's no callback, since there's nothing to keep.
+      - `oauth::App`'s token requests stay the low-level steps: `Api` calls them only from `refresh()`, and a tool calls them only to sign in.
+      - The realtime client's token is Centrifugo's, from Kick's realtime setup, and not an OAuth token. It's refreshed on its own, as now.
   - `channel`: decoding the unofficial channel lookup, as now.
 
 ## Known
