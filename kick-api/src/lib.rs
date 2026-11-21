@@ -6,8 +6,8 @@
 //!   publishes into its events, and feature `client` reads the frames.
 //! - `channel` (feature `channel`): the unofficial channel lookup, the only
 //!   place a channel's chatroom id is found.
-//! - `official` (feature `official`): Kick's official public API, signing
-//!   in first.
+//! - `official` (feature `official`): Kick's official public API and
+//!   signing in to it.
 //! - `rest` and `time`, shared by the decoders: the fields a type doesn't
 //!   name, and Kick's timestamps.
 //!
@@ -19,10 +19,10 @@ pub mod channel;
 pub mod official;
 #[cfg(feature = "centrifugo")]
 pub mod realtime;
-#[cfg(feature = "centrifugo")]
+#[cfg(any(feature = "centrifugo", feature = "official"))]
 pub mod rest;
-#[cfg(feature = "protocol")]
+#[cfg(any(feature = "protocol", feature = "official"))]
 pub mod time;
 
-#[cfg(feature = "centrifugo")]
+#[cfg(any(feature = "centrifugo", feature = "official"))]
 pub use rest::Rest;

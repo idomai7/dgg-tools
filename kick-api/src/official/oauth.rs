@@ -6,15 +6,12 @@
 //! query it's called with to [`SignIn::code`].
 
 use {
-  super::{Error, send},
+  super::{Error, now, send},
   ::base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD},
   ::reqwest::{Url, header::CONTENT_TYPE},
   ::serde::{Deserialize, Serialize},
   ::sha2::{Digest, Sha256},
-  ::std::{
-    fmt,
-    time::{SystemTime, UNIX_EPOCH},
-  },
+  ::std::fmt,
 };
 
 /// Where Kick's sign-in is served.
@@ -280,11 +277,4 @@ fn random(bytes: usize) -> String {
   let mut random = vec![0; bytes];
   ::getrandom::fill(&mut random).expect("the OS has randomness");
   URL_SAFE_NO_PAD.encode(random)
-}
-
-fn now() -> i64 {
-  let since = SystemTime::now()
-    .duration_since(UNIX_EPOCH)
-    .unwrap_or_default();
-  i64::try_from(since.as_millis()).unwrap_or(i64::MAX)
 }

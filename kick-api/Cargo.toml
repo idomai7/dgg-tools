@@ -24,7 +24,8 @@ client = [
   "dep:tokio",
   "dep:tokio-tungstenite",
 ]
-# Kick's official API: signing in and tokens, official::oauth.
+# Kick's official API, official::Api, and signing in to it,
+# official::oauth.
 official = [
   "dep:base64",
   "dep:getrandom",
@@ -32,6 +33,7 @@ official = [
   "dep:serde",
   "dep:serde_json",
   "dep:sha2",
+  "dep:tokio",
 ]
 
 [dependencies]
@@ -72,6 +74,10 @@ required-features = ["protocol"]
 [[test]]
 name = "client"
 required-features = ["client"]
+
+[[test]]
+name = "api"
+required-features = ["official"]
 
 [[test]]
 name = "oauth"
