@@ -154,6 +154,10 @@ Two minutes on a busy live channel, plus an offline one (`destiny`), from a scra
   - `POST /chat`'s `message_id` is the realtime message's `id`, and `DELETE /chat` takes it; the deletion arrives with the same id.
   - The realtime sender's `id` is the official API's `user_id`. Assumed, not checked, to be the `user_id` the bans take.
   - Kick grants only the scopes enabled in the app's settings: `moderation:ban` was asked for but missing until it was enabled there.
+  - A saved token past its expiry was refreshed, and the new one kept.
+- Sending as a bot, tried with the bot example (2026-11-22):
+  - With the app's token: 401 `Unauthorized`. Only a user's token sends chat.
+  - With the user's token: 404 `Not found`. Perhaps because the app has no bot yet: others report one is created from the app's settings (KickDevDocs #343).
 
 ## Open questions
 - The other events: subscriptions and gifts, going live and offline, title and category changes, follows, replies (seen as `type: reply` but not looked at), polls, and moderators being added or removed.
