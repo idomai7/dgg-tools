@@ -7,6 +7,7 @@
 
 use {
   super::{Error, now, send},
+  crate::rest::{self, Rest},
   ::base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD},
   ::reqwest::{Url, header::CONTENT_TYPE},
   ::serde::{Deserialize, Serialize},
@@ -66,6 +67,23 @@ pub enum Refused {
 pub enum Hint {
   AccessToken,
   RefreshToken,
+}
+
+/// What Kick says of a token, from [`App::introspect`].
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+pub struct Introspection {
+  /// When `false`, the rest is missing.
+  pub active: bool,
+  /// The app the token was given to.
+  pub client_id: Option<String>,
+  /// `app` or `user`.
+  pub token_type: Option<String>,
+  /// The scopes granted, separated by spaces.
+  pub scope: Option<String>,
+  /// When it expires, as Kick gives it.
+  pub exp: Option<i64>,
+  #[serde(flatten, deserialize_with = "rest::deserialize")]
+  pub rest: Rest,
 }
 
 /// A token, as Kick gave it, with when it expires. It serializes, so the
@@ -221,6 +239,29 @@ impl App {
       .query(&query)
       .header(CONTENT_TYPE, "application/x-www-form-urlencoded");
     send(request).await.map(drop)
+  }
+
+  /// What Kick says of an access token, the app's or a user's.
+  pub async fn introspect(
+    &self,
+    http: &::reqwest::Client,
+    access_token: &str,
+  ) -> Result<Introspection, Error> {
+    #[derive(Deserialize)]
+    struct Answer {
+      data: Introspection,
+    }
+    let request = http
+      .post(format!("{}/oauth/token/introspect", self.base))
+      .bearer_auth(access_token);
+    let raw = send(request).await?;
+    match ::serde_json::from_str::<Answer>(&raw) {
+      Ok(answer) => Ok(answer.data),
+      Err(error) => Err(Error::Decode {
+        raw,
+        error: error.to_string(),
+      }),
+    }
   }
 
   async fn token(

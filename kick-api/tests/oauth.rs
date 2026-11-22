@@ -6,7 +6,7 @@ mod fake;
 use {
   ::kick_api::official::{
     Error,
-    oauth::{self, App, Hint, Refused, SignIn, Token},
+    oauth::{self, App, Hint, Introspection, Refused, SignIn, Token},
   },
   ::reqwest::Url,
   ::std::collections::HashMap,
@@ -190,6 +190,37 @@ async fn revokes() {
     ]
   );
   assert!(request.body.is_empty());
+}
+
+#[tokio::test]
+async fn introspects() {
+  let answer = r#"{"data":{"active":true,"client_id":"app-id",
+    "token_type":"app","scope":"","exp":1700000000,"new":1},
+    "message":"OK"}"#;
+  let (app, server) = serve(200, answer).await;
+  let http = ::reqwest::Client::new();
+  let introspection = app.introspect(&http, "access-1").await.unwrap();
+  assert_eq!(
+    introspection,
+    Introspection {
+      active: true,
+      client_id: Some("app-id".into()),
+      token_type: Some("app".into()),
+      scope: Some("".into()),
+      exp: Some(1_700_000_000),
+      rest: ::serde_json::from_str(r#"{"new":1}"#).unwrap(),
+    }
+  );
+  let request = &server.requests()[0];
+  assert_eq!(
+    (&*request.method, &*request.path),
+    ("POST", "/oauth/token/introspect")
+  );
+  assert_eq!(request.bearer(), Some("access-1"));
+
+  let (app, _server) = serve(200, r#"{"data":{"active":false}}"#).await;
+  let inactive = app.introspect(&http, "old").await.unwrap();
+  assert!(!inactive.active && inactive.client_id.is_none());
 }
 
 #[tokio::test]
