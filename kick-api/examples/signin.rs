@@ -10,6 +10,8 @@
 // Then it names the signed-in user and their channel. With the chatroom id
 // of that channel, it sends a message there, waits for it in realtime chat,
 // deletes it, and waits for the deletion: printing whether the ids match.
+mod common;
+
 use {
   ::kick_api::{
     official::{
@@ -17,20 +19,17 @@ use {
       api::{Chat, Sender},
       oauth::{App, Token},
     },
-    realtime::{
-      Client, Event, Item, Options,
-      centrifugo::{push, reply},
-    },
+    realtime::{Client, Event, Item, Options},
   },
   ::std::{
     env, fs,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{SystemTime, UNIX_EPOCH},
   },
   ::tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpListener,
-    time::timeout,
   },
+  common::{event, save, wait},
 };
 
 const REDIRECT: &str = "http://localhost:8787/oauth/callback";
@@ -41,8 +40,6 @@ const SCOPES: &[&str] = &[
   "moderation:ban",
   "moderation:chat_message:manage",
 ];
-/// How long to wait for each event in realtime chat.
-const WAIT: Duration = Duration::from_secs(30);
 
 #[::tokio::main]
 async fn main() {
@@ -118,10 +115,6 @@ async fn sign_in(app: &App, http: &::reqwest::Client) -> Token {
     .expect("a token")
 }
 
-fn save(path: &str, token: &Token) {
-  fs::write(path, ::serde_json::to_string(token).unwrap()).unwrap();
-}
-
 /// Sends a message to the chatroom, and deletes it, checking both arrive
 /// in realtime chat with the official API's ids.
 async fn check(api: &Api, user_id: u64, broadcaster_user_id: u64, room: u64) {
@@ -133,7 +126,8 @@ async fn check(api: &Api, user_id: u64, broadcaster_user_id: u64, room: u64) {
     Item::Subscribed { channel, .. } => Some(channel),
     _ => None,
   })
-  .await;
+  .await
+  .expect("subscribed");
   println!("subscribed: {subscribed}");
 
   let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
@@ -151,7 +145,8 @@ async fn check(api: &Api, user_id: u64, broadcaster_user_id: u64, room: u64) {
     }
     _ => None,
   })
-  .await;
+  .await
+  .expect("the message");
   println!(
     "message id matches: {}",
     sent.message_id.as_ref() == Some(&message.id)
@@ -163,39 +158,7 @@ async fn check(api: &Api, user_id: u64, broadcaster_user_id: u64, room: u64) {
     Event::MessageDeletedEvent(deleted) => Some(deleted),
     _ => None,
   })
-  .await;
+  .await
+  .expect("the deletion");
   println!("deleted id matches: {}", deleted.message.id == message.id);
-}
-
-/// Waits for the first item `found` picks out.
-async fn wait<T>(
-  client: &mut Client,
-  mut found: impl FnMut(Item) -> Option<T>,
-) -> T {
-  let waiting = async {
-    loop {
-      let item = client.next().await.expect("realtime chat stopped");
-      if let Some(found) = found(item) {
-        return found;
-      }
-    }
-  };
-  timeout(WAIT, waiting).await.expect("waited too long")
-}
-
-/// The event in a frame's first publication, if any.
-fn event(item: Item) -> Option<Event> {
-  let Item::Frame(frame) = item else {
-    return None;
-  };
-  frame.replies().find_map(|reply| {
-    let push = reply.ok()?.body?;
-    let reply::Body::Push(push) = push else {
-      return None;
-    };
-    let push::Body::Publication(publication) = push.body? else {
-      return None;
-    };
-    Event::from_publication(&publication.data)
-  })
 }
