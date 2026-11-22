@@ -90,3 +90,7 @@ required-features = ["client", "protocol"]
 [[example]]
 name = "signin"
 required-features = ["official", "client", "protocol"]
+
+[[example]]
+name = "bot"
+required-features = ["official", "client", "protocol"]
