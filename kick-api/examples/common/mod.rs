@@ -2,7 +2,10 @@
 
 use {
   ::kick_api::{
-    official::oauth::Token,
+    official::{
+      Api,
+      oauth::{App, Token},
+    },
     realtime::{
       Client, Event, Item,
       centrifugo::{push, reply},
@@ -14,6 +17,24 @@ use {
 
 /// How long to wait for each event in realtime chat.
 const WAIT: Duration = Duration::from_secs(30);
+
+/// Prints what Kick says of the app, by its id and secret: its token, and
+/// the user `GET /users` names for it, if any (the docs don't say).
+pub async fn show_app(app: &App, http: &::reqwest::Client) {
+  let api = Api::app(http.clone(), app.clone());
+  let token = match api.refresh().await {
+    Ok(token) => token,
+    Err(error) => return println!("app: no token: {error}"),
+  };
+  match app.introspect(http, &token.access_token).await {
+    Ok(about) => println!("app: {about:?}"),
+    Err(error) => println!("app: not introspected: {error}"),
+  }
+  match api.users(&[]).await {
+    Ok(users) => println!("app's user: {users:?}"),
+    Err(error) => println!("app's user: {error}"),
+  }
+}
 
 /// Saves `token` to `path`, as the examples read it.
 pub fn save(path: &str, token: &Token) {

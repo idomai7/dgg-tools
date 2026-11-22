@@ -5,11 +5,12 @@
 // The app's credentials come from KICK_CLIENT_ID and KICK_CLIENT_SECRET,
 // and its redirect URI must be http://localhost:8787/oauth/callback.
 //
-// Without a token in <token file>, it prints a sign-in URL, waits for the
-// redirect, and saves the token there (keep it out of git, as in data/).
-// Then it names the signed-in user and their channel. With the chatroom id
-// of that channel, it sends a message there, waits for it in realtime chat,
-// deletes it, and waits for the deletion: printing whether the ids match.
+// It names the app first, as Kick sees it. Without a token in <token
+// file>, it prints a sign-in URL, waits for the redirect, and saves the
+// token there (keep it out of git, as in data/). Then it names the
+// signed-in user and their channel. With the chatroom id of that channel,
+// it sends a message there, waits for it in realtime chat, deletes it, and
+// waits for the deletion: printing whether the ids match.
 mod common;
 
 use {
@@ -29,7 +30,7 @@ use {
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpListener,
   },
-  common::{event, save, wait},
+  common::{event, save, show_app, wait},
 };
 
 const REDIRECT: &str = "http://localhost:8787/oauth/callback";
@@ -51,6 +52,7 @@ async fn main() {
   let var = |name| env::var(name).unwrap_or_else(|_| panic!("set {name}"));
   let app = App::new(var("KICK_CLIENT_ID"), var("KICK_CLIENT_SECRET"));
   let http = ::reqwest::Client::new();
+  show_app(&app, &http).await;
 
   let token = match fs::read_to_string(&path) {
     Ok(saved) => ::serde_json::from_str(&saved).expect("a saved token"),

@@ -5,9 +5,10 @@
 // and <token file> is one the signin example saved. <chatroom id> is the
 // signed-in user's channel's.
 //
-// It sends `type: bot` twice: with the user's token, then with the app's
-// own. For each it prints Kick's answer and the sender realtime chat
-// shows, then deletes the message with the user's token.
+// It names the app first, as Kick sees it. Then it sends `type: bot`
+// twice: with the user's token, then with the app's own. For each it
+// prints Kick's answer and the sender realtime chat shows, then deletes
+// the message with the user's token.
 mod common;
 
 use {
@@ -23,7 +24,7 @@ use {
     env, fs,
     time::{SystemTime, UNIX_EPOCH},
   },
-  common::{event, save, wait},
+  common::{event, save, show_app, wait},
 };
 
 #[::tokio::main]
@@ -36,6 +37,7 @@ async fn main() {
   let var = |name| env::var(name).unwrap_or_else(|_| panic!("set {name}"));
   let app = App::new(var("KICK_CLIENT_ID"), var("KICK_CLIENT_SECRET"));
   let http = ::reqwest::Client::new();
+  show_app(&app, &http).await;
 
   let saved = fs::read_to_string(&path).expect("a token: run signin first");
   let token = ::serde_json::from_str(&saved).expect("a saved token");
