@@ -209,7 +209,7 @@ now, the omnichat later. Kick only, and similar in scope to `dgg-api`. See the
       honest `User-Agent`, such as `kick-mod/0.1.0`, never a browser's.
       Requests without one are refused (403).
     - `history(channel_id, cursor)`: a page of the channel's messages,
-      newest last, and the cursor for the page before. `cursor_at(ms)` makes
+      newest first, and the cursor for the page before. `cursor_at(ms)` makes
       the cursor to start at a time; `None` starts now.
     - Messages are typed like the realtime events' (the sender is the same
       `User`), with fields they don't name kept in `rest`.
@@ -368,7 +368,7 @@ each chat setting and cleared chat.
 Found in kick.com's own page scripts, then asked anonymously for `destiny`.
 - `GET https://web.kick.com/api/v1/chat/<channel id>/history`: no sign-in. It
   answers `{data: {messages, cursor, pinned_message}, message: "OK"}`, 25
-  messages a page, oldest first.
+  messages a page, newest first.
   - It takes the channel id (`destiny`: 1772249), which only the unofficial
     channel lookup has; each message's `chat_id` is it too.
   - A message: `id`, `chat_id`, `user_id`, `content`, `type` (`message` or
