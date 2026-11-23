@@ -15,13 +15,14 @@ fn status(
   heartbeat: i64,
   healthy: Option<i64>,
 ) -> String {
-  let mut text = format!(
-    "capture-status 0.0\ninstance {instance}\nstarted {started}\nheartbeat {heartbeat}\n"
-  );
-  if let Some(since) = healthy {
-    text += &format!("healthy-since {since}\n");
-  }
-  text
+  let status = ::logger::control::Status {
+    instance: instance.into(),
+    started,
+    heartbeat,
+    healthy_since: healthy,
+    build: None,
+  };
+  status.encode()
 }
 
 #[test]

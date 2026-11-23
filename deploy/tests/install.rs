@@ -75,13 +75,15 @@ fn waits_for_a_new_healthy_capture() {
   fs::create_dir_all(&control).unwrap();
   let now = now_ms();
   let write = |instance: &str, started: i64, healthy: bool| {
-    let mut text = format!(
-      "capture-status 0.0\ninstance {instance}\nstarted {started}\nheartbeat {now}\n"
-    );
-    if healthy {
-      text += &format!("healthy-since {started}\n");
-    }
-    fs::write(control.join(format!("{instance}.status")), text).unwrap();
+    let status = ::logger::control::Status {
+      instance: instance.into(),
+      started,
+      heartbeat: now,
+      healthy_since: healthy.then_some(started),
+      build: None,
+    };
+    fs::write(control.join(format!("{instance}.status")), status.encode())
+      .unwrap();
   };
   // An old one, healthy, and a new one still connecting: not yet.
   write("old-1", now - 600_000, true);

@@ -22,36 +22,33 @@ fn format() {
     "capture-status dgg.0.2\u{1e}\ninstance a\u{1e}\nstarted 5\u{1e}\n\
      heartbeat 1000\u{1e}\nhealthy-since 7\u{1e}\n"
   );
-  assert_eq!(Status::decode(&text), Some(healthy.clone()));
+  assert_eq!(Status::decode(&text), Some(healthy));
   let unhealthy = status("a", 5, None);
   assert_eq!(Status::decode(&unhealthy.encode()), Some(unhealthy));
-  // As builds from before 0.2 write it, during an upgrade's handoff.
-  let old = "capture-status 0.0\ninstance a\nstarted 5\nheartbeat 1000\n\
-             healthy-since 7\n";
-  assert_eq!(Status::decode(old), Some(healthy));
 }
 
 #[test]
 fn decode_tolerance() {
-  let base = "instance a\nstarted 5\nheartbeat 1000\n";
+  let header = "capture-status dgg.0.2\u{1e}\n";
+  let base = "instance a\u{1e}\nstarted 5\u{1e}\nheartbeat 1000\u{1e}\n";
   let decode = |text: &str| Status::decode(text);
   // Keys it doesn't know are skipped.
-  let extra = format!("capture-status 0.0\n{base}added x y\n");
+  let extra = format!("{header}{base}added x y\u{1e}\n");
   assert_eq!(decode(&extra), Some(status("a", 5, None)));
   for bad in [
     // Within major 0, only the exact version is read.
-    format!("capture-status 0.1\n{base}"),
-    format!("capture-status 1.0\n{base}"),
-    format!("capture-status 0.\n{base}"),
-    format!("capture-status 0.0\n{base}started 6\n"),
-    format!("capture-status 0.0\n{base}instance b\n"),
-    format!("capture-status 0.0\n{base}healthy-since x\n"),
-    format!("capture-status 0.0\n{base}novalue\n"),
-    format!("capture-status 0.0\n{base}build \n"),
-    format!("capture-status 0.0\n{base}build a\nbuild b\n"),
-    "capture-status 0.0\ninstance a\nstarted 5\n".into(),
-    "capture-status 0.0\ninstance a/b\nstarted 5\nheartbeat 1\n".into(),
-    format!("capture-status 0.0\n{base}").trim_end().into(),
+    format!("capture-status dgg.0.3\u{1e}\n{base}"),
+    format!("capture-status dgg.1.0\u{1e}\n{base}"),
+    format!("capture-status dgg.0.\u{1e}\n{base}"),
+    format!("{header}{base}started 6\u{1e}\n"),
+    format!("{header}{base}instance b\u{1e}\n"),
+    format!("{header}{base}healthy-since x\u{1e}\n"),
+    format!("{header}{base}novalue\u{1e}\n"),
+    format!("{header}{base}build \u{1e}\n"),
+    format!("{header}{base}build a\u{1e}\nbuild b\u{1e}\n"),
+    format!("{header}instance a\u{1e}\nstarted 5\u{1e}\n"),
+    format!("{header}instance a/b\u{1e}\nstarted 5\u{1e}\nheartbeat 1\u{1e}\n"),
+    format!("{header}{base}").trim_end().into(),
   ] {
     assert_eq!(decode(&bad), None, "{bad:?}");
   }
@@ -133,13 +130,15 @@ fn records_end_at_rs_lf() {
      heartbeat 1000\u{1e}\nhealthy-since 7\u{1e}\n\
      build 0.1.0+93b72b343555\u{1e}\n"
   );
-  assert_eq!(Status::decode(&text), Some(built));
+  assert_eq!(Status::decode(&text), Some(built.clone()));
   // As pushed from another host, with a note in its header.
-  let noted = text.replacen("dgg.0.1", "dgg.0.1 ; note=x", 1);
-  assert!(Status::decode(&noted).is_some());
+  let noted = text.replacen("dgg.0.2", "dgg.0.2 ; note=x", 1);
+  assert_ne!(noted, text);
+  assert_eq!(Status::decode(&noted), Some(built));
   let base = "instance a\u{1e}\nstarted 5\u{1e}\nheartbeat 1000\u{1e}\n";
   for bad in [
-    // An entry without its end, or with a version's other form.
+    // An entry without its end, or another version's form; older versions
+    // are no longer read.
     format!("capture-status dgg.0.2\u{1e}\n{base}healthy-since 7\n"),
     "capture-status dgg.0.2\u{1e}\ninstance a\nstarted 5\nheartbeat 1000\n"
       .into(),

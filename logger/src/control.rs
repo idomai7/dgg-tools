@@ -23,15 +23,16 @@
 //! Versions of dgg's:
 //!
 //! - `0.0`: `capture-status 0.0`, naming no variant, each entry a line.
-//!   Still read: an instance hands off only to one whose status it can
-//!   read, and those running before an upgrade write it.
 //! - `0.1`: named, its header ending at LF, entries at RS LF. Never
 //!   written.
 //! - `0.2`: the header ends at RS LF too. Read by builds from before it
 //!   was written, so that they could hand off to the builds writing it.
 //!
+//! Only 0.2 is read: an instance hands off only to one whose status it can
+//! read, and every host's instances write it.
+//!
 //! While the major is 0 (pre-release) any minor may break, so readers accept
-//! only the versions they know. From 1.0 on, readers will ignore keys
+//! only the version they know. From 1.0 on, readers will ignore keys
 //! they don't recognise, so a minor bump may add keys; anything else will be
 //! a major bump.
 //!
@@ -60,7 +61,7 @@ pub const FORMAT: Format = Format {
   rs_header: &[(Variant::Dgg, Version { major: 0, minor: 2 })],
 };
 
-/// The version this crate writes.
+/// The version this crate writes and reads.
 pub const VERSION: Version = Version { major: 0, minor: 2 };
 
 /// File extension of status files.
@@ -98,13 +99,11 @@ impl Status {
     text
   }
 
-  /// Parses file contents, in either version, or `None` if they aren't a
-  /// readable status.
+  /// Parses file contents, or `None` if they aren't a readable status.
   pub fn decode(text: &str) -> Option<Self> {
     let (first, body) = text.split_once('\n')?;
     let header = Header::parse_as(FORMAT, first.as_bytes())?;
-    let readable = [0, 1, 2].map(|minor| Version { major: 0, minor });
-    if header.variant != Variant::Dgg || !readable.contains(&header.version) {
+    if header.variant != Variant::Dgg || header.version != VERSION {
       return None;
     }
     let (entries, tail) = header.framing_as(FORMAT).split(body.as_bytes());
