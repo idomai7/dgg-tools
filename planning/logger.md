@@ -78,8 +78,22 @@ the [overall rules](README.md), and [deploy](deploy.md) for the mesh it runs on.
       against its manifest.
     - **Sync's manifest** (`GET /manifest`) gets the same header, for the
       journal root it lists: `journal-manifest dgg.0.1`, and
-      `journal-manifest kick.0.0` once Kick's journals are synced. Its lines
-      are unchanged: live files by size, archives by size and SHA-256.
+      `journal-manifest kick.0.0` once Kick's journals are synced. Its
+      entries hold what they did: live files by size, archives by size and
+      SHA-256.
+    - **The other line formats follow, for consistency:** after its header,
+      ending at LF, each entry ends at RS LF, as the journal's records do.
+      None of their values can hold an RS.
+      - `journal-archive dgg.0.1` and `journal-manifest dgg.0.1`, not yet
+        deployed, are defined that way.
+      - `control/synced-archives` gains a header, `synced-archives dgg.0.1`;
+        without one it's 0.0, a line each, still read and rewritten by the
+        migration once the new one is checked to list the same.
+      - `capture-status` in two phases, since an instance hands off only to
+        one whose status it can read. This rollout reads `capture-status
+        dgg.0.1` as well as 0.0, from files and from other hosts' pushes,
+        and still writes 0.0. A later upgrade, once no instance reads only
+        0.0, writes `dgg.0.1`.
     - **Rollout:** a logger without this can't read `dgg.0.2` journals or the
       new manifests, so every host is upgraded together. There are two.
     - **Migration:** existing `journal 0.1` journals are rewritten in the new
