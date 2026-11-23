@@ -24,7 +24,8 @@ enum Command {
   /// Keep capture and `index --follow` running against a data directory,
   /// compacting every hour and (with `--peers`) syncing every 15
   /// minutes, until stopped (Ctrl-C) or until capture hands off to a newer
-  /// instance.
+  /// instance. With `--peers`, `kick-capture` runs too, once the
+  /// `kick-channels` there has channels.
   Supervise {
     /// Data directory: the journal and the index.
     #[arg(long)]
@@ -475,6 +476,7 @@ fn supervise(
   let mut config = Config::new(&bin_dir, &data, &logs);
   config.compact_every = Duration::from_secs(schedule.compact_every * 60);
   config.peers = schedule.peers;
+  config.kick_channels = supervise::kick_channels(config.peers.as_deref());
   config.sync_every = Duration::from_secs(schedule.sync_every * 60);
   let stop = Stop::new();
   let on_signal = stop.clone();

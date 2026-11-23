@@ -18,7 +18,8 @@ use {
 
 /// Keep capture and index running against a data directory, compacting
 /// and (given where its peers are) syncing on a schedule, until stopped or until
-/// capture hands off to a newer instance.
+/// capture hands off to a newer instance. Given where its peers are,
+/// `kick-capture` runs too, once the `kick-channels` there has channels.
 #[derive(Parser)]
 #[command(name = "dgg-supervisor", version = ::deploy::BUILD)]
 struct Args {
@@ -63,6 +64,7 @@ fn main() -> ExitCode {
   let mut config = Config::new(&bin_dir, &args.data, &args.logs);
   config.compact_every = Duration::from_secs(args.compact_every * 60);
   config.peers = ::deploy::peer::root(args.peers, args.peer_file);
+  config.kick_channels = supervise::kick_channels(config.peers.as_deref());
   config.sync_every = Duration::from_secs(args.sync_every * 60);
   if args.service {
     #[cfg(windows)]

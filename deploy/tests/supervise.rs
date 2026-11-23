@@ -216,7 +216,13 @@ fn runs_the_loggers_commands() {
   assert_eq!(args(&config.index), "index --follow --data data");
   assert_eq!(args(&config.compact), "compact --data data");
   assert_eq!(args(&config.sync), "sync --data data");
+  assert_eq!(args(&config.kick_capture), "kick-capture --data data");
   assert_eq!(config.peers, None);
+  assert_eq!(config.kick_channels, None);
+  assert_eq!(
+    ::deploy::supervise::kick_channels(Some(Path::new("root"))),
+    Some(Path::new("root").join("kick-channels"))
+  );
 }
 
 /// Runs `run` with a capture that hands off after a few seconds, and a sync
@@ -362,4 +368,86 @@ fn a_failed_migration_leaves_index_compact_and_sync_off() {
   assert!(log(&dir, "capture").contains(" capturing"));
   assert!(!log(&dir, "supervisor").contains("index: started"));
   assert!(!log(&dir, "supervisor").contains("compact: started"));
+}
+
+/// `config` with `kick` as Kick's capture, on a list holding `list`.
+fn with_kick(
+  dir: &TempDir,
+  mut config: Config,
+  kick: Program,
+  list: &str,
+) -> Config {
+  let path = dir.path().join("kick-channels");
+  fs::write(&path, list).unwrap();
+  config.kick_capture = kick;
+  config.kick_channels = Some(path);
+  config.kick_check_every = Duration::from_millis(100);
+  config.kick_handoff_wait = Duration::from_millis(300);
+  config
+}
+
+#[test]
+fn captures_kick_given_channels() {
+  let dir = TempDir::new("deploy-supervise-kick");
+  let capture = script(dir.path(), "capture", &[Step::Sleep(2), Step::Exit(0)]);
+  let index = script(dir.path(), "index", &[Step::Sleep(20)]);
+  let mut kick = script(
+    dir.path(),
+    "kick",
+    &[Step::SayArgsAnd("NOTHING"), Step::Sleep(20)],
+  );
+  kick.args = vec!["kick-capture".into()];
+  let config = config(&dir, capture, index);
+  let config = with_kick(&dir, config, kick, "one 2 1\n");
+  let started = Instant::now();
+  assert_eq!(run(&config, &Stop::new()).unwrap(), Exit::HandedOff);
+  assert!(started.elapsed() < Duration::from_secs(10));
+  let list = dir.path().join("kick-channels");
+  let said = format!("kick-capture --channels {}", list.display());
+  assert!(log(&dir, "kick-capture").contains(&said));
+  // Given a while to hand off too, then stopped.
+  let supervisor = log(&dir, "supervisor");
+  assert!(
+    supervisor.contains("waiting up to 0.3s for kick-capture to hand off")
+  );
+  assert!(supervisor.contains("kick-capture: stopped"));
+}
+
+#[test]
+fn lets_kick_capture_hand_off_on_its_own() {
+  let dir = TempDir::new("deploy-supervise-kick-handoff");
+  let capture = script(dir.path(), "capture", &[Step::Sleep(1), Step::Exit(0)]);
+  let index = script(dir.path(), "index", &[Step::Sleep(20)]);
+  let kick = script(dir.path(), "kick", &[Step::Sleep(3), Step::Exit(0)]);
+  let mut config = with_kick(&dir, config(&dir, capture, index), kick, "a 2 1");
+  config.kick_handoff_wait = Duration::from_secs(30);
+  let started = Instant::now();
+  assert_eq!(run(&config, &Stop::new()).unwrap(), Exit::HandedOff);
+  assert!(started.elapsed() < Duration::from_secs(20));
+  let supervisor = log(&dir, "supervisor");
+  assert!(
+    supervisor.contains("kick-capture handed off"),
+    "{supervisor}"
+  );
+  assert!(
+    !supervisor.contains("kick-capture: stopped"),
+    "{supervisor}"
+  );
+}
+
+#[test]
+fn waits_for_kick_channels() {
+  let dir = TempDir::new("deploy-supervise-kick-none");
+  let capture = script(dir.path(), "capture", &[Step::Sleep(1), Step::Exit(0)]);
+  let index = script(dir.path(), "index", &[Step::Sleep(20)]);
+  let kick = script(dir.path(), "kick", &[Step::Say("capturing kick")]);
+  let config = with_kick(&dir, config(&dir, capture, index), kick, "# none\n");
+  assert_eq!(run(&config, &Stop::new()).unwrap(), Exit::HandedOff);
+  let supervisor = log(&dir, "supervisor");
+  // Said once, though looked for again and again.
+  let none = supervisor.matches("kick-capture: no channels in").count();
+  assert_eq!(none, 1, "{supervisor}");
+  assert!(!supervisor.contains("kick-capture: started"));
+  // No wait for a capture that never started.
+  assert!(!supervisor.contains("waiting up to"));
 }

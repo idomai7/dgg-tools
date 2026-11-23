@@ -19,6 +19,12 @@
 //!   pulls from each peer in turn every `sync_every` (the first time two
 //!   minutes after start), by whichever supervisor holds `sync.lock`. They
 //!   are looked for before each round; one failing doesn't stop the rest.
+//! - Given the Kick channel list, `dgg-logger kick-capture` runs once it
+//!   has channels (looked for every `kick_check_every` until then), and is
+//!   restarted after it fails. A clean exit is a handoff to a newer
+//!   instance, which ends it alone. When capture hands off, it's given
+//!   `kick_handoff_wait` to hand off too (an upgrade's new one is starting
+//!   alongside) before it's stopped.
 //!
 //! Each program's stdout and stderr go, line by line, to `<name>.log` in the
 //! logs directory; the supervisor's own lines to `supervisor.log`. Restarts
@@ -27,6 +33,7 @@
 
 use {
   crate::{lifeline::Lifeline, log::Log, peer},
+  ::logger::kick::channels,
   ::std::{
     ffi::OsString,
     fs::{self, File, TryLockError},
@@ -90,6 +97,13 @@ pub struct Config {
   /// Where the peers to sync from are, if anywhere: the install's root
   /// (see [`crate::peer`]).
   pub peers: Option<PathBuf>,
+  /// `kick-capture`, without its channel list: that's added from
+  /// `kick_channels`.
+  pub kick_capture: Program,
+  /// The Kick channel list, if Kick is captured.
+  pub kick_channels: Option<PathBuf>,
+  pub kick_check_every: Duration,
+  pub kick_handoff_wait: Duration,
   /// Holds `index.lock`, `compact.lock` and `sync.lock`.
   pub lock_dir: PathBuf,
   pub logs: PathBuf,
@@ -117,6 +131,10 @@ impl Config {
       compact: command(&["compact"]),
       sync: command(&["sync"]),
       peers: None,
+      kick_capture: command(&["kick-capture"]),
+      kick_channels: None,
+      kick_check_every: Duration::from_secs(60),
+      kick_handoff_wait: Duration::from_secs(90),
       lock_dir: data.to_owned(),
       logs: logs.to_owned(),
       compact_first: Duration::from_secs(60),
@@ -128,6 +146,12 @@ impl Config {
       log_keep: 5,
     }
   }
+}
+
+/// The Kick channel list of the install whose root is `root`: none without
+/// one.
+pub fn kick_channels(root: Option<&Path>) -> Option<PathBuf> {
+  Some(root?.join(channels::FILE))
 }
 
 /// A stop request, shared between threads: [`Stop::request`] wakes every
@@ -195,6 +219,10 @@ pub fn run(config: &Config, stop: &Stop) -> io::Result<Exit> {
     Some(_) => Some(open("sync")?),
     None => None,
   };
+  let kick_log = match &config.kick_channels {
+    Some(_) => Some(open("kick-capture")?),
+    None => None,
+  };
   fs::create_dir_all(&config.lock_dir)?;
   log_line(
     &supervisor,
@@ -214,10 +242,24 @@ pub fn run(config: &Config, stop: &Stop) -> io::Result<Exit> {
     lifeline: &lifeline,
   };
   let handed_off = AtomicBool::new(false);
+  // Kick's capture is stopped apart, to let it hand off on its own.
+  let kick = Stop::new();
+  let kick_context = Context {
+    supervisor: &supervisor,
+    stop: &kick,
+    lifeline: &lifeline,
+  };
+  // Whether it's running, to wait for only one that is.
+  let kick_running = AtomicBool::new(false);
   // References, so the threads started from the migration's can take them.
   let (context, programs, sync_log, supervisor) =
     (&context, &programs, &sync_log, &supervisor);
   thread::scope(|scope| {
+    if let (Some(list), Some(kick_log)) = (&config.kick_channels, &kick_log) {
+      scope.spawn(|| {
+        capture_kick(config, list, kick_log, &kick_running, &kick_context);
+      });
+    }
     let [capture_log, migrate_log, index_log, compact_log] = &logs;
     scope.spawn(|| {
       let ended = keep_running(
@@ -325,6 +367,25 @@ pub fn run(config: &Config, stop: &Stop) -> io::Result<Exit> {
         programs.request();
       }
     }
+    if handed_off.load(Ordering::SeqCst) && kick_running.load(Ordering::SeqCst)
+    {
+      let wait = config.kick_handoff_wait;
+      log_line(
+        supervisor,
+        &format!(
+          "waiting up to {}s for kick-capture to hand off",
+          wait.as_secs_f64()
+        ),
+      );
+      let until = Instant::now() + wait;
+      while kick_running.load(Ordering::SeqCst)
+        && Instant::now() < until
+        && !stop.requested()
+      {
+        thread::sleep(Duration::from_millis(200));
+      }
+    }
+    kick.request();
   });
   let exit = if handed_off.load(Ordering::SeqCst) {
     Exit::HandedOff
@@ -333,6 +394,50 @@ pub fn run(config: &Config, stop: &Stop) -> io::Result<Exit> {
   };
   log_line(supervisor, &format!("supervisor exiting: {exit:?}"));
   Ok(exit)
+}
+
+/// Runs `kick-capture` on `list` once it has channels, until stopped or
+/// handed off, with `running` set meanwhile.
+fn capture_kick(
+  config: &Config,
+  list: &Path,
+  log: &SharedLog,
+  running: &AtomicBool,
+  context: &Context,
+) {
+  // What was last said of the list, to say only changes.
+  let mut said = None;
+  loop {
+    let now = match channels::load(list) {
+      Ok(found) if !found.is_empty() => break,
+      Ok(_) => format!("kick-capture: no channels in {}", list.display()),
+      Err(e) => format!("kick-capture: {e}"),
+    };
+    if said.as_ref() != Some(&now) {
+      log_line(context.supervisor, &now);
+      said = Some(now);
+    }
+    if context.stop.wait(config.kick_check_every) {
+      return;
+    }
+  }
+  let mut program = config.kick_capture.clone();
+  program
+    .args
+    .extend(["--channels".into(), list.as_os_str().to_owned()]);
+  running.store(true, Ordering::SeqCst);
+  let ended = keep_running(
+    &program,
+    "kick-capture",
+    log,
+    &config.backoff,
+    true,
+    context,
+  );
+  running.store(false, Ordering::SeqCst);
+  if ended {
+    log_line(context.supervisor, "kick-capture handed off");
+  }
 }
 
 /// `sync` pulling from `peer`, its token in the environment; if it's
