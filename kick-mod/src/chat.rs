@@ -5,24 +5,59 @@
 //! subscribed to `chatrooms.<chatroom id>.v2`, so one channel's
 //! connection failing leaves the others. Kick keeps no history there:
 //! what's sent while a connection is down is lost.
+//!
+//! What each connection receives is journaled as it arrives, raw, in the
+//! logger's journal format (Kick's variant): under [`Journal::root`], each
+//! channel's in a journal root of its own, as
+//! `<slug>/live/<day>/<instance>.journal`.
 
 use {
   crate::channels::Channels,
+  ::common::time::now_ms,
   ::kick_api::realtime::{
     Client, Event, Frame, Item, Options,
     centrifugo::{push, reply},
     event::User,
   },
+  ::logger_journal::{
+    layout::channel_root,
+    record::kick::v0::Body,
+    writer::{SYNC_INTERVAL, kick::Writer},
+  },
   ::serde::Serialize,
   ::std::{
     collections::BTreeMap,
+    path::PathBuf,
     sync::{Arc, Mutex},
   },
-  ::tokio::{sync::broadcast, task::JoinHandle},
+  ::tokio::{sync::broadcast, task::JoinHandle, time::interval},
 };
 
 /// How far a page may fall behind before it misses updates.
 const BACKLOG: usize = 1024;
+
+pub const DEFAULT_JOURNAL: &str = "data/kick-mod/journal";
+
+/// Where chat is journaled.
+#[derive(Clone, Debug)]
+pub struct Journal {
+  /// Kick's journal root: each channel's is `<root>/<slug>`.
+  pub root: PathBuf,
+  /// Written on every line, and naming the files: one per run, so runs
+  /// never share a file.
+  pub instance: String,
+}
+
+impl Journal {
+  /// A journal under `root`, for a run that started at `start_ms`: its
+  /// instance is `kick-mod-<start_ms>`.
+  pub fn new(root: impl Into<PathBuf>, start_ms: i64) -> Self {
+    Self {
+      root: root.into(),
+      instance: format!("kick-mod-{start_ms}"),
+    }
+  }
+}
 
 /// Something that happened in a channel, by its slug.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -189,6 +224,41 @@ impl What {
   }
 }
 
+/// What `item` puts in the journal, on which connection, with `open` the
+/// connection that's open.
+fn journaled(item: &Item, open: &mut Option<u64>) -> Option<(u64, Body)> {
+  Some(match item {
+    Item::Connected {
+      connection,
+      endpoint,
+    } => {
+      *open = Some(*connection);
+      (*connection, Body::Open(endpoint.clone()))
+    }
+    Item::Frame(frame) => (frame.connection, Body::Frame(frame.raw().into())),
+    Item::Binary { connection, data } => {
+      (*connection, Body::Binary(data.clone()))
+    }
+    Item::Disconnected {
+      connection,
+      code,
+      reason,
+    } => {
+      *open = None;
+      let code = code.map(|code| format!("{code} ")).unwrap_or_default();
+      (*connection, Body::Close(format!("{code}{reason}")))
+    }
+    // Ends the open connection, with no disconnect of its own.
+    Item::Stopped { code, reason } => {
+      (open.take()?, Body::Close(format!("{code} {reason}")))
+    }
+    // In frames, or before a connection opened.
+    Item::ConnectFailed { .. }
+    | Item::Subscribed { .. }
+    | Item::Unsubscribed { .. } => return None,
+  })
+}
+
 /// The events published in `frame`.
 pub fn events(frame: &Frame) -> impl Iterator<Item = Event> + '_ {
   frame.replies().filter_map(|reply| match reply.ok()?.body? {
@@ -230,8 +300,12 @@ pub struct Chat {
 
 impl Chat {
   /// Connects to each of `channels` with a chatroom id, with `options`
-  /// for each but its channels.
-  pub fn start(channels: &Channels, options: &Options) -> Self {
+  /// for each but its channels, journaling each in `journal`.
+  pub fn start(
+    channels: &Channels,
+    options: &Options,
+    journal: &Journal,
+  ) -> Self {
     let hub = Arc::new(Hub {
       updates: broadcast::channel(BACKLOG).0,
       statuses: Mutex::default(),
@@ -256,7 +330,15 @@ impl Chat {
         channels: vec![format!("chatrooms.{chatroom}.v2")],
         ..options.clone()
       });
-      tasks.push(::tokio::spawn(listen(slug.clone(), client, hub.clone())));
+      let writer = if journalable(slug) {
+        let root = channel_root(&journal.root, slug);
+        Some(Writer::new(root, &journal.instance, slug))
+      } else {
+        eprintln!("{slug}: not journaled, as it can't be a directory's name");
+        None
+      };
+      let listen = listen(slug.clone(), client, hub.clone(), writer);
+      tasks.push(::tokio::spawn(listen));
     }
     Self { hub, tasks }
   }
@@ -286,8 +368,44 @@ impl Drop for Chat {
   }
 }
 
-async fn listen(slug: String, mut client: Client, hub: Arc<Hub>) {
-  while let Some(item) = client.next().await {
+/// Whether `slug` is safe as a directory's name, as Kick's slugs are.
+fn journalable(slug: &str) -> bool {
+  !slug.is_empty()
+    && slug
+      .bytes()
+      .all(|b| b.is_ascii_alphanumeric() || b"-_".contains(&b))
+}
+
+async fn listen(
+  slug: String,
+  mut client: Client,
+  hub: Arc<Hub>,
+  mut journal: Option<Writer>,
+) {
+  let mut sync = interval(SYNC_INTERVAL);
+  // The connection that's open, for a stop to close.
+  let mut open = None;
+  loop {
+    let item = ::tokio::select! {
+      item = client.next() => item,
+      _ = sync.tick() => {
+        if let Some(writer) = &mut journal
+          && let Err(e) = writer.sync()
+        {
+          eprintln!("{slug}: no longer journaled: {e}");
+          journal = None;
+        }
+        continue;
+      }
+    };
+    let Some(item) = item else { break };
+    if let Some((connection, body)) = journaled(&item, &mut open)
+      && let Some(writer) = &mut journal
+      && let Err(e) = writer.write(now_ms(), connection, body)
+    {
+      eprintln!("{slug}: no longer journaled: {e}");
+      journal = None;
+    }
     match &item {
       Item::Frame(frame) => {
         for what in events(frame).filter_map(What::from_event) {

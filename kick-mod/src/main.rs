@@ -10,7 +10,7 @@ use {
   ::kick_mod::{
     account::{self, Account},
     channels::{self, Channels},
-    chat::Chat,
+    chat::{self, Chat, Journal},
     config::{self, Config},
     modlog,
     serve::{self, Served},
@@ -37,6 +37,9 @@ struct Args {
   /// Every action taken.
   #[arg(long, global = true, default_value = modlog::DEFAULT_PATH)]
   modlog: PathBuf,
+  /// Where chat is journaled, a directory per channel.
+  #[arg(long, global = true, default_value = chat::DEFAULT_JOURNAL)]
+  journal: PathBuf,
   #[command(subcommand)]
   command: Command,
 }
@@ -66,7 +69,13 @@ async fn main() -> ExitCode {
   let args = Args::parse();
   let done = match args.command {
     Command::Serve => {
-      run(&args.config, args.channels, args.token, args.modlog).await
+      let files = Files {
+        channels: args.channels,
+        token: args.token,
+        modlog: args.modlog,
+        journal: args.journal,
+      };
+      run(&args.config, files).await
     }
     Command::Ids { slugs } => ids(&args.config, &args.channels, &slugs).await,
   };
@@ -79,12 +88,21 @@ async fn main() -> ExitCode {
   }
 }
 
-async fn run(
-  config: &Path,
+/// What `serve` keeps where.
+struct Files {
   channels: PathBuf,
   token: PathBuf,
   modlog: PathBuf,
-) -> Result<(), String> {
+  journal: PathBuf,
+}
+
+async fn run(config: &Path, files: Files) -> Result<(), String> {
+  let Files {
+    channels,
+    token,
+    modlog,
+    journal,
+  } = files;
   let config = Config::load(config)?;
   let known = channels::load(&channels)?;
   let listen = config.server.listen;
@@ -101,7 +119,11 @@ async fn run(
     listen.port()
   );
   let served = Served {
-    chat: Chat::start(&known, &Options::default()),
+    chat: Chat::start(
+      &known,
+      &Options::default(),
+      &Journal::new(journal, ::common::time::now_ms()),
+    ),
     channels,
     modlog,
     account,

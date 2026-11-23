@@ -10,9 +10,14 @@ use {
     account::Account,
     actions::{Action, Asked, Target},
     channels,
-    chat::Chat,
+    chat::{Chat, Journal},
     modlog::{self, Answer, Entry, Moderator},
     serve::{self, Served},
+  },
+  ::logger_journal::{
+    Reader, Record,
+    layout::live_files,
+    record::kick::v0::{self, Body},
   },
   ::reqwest::{
     Url,
@@ -55,7 +60,11 @@ impl Server {
     let account = Account::new(http, app, &kick.base, redirect, token);
     let channels = dir.path().join("channels.json");
     let served = Served {
-      chat: Chat::start(&channels::load(&channels).unwrap(), &options),
+      chat: Chat::start(
+        &channels::load(&channels).unwrap(),
+        &options,
+        &Journal::new(dir.path().join("journal"), 5),
+      ),
       channels,
       modlog: dir.path().join("modlog.jsonl"),
       account: account.unwrap(),
@@ -435,6 +444,44 @@ async fn streams_chat() {
   assert_eq!(events.status("one").await, "reconnecting");
   let _ws = centrifugo.accept(ROOM).await;
   assert_eq!(events.status("one").await, "live");
+
+  // And all of it was journaled, raw, in one file: the endpoint's the same.
+  let journal = server.dir.path().join("journal");
+  assert!(!journal.join("two").exists());
+  let files = live_files(&journal.join("one")).unwrap();
+  assert_eq!(files.len(), 1);
+  assert!(files[0].ends_with("kick-mod-5.journal"));
+  let reader = Reader::open(&files[0], 0).unwrap();
+  let header = reader.header().unwrap();
+  assert_eq!(header.get("endpoint"), Some(centrifugo.url.as_str()));
+  assert_eq!(header.get("channel"), Some("one"));
+  let records: Vec<v0::Record> = reader
+    .map(|entry| {
+      let Record::Kick0(record) = entry.unwrap().record else {
+        panic!("not Kick's")
+      };
+      assert_eq!(record.instance, "kick-mod-5");
+      record
+    })
+    .collect();
+  let open = Body::Open(centrifugo.url.clone());
+  assert_eq!((records[0].connection, &records[0].body), (1, &open));
+  let frames = |connection| {
+    records
+      .iter()
+      .filter(move |r| r.connection == connection)
+      .filter_map(|r| match &r.body {
+        Body::Frame(frame) => Some(frame.as_str()),
+        _ => None,
+      })
+  };
+  assert!(frames(1).any(|frame| frame.contains(r#"\"id\":\"m1\""#)));
+  let closed = records
+    .iter()
+    .position(|r| matches!(r.body, Body::Close(_)));
+  let reopened = &records[closed.unwrap() + 1];
+  assert_eq!((reopened.connection, &reopened.body), (2, &open));
+  assert!(frames(2).next().is_some());
 }
 
 #[tokio::test]

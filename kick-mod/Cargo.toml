@@ -6,6 +6,7 @@ description = "A chat client and moderation tools for Kick channels"
 
 [dependencies]
 common.workspace = true
+logger-journal.workspace = true
 kick-api = { workspace = true, features = [
   "channel",
   "client",
