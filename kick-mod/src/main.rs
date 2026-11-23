@@ -24,8 +24,8 @@ use {
   ::tokio::{net::TcpListener, process::Command as Process},
 };
 
-/// Names kick-mod to Kick's unofficial API, as it asks.
-const USER_AGENT: &str = concat!("kick-mod/", env!("CARGO_PKG_VERSION"));
+/// Names kick-mod, by its codename, to Kick's unofficial API, as it asks.
+const USER_AGENT: &str = concat!("gavelgab/", env!("CARGO_PKG_VERSION"));
 
 #[derive(Parser)]
 #[command(name = "kick-mod")]

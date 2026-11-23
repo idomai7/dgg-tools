@@ -31,7 +31,7 @@ pub struct Web {
 }
 
 impl Web {
-  /// As `user_agent`, which names the tool, such as `kick-mod/0.1.0`.
+  /// As `user_agent`, which names the tool, such as `gavelgab/0.1.0`.
   pub fn new(http: ::reqwest::Client, user_agent: impl Into<String>) -> Self {
     Self {
       http,
