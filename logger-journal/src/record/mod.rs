@@ -23,9 +23,20 @@ pub struct Format {
   /// dgg's last version whose header named no variant, from before
   /// variants.
   pub last_unnamed: Version,
+  /// For each variant, the first version whose header ends at RS LF, as its
+  /// entries do; before it, the header ends at LF.
+  pub rs_header: &'static [(Variant, Version)],
 }
 
 impl Format {
+  /// Whether the header of `variant` at `version` ends at RS LF.
+  fn rs_header(self, variant: Variant, version: Version) -> bool {
+    self.rs_header.iter().any(|&(of, from)| {
+      of == variant
+        && (version.major, version.minor) >= (from.major, from.minor)
+    })
+  }
+
   /// Whether the header of `variant` at `version` names no variant.
   fn unnamed(self, variant: Variant, version: Version) -> bool {
     variant == Variant::Dgg
@@ -34,14 +45,19 @@ impl Format {
   }
 }
 
-/// The journal: `journal dgg.0.2`, `journal kick.0.0`, and before variants
+/// The journal: `journal dgg.0.3`, `journal kick.0.0`, and before variants
 /// `journal 0.1`.
 pub const JOURNAL: Format = Format {
   magic: MAGIC,
   last_unnamed: v0::LEGACY,
+  rs_header: &[
+    (Variant::Dgg, Version { major: 0, minor: 3 }),
+    (Variant::Kick, Version { major: 0, minor: 0 }),
+  ],
 };
 /// The versions of dgg's format this crate has a decoder for.
-pub const READABLE: &[Version] = &[v0::LEGACY, v0::VERSION];
+pub const READABLE: &[Version] =
+  &[v0::LEGACY, Version { major: 0, minor: 2 }, v0::VERSION];
 
 /// Which platform's format a file is in. Each is versioned on its own, so one
 /// platform's changes never break the other's files.
@@ -195,12 +211,28 @@ impl Header {
     }
   }
 
-  /// The journal's header line, without its newline.
+  /// The journal's header line, without its end.
   pub fn line(&self) -> String {
     self.line_as(JOURNAL)
   }
 
-  /// The header line in `format`, without its newline.
+  /// The journal's header line, with its end.
+  pub fn text(&self) -> String {
+    self.text_as(JOURNAL)
+  }
+
+  /// The header line in `format`, with its end: RS LF from the format's
+  /// [`rs_header`](Format::rs_header) versions on, LF before.
+  pub fn text_as(&self, format: Format) -> String {
+    let end = if format.rs_header(self.variant, self.version) {
+      "\u{1e}\n"
+    } else {
+      "\n"
+    };
+    self.line_as(format) + end
+  }
+
+  /// The header line in `format`, without its end.
   pub fn line_as(&self, format: Format) -> String {
     let Version { major, minor } = self.version;
     let magic = format.magic;
@@ -223,9 +255,14 @@ impl Header {
     Self::parse_as(JOURNAL, line)
   }
 
-  /// Parses a header line in `format`, without its newline. Whether its
-  /// version is one the reader knows is left to it.
+  /// Parses a header line in `format`, up to its LF: with the RS before it
+  /// that its version's header ends with, if it does. Whether its version
+  /// is one the reader knows is left to it.
   pub fn parse_as(format: Format, line: &[u8]) -> Option<Self> {
+    let (line, rs) = match line.strip_suffix(&[RS]) {
+      Some(line) => (line, true),
+      None => (line, false),
+    };
     let line = ::std::str::from_utf8(line).ok()?;
     let rest = line.strip_prefix(format.magic)?.strip_prefix(' ')?;
     let (required, info) = match rest.split_once(" ;") {
@@ -246,8 +283,10 @@ impl Header {
       major: major.parse().ok()?,
       minor: minor.parse().ok()?,
     };
-    // Each version's header has one form.
-    if named == format.unnamed(variant, version) {
+    // Each version's header has one form, and one end.
+    if named == format.unnamed(variant, version)
+      || rs != format.rs_header(variant, version)
+    {
       return None;
     }
     let mut header = Self::new(variant, version);

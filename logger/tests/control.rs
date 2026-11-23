@@ -132,7 +132,7 @@ fn reads_the_next_version_too() {
   let text = built.encode_next();
   assert_eq!(
     text,
-    "capture-status dgg.0.1\ninstance a\u{1e}\nstarted 5\u{1e}\n\
+    "capture-status dgg.0.2\u{1e}\ninstance a\u{1e}\nstarted 5\u{1e}\n\
      heartbeat 1000\u{1e}\nhealthy-since 7\u{1e}\n\
      build 0.1.0+93b72b343555\u{1e}\n"
   );
@@ -143,8 +143,9 @@ fn reads_the_next_version_too() {
   let base = "instance a\u{1e}\nstarted 5\u{1e}\nheartbeat 1000\u{1e}\n";
   for bad in [
     // An entry without its end, or with a version's other form.
-    format!("capture-status dgg.0.1\n{base}healthy-since 7\n"),
-    "capture-status dgg.0.1\ninstance a\nstarted 5\nheartbeat 1000\n".into(),
+    format!("capture-status dgg.0.2\u{1e}\n{base}healthy-since 7\n"),
+    "capture-status dgg.0.2\u{1e}\ninstance a\nstarted 5\nheartbeat 1000\n"
+      .into(),
     format!("capture-status 0.0\n{base}"),
     format!("capture-status dgg.0.0\n{base}"),
     format!("capture-status dgg.0.2\n{base}"),

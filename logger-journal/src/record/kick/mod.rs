@@ -2,7 +2,7 @@
 //! own as `kick.<major>.<minor>`, so its changes never break dgg's files.
 //!
 //! The header is `journal kick.<major>.<minor> ; endpoint=<url>
-//! channel=<slug>` (see [`Header`](super::Header)): `endpoint` is the
+//! channel=<slug>`, ending at RS LF (see [`Header`](super::Header)): `endpoint` is the
 //! socket the file's connections are to, the same URL its `open` records
 //! hold, and `channel` the slug they're subscribed for. Each channel has a
 //! journal root of its own (see [`channel_root`](crate::layout::channel_root)),

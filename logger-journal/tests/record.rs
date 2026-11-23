@@ -25,11 +25,12 @@ fn header() {
 
 #[test]
 fn readable() {
-  // Within major 0, only the exact minors: 0.1, with a record per line, and
-  // 0.2.
-  assert!(version(0, 1).readable());
-  assert!(version(0, 2).readable());
+  // Within major 0, only the exact minors: 0.1, with a record per line,
+  // 0.2, its header ending at LF, and 0.3.
+  for minor in [1, 2, 3] {
+    assert!(version(0, minor).readable());
+  }
   assert!(!version(0, 0).readable());
-  assert!(!version(0, 3).readable());
+  assert!(!version(0, 4).readable());
   assert!(!version(1, 0).readable());
 }

@@ -23,7 +23,7 @@ fn copies_what_it_can() {
   }
   // Already the newest: as it is.
   let newest = convert::newest(Variant::Dgg);
-  assert_eq!(newest.line(), "journal dgg.0.2");
+  assert_eq!(newest.text(), "journal dgg.0.3\u{1e}\n");
   let record = b"5 a 1 frame A\nB";
   assert_eq!(&*convert::record(&newest, record).unwrap(), record);
 }

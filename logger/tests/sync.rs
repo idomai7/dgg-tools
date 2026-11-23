@@ -84,19 +84,21 @@ fn manifest_format() {
   assert_eq!(
     text,
     format!(
-      "journal-manifest dgg.0.1\nlive/2026-11-08/a-1.journal 42\u{1e}\n\
+      "journal-manifest dgg.0.2\u{1e}\nlive/2026-11-08/a-1.journal 42\u{1e}\n\
        archive/2026/11/2026-11-07.journal.zst 9 {sha}\u{1e}\n"
     )
   );
   assert_eq!(manifest::decode(&text), Some(files.clone()));
   // An entry kind this version doesn't know is skipped.
-  let body = text.strip_prefix("journal-manifest dgg.0.1\n").unwrap();
+  let body = text
+    .strip_prefix("journal-manifest dgg.0.2\u{1e}\n")
+    .unwrap();
   let extra = format!(
-    "journal-manifest dgg.0.1 ; note=x\narchive/2026/11 9\u{1e}\n{body}"
+    "journal-manifest dgg.0.2 ; note=x\u{1e}\narchive/2026/11 9\u{1e}\n{body}"
   );
   assert_eq!(manifest::decode(&extra), Some(files));
   // An archive needs a whole SHA-256.
-  let short = "journal-manifest dgg.0.1\n\
+  let short = "journal-manifest dgg.0.2\u{1e}\n\
                archive/2026/11/2026-11-07.journal.zst 9 ab\u{1e}\n";
   assert_eq!(manifest::decode(short), None);
   for bad in [
@@ -105,9 +107,9 @@ fn manifest_format() {
     "journal-manifest dgg.0.2\nlive/2026-11-08/a-1.journal 42\n",
     "journal-manifest dgg.1.0\nlive/2026-11-08/a-1.journal 42\n",
     "journal-manifest kick.0.1\n",
-    "journal-manifest dgg.0.1\nlive/2026-11-08/a-1.journal x\u{1e}\n",
+    "journal-manifest dgg.0.2\u{1e}\nlive/2026-11-08/a-1.journal x\u{1e}\n",
     // An entry without its end.
-    "journal-manifest dgg.0.1\nlive/2026-11-08/a-1.journal 42\n",
+    "journal-manifest dgg.0.2\u{1e}\nlive/2026-11-08/a-1.journal 42\n",
     "journal-manifest dgg.0.1",
   ] {
     assert_eq!(manifest::decode(bad), None, "{bad:?}");
@@ -135,8 +137,8 @@ async fn file_endpoint() {
   let whole = get(path, None).await.unwrap();
   assert_eq!(whole.status().as_u16(), 200);
   let whole = whole.text().await.unwrap();
-  assert_eq!(whole, "journal dgg.0.2\n0 a 1 frame MSG 1\u{1e}\n");
-  let tail = get(path, Some("bytes=16-")).await.unwrap();
+  assert_eq!(whole, "journal dgg.0.3\u{1e}\n0 a 1 frame MSG 1\u{1e}\n");
+  let tail = get(path, Some("bytes=17-")).await.unwrap();
   assert_eq!(tail.status().as_u16(), 206);
   assert_eq!(tail.text().await.unwrap(), "0 a 1 frame MSG 1\u{1e}\n");
   let code = |response: ::reqwest::Response| response.status().as_u16();
@@ -339,7 +341,10 @@ async fn takes_archives_without_overwriting() {
     2
   );
   let taken = fs::read_to_string(local.path().join(TAKEN)).unwrap();
-  assert!(taken.starts_with("synced-archives dgg.0.1\n"), "{taken}");
+  assert!(
+    taken.starts_with("synced-archives dgg.0.2\u{1e}\n"),
+    "{taken}"
+  );
   assert_eq!(::logger::taken::read(local.path()).unwrap().len(), 2);
   let stats = sync(&peer, local.path()).await.unwrap();
   assert_eq!((stats.installed, stats.merging, stats.bytes), (0, 0, 0));
@@ -378,12 +383,12 @@ fn archived_records(root: &::std::path::Path) -> Vec<String> {
   let path = root.join("archive/1970/01/1970-01-01.journal.zst");
   let bytes = ::zstd::decode_all(fs::File::open(path).unwrap()).unwrap();
   let text = String::from_utf8(bytes).unwrap();
-  let (header, body) = text.split_once('\n').unwrap();
-  assert_eq!(header, "journal dgg.0.2");
-  let mut records: Vec<String> = body
+  // The header's a record like the rest.
+  let mut records: Vec<String> = text
     .split_terminator("\u{1e}\n")
     .map(str::to_owned)
     .collect();
+  assert_eq!(records.remove(0), "journal dgg.0.3");
   records.sort();
   records
 }
@@ -475,7 +480,7 @@ async fn takes_no_more_than_the_manifest_says() {
   let manifest = |text: String| {
     // Each entry ends at RS LF.
     let text = format!(
-      "journal-manifest dgg.0.1\n{}",
+      "journal-manifest dgg.0.2\u{1e}\n{}",
       text.replace('\n', "\u{1e}\n")
     );
     ::axum::Router::new().route("/manifest", get(move || async { text }))
@@ -557,7 +562,7 @@ fn counts_records_by_framing() {
     unpack(&path, None, 16 << 20).unwrap()
   };
   // Records spanning lines, and an RS LF across where reads may split.
-  let header = b"journal dgg.0.2\n";
+  let header = b"journal dgg.0.3\x1e\n";
   let mut journal = header.to_vec();
   journal.extend(b"0 a 1 frame A\nB\n\x1e\n");
   let filler = (64 << 10) - journal.len() - 1;

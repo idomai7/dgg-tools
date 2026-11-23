@@ -190,27 +190,24 @@ fn open_day(
   while path(n + 1).exists() {
     n += 1;
   }
-  let line = header.line();
+  let text = header.text();
   if let Some(file) = File::open(path(n)).missing_ok()?
-    && first_line(&file)? != Some(line.clone())
+    && first_line(&file)? != text.as_bytes()
   {
     n += 1;
   }
-  open_append(&path(n), &line, header.framing())
+  open_append(&path(n), &text, header.framing())
 }
 
-/// `file`'s first line, without its LF, if it's complete.
-fn first_line(file: &File) -> io::Result<Option<String>> {
+/// `file`'s first line, up to and with its LF.
+fn first_line(file: &File) -> io::Result<Vec<u8>> {
   let mut line = Vec::new();
   BufReader::new(file).read_until(b'\n', &mut line)?;
-  let Some(line) = line.strip_suffix(b"\n") else {
-    return Ok(None);
-  };
-  Ok(Some(String::from_utf8_lossy(line).into_owned()))
+  Ok(line)
 }
 
 /// Opens `path` to append to, creating it if needed. A new file gets
-/// `header`, ending at LF, in one write. An existing one with a torn tail
+/// `header`, with its end, in one write. An existing one with a torn tail
 /// after its header gets the end of a record (`framing`'s), so the next
 /// record starts clean.
 fn open_append(
@@ -226,15 +223,15 @@ fn open_append(
     .open(path)?;
   let len = file.metadata()?.len();
   if len == 0 {
-    file.write_all(format!("{header}\n").as_bytes())?;
+    file.write_all(header.as_bytes())?;
     return Ok(file);
   }
   let end = framing.end();
   let mut tail = vec![0; end.len().min(len as usize)];
   file.seek(SeekFrom::End(-(tail.len() as i64)))?;
   file.read_exact(&mut tail)?;
-  // Just the header, ending at LF, needs nothing.
-  let header_only = len == header.len() as u64 + 1;
+  // Just the header needs nothing.
+  let header_only = len == header.len() as u64;
   if tail != end && !header_only {
     file.write_all(end)?;
   }

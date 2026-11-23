@@ -1,8 +1,8 @@
 //! Kick format version 0, pre-release: any minor may break, so readers
 //! accept only the minor they know.
 //!
-//! After the `journal kick.0.<minor>` header, a line ending at LF, each
-//! record is
+//! After the `journal kick.0.<minor>` header, ending at RS LF as the records
+//! do, each record is
 //!
 //! ```text
 //! <receive-time> <instance> <connection> <kind> <data><RS><LF>

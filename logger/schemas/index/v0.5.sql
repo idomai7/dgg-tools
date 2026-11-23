@@ -1,4 +1,4 @@
--- Index schema version 0.5, the current one (logger::index::SCHEMA_VERSION).
+-- Index schema version 0.5. Superseded by v0.6; kept as a record.
 --
 -- Changes from v0.4: none to the tables. Archives' offsets are into
 -- `journal dgg.0.2` files, records ending at RS LF; `dgg-logger migrate`

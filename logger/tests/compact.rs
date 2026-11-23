@@ -76,7 +76,7 @@ fn merges_a_day_into_a_verified_archive() {
   // the newest version, each record ending at RS LF.
   assert_eq!(
     archived(&root),
-    "journal dgg.0.2\n10 a 1 frame MSG 1\u{1e}\n20 b 1 frame MSG 2\u{1e}\n\
+    "journal dgg.0.3\u{1e}\n10 a 1 frame MSG 1\u{1e}\n20 b 1 frame MSG 2\u{1e}\n\
      30 a 1 frame MSG 3\u{1e}\n30 b 1 open u\u{1e}\n"
   );
   // The manifest describes it exactly.
@@ -120,7 +120,7 @@ fn merges_late_files_into_an_existing_archive() {
   assert_eq!((done.files, done.duplicates), (2, 2));
   assert_eq!(
     archived(&root),
-    "journal dgg.0.2\n10 a 1 frame MSG 1\u{1e}\n20 b 1 frame MSG 2\u{1e}\n\
+    "journal dgg.0.3\u{1e}\n10 a 1 frame MSG 1\u{1e}\n20 b 1 frame MSG 2\u{1e}\n\
      30 a 1 frame MSG 3\u{1e}\n"
   );
   assert_eq!(archive::read_month(root.path(), DAY).unwrap()[0].records, 3);
@@ -157,7 +157,7 @@ fn keeps_records_repeated_within_one_file() {
   // dgg really does send the same frame twice in one millisecond.
   let twice =
     "journal 0.1\n10 a 1 frame UPDATEUSER {}\n10 a 1 frame UPDATEUSER {}\n";
-  let archive = "journal dgg.0.2\n10 a 1 frame UPDATEUSER {}\u{1e}\n\
+  let archive = "journal dgg.0.3\u{1e}\n10 a 1 frame UPDATEUSER {}\u{1e}\n\
                  10 a 1 frame UPDATEUSER {}\u{1e}\n";
   live(&root, "a", twice);
   let done = compact_day(root.path(), DAY, 3).unwrap().unwrap();
@@ -173,7 +173,7 @@ fn keeps_records_repeated_within_one_file() {
 }
 
 #[test]
-fn converts_records_of_a_line_each() {
+fn converts_records_of_older_versions() {
   let root = TempDir::new("logger-compact");
   // 0.1: an LF in data went base64, an RS didn't.
   live(
@@ -181,13 +181,19 @@ fn converts_records_of_a_line_each() {
     "a",
     "journal 0.1\n10 a 1 frame64 QQpC\n20 a 1 frame A\u{1e}B\n",
   );
-  live(&root, "b", "journal dgg.0.2\n15 b 1 frame C\nD\u{1e}\n");
+  live(
+    &root,
+    "b",
+    "journal dgg.0.3\u{1e}\n15 b 1 frame C\nD\u{1e}\n",
+  );
+  // 0.2: only its header ended at LF.
+  live(&root, "c", "journal dgg.0.2\n17 c 1 frame E\u{1e}\n");
   compact_day(root.path(), DAY, 3).unwrap().unwrap();
   // Copied byte for byte, but for the RS, now base64.
   assert_eq!(
     archived(&root),
-    "journal dgg.0.2\n10 a 1 frame64 QQpC\u{1e}\n15 b 1 frame C\nD\u{1e}\n\
-     20 a 1 frame64 QR5C\u{1e}\n"
+    "journal dgg.0.3\u{1e}\n10 a 1 frame64 QQpC\u{1e}\n15 b 1 frame C\nD\u{1e}\n\
+     17 c 1 frame E\u{1e}\n20 a 1 frame64 QR5C\u{1e}\n"
   );
 
   // A record that doesn't decode can't keep its RS: the day is refused.

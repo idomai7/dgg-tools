@@ -2,19 +2,21 @@
 //! took from peers, by day and SHA-256, so none is taken twice.
 //!
 //! ```text
-//! synced-archives dgg.0.1
+//! synced-archives dgg.0.2<RS><LF>
 //! <YYYY-MM-DD> <sha-256><RS><LF>
 //! ```
 //!
-//! After the header, versioned like the journal's (see [`Header`]) and
-//! ending at LF, each entry ends at RS LF, as the journal's records do.
+//! The header, versioned like the journal's (see [`Header`]), and each
+//! entry end at RS LF, as the journal's records do.
 //! Entries this version doesn't recognise are skipped.
 //!
 //! Versions of dgg's:
 //!
-//! - `0.0`: no header; each entry a line, `<YYYY-MM-DD> <sha-256>`. Still
-//!   read, and rewritten as 0.1 by `migrate`.
-//! - `0.1`: the header; entries end at RS LF.
+//! - `0.0`: no header; each entry a line, `<YYYY-MM-DD> <sha-256>`.
+//! - `0.1`: the header, ending at LF; entries end at RS LF.
+//! - `0.2`: the header ends at RS LF too.
+//!
+//! Older versions are still read, and rewritten as the newest by `migrate`.
 
 use {
   ::common::{atomic_file, fs::MissingOk},
@@ -31,10 +33,11 @@ pub const PATH: &str = "control/synced-archives";
 pub const FORMAT: Format = Format {
   magic: "synced-archives",
   last_unnamed: Version { major: 0, minor: 0 },
+  rs_header: &[(Variant::Dgg, Version { major: 0, minor: 2 })],
 };
 
 /// The version this crate writes.
-pub const VERSION: Version = Version { major: 0, minor: 1 };
+pub const VERSION: Version = Version { major: 0, minor: 2 };
 
 /// The version before headers.
 pub const LEGACY: Version = Version { major: 0, minor: 0 };
@@ -44,8 +47,7 @@ pub type Taken = (String, String);
 
 /// The file's contents, in this crate's version.
 pub fn encode(taken: &[Taken]) -> String {
-  let mut text =
-    format!("{}\n", Header::new(Variant::Dgg, VERSION).line_as(FORMAT));
+  let mut text = Header::new(Variant::Dgg, VERSION).text_as(FORMAT);
   for (day, sha256) in taken {
     text += &format!("{day} {sha256}\u{1e}\n");
   }
@@ -66,7 +68,10 @@ pub fn decode(text: &str) -> Option<(Version, Vec<Taken>)> {
   }
   let (first, body) = text.split_once('\n')?;
   let header = Header::parse_as(FORMAT, first.as_bytes())?;
-  if header.variant != Variant::Dgg || header.version != VERSION {
+  let earlier = Version { major: 0, minor: 1 };
+  if header.variant != Variant::Dgg
+    || (header.version != VERSION && header.version != earlier)
+  {
     return None;
   }
   let (entries, tail) = Framing::RsLf.split(body.as_bytes());
@@ -78,7 +83,7 @@ pub fn decode(text: &str) -> Option<(Version, Vec<Taken>)> {
     .filter_map(|entry| ::std::str::from_utf8(entry).ok())
     .filter_map(entry)
     .collect();
-  Some((VERSION, taken))
+  Some((header.version, taken))
 }
 
 /// What journal `root`'s file lists; nothing if there's none.

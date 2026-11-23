@@ -4,7 +4,7 @@ use {
   ::common::temp_dir::TempDir,
   ::logger::{
     index::{SCHEMA_VERSION, index, open, user_version},
-    migrate::{FROM_SCHEMA, Report, migrate},
+    migrate::{FROM_SCHEMAS, Report, migrate},
   },
   ::logger_journal::{
     archive::{self, Archive},
@@ -141,7 +141,7 @@ fn before(dir: &TempDir) -> PathBuf {
   .unwrap();
   let mut db = open(&data.join("index.sqlite")).unwrap();
   index(&mut db, &journal).unwrap();
-  db.pragma_update(None, "user_version", user_version(FROM_SCHEMA))
+  db.pragma_update(None, "user_version", user_version(FROM_SCHEMAS[0]))
     .unwrap();
   data
 }
@@ -167,7 +167,7 @@ fn converts_archives_and_upgrades_the_index() {
       manifests: 3,
       taken: 1,
       failed: vec![],
-      index: Some(FROM_SCHEMA),
+      index: Some(FROM_SCHEMAS[0]),
     }
   );
   let encoded = |text: &str| {
@@ -178,7 +178,7 @@ fn converts_archives_and_upgrades_the_index() {
   assert_eq!(
     archived(&journal, "2026-11-07"),
     format!(
-      "journal dgg.0.2\n20 a 1 frame MSG {}{RS}\n30 a 1 frame MSG not json{RS}\n\
+      "journal dgg.0.3\u{1e}\n20 a 1 frame MSG {}{RS}\n30 a 1 frame MSG not json{RS}\n\
        40 a 1 frame64 {}{RS}\n50 a 1 frame MSG {}{RS}\n",
       message(20, "one"),
       encoded(&with_rs),
@@ -192,7 +192,10 @@ fn converts_archives_and_upgrades_the_index() {
     (backfill_root(&journal), "2026-11-07"),
   ] {
     let text = fs::read_to_string(archive::manifest_path(&root, day)).unwrap();
-    assert!(text.starts_with("journal-archive dgg.0.1\n"), "{text}");
+    assert!(
+      text.starts_with("journal-archive dgg.0.2\u{1e}\n"),
+      "{text}"
+    );
     let compressed = fs::read(archive_file(&root, day)).unwrap();
     let listed = archive::read_month(&root, day).unwrap();
     let entry: &Archive = listed.iter().find(|a| a.day == day).unwrap();
@@ -204,9 +207,7 @@ fn converts_archives_and_upgrades_the_index() {
   assert_eq!(
     fs::read_to_string(journal.join("control/synced-archives")).unwrap(),
     format!(
-      "synced-archives dgg.0.1
-2026-10-30 {}{RS}
-",
+      "synced-archives dgg.0.2{RS}\n2026-10-30 {}{RS}\n",
       "ab".repeat(32)
     )
   );
@@ -277,9 +278,11 @@ fn a_failing_month_is_left_as_it_was() {
   assert_eq!(snapshot(&november), was);
   // The other months were migrated, but the index stays at 0.4 until all
   // are.
-  assert!(archived(&journal, "2026-10-31").starts_with("journal dgg.0.2\n"));
+  assert!(
+    archived(&journal, "2026-10-31").starts_with("journal dgg.0.3\u{1e}\n")
+  );
   let db = Connection::open(data.join("index.sqlite")).unwrap();
-  assert_eq!(schema(&db), user_version(FROM_SCHEMA));
+  assert_eq!(schema(&db), user_version(FROM_SCHEMAS[0]));
 }
 
 #[test]
@@ -320,4 +323,100 @@ fn waits_for_a_supervisors_locks() {
   );
   drop(lock);
   assert_eq!(migrating.join().unwrap().converted, 3);
+}
+
+/// Archives `body`, records ending at RS LF, as `day` under journal `root`
+/// in `journal dgg.0.2`, listed in a manifest as that version's build wrote
+/// it, `journal-archive dgg.0.1`: their headers ending at LF.
+fn archive_02(root: &Path, day: &str, body: &str) {
+  let journal = format!("journal dgg.0.2\n{body}");
+  let path = archive_file(root, day);
+  fs::create_dir_all(path.parent().unwrap()).unwrap();
+  let compressed = ::zstd::encode_all(journal.as_bytes(), 3).unwrap();
+  fs::write(&path, &compressed).unwrap();
+  let manifest = archive::manifest_path(root, day);
+  let mut text = fs::read_to_string(&manifest)
+    .unwrap_or_else(|_| "journal-archive dgg.0.1\n".into());
+  text += &format!(
+    "{day} {} {} {} {}{RS}\n",
+    compressed.len(),
+    journal.len(),
+    body.matches(&format!("{RS}\n")).count(),
+    hex(&Sha256::digest(&compressed)),
+  );
+  fs::write(manifest, text).unwrap();
+}
+
+#[test]
+fn upgrades_a_journal_migrated_to_0_2() {
+  let dir = TempDir::new("logger-migrate");
+  let data = dir.path().to_owned();
+  let journal = data.join("journal");
+  let body = format!(
+    "20 a 1 frame MSG {}{RS}\n30 a 1 frame MSG not\njson{RS}\n\
+     50 a 1 frame MSG {}{RS}\n",
+    message(20, "one"),
+    message(50, "two"),
+  );
+  archive_02(&journal, "2026-11-07", &body);
+  // That build's synced-archives, its header ending at LF.
+  let taken = journal.join("control/synced-archives");
+  fs::create_dir_all(taken.parent().unwrap()).unwrap();
+  let sha = "ab".repeat(32);
+  fs::write(
+    &taken,
+    format!("synced-archives dgg.0.1\n2026-10-30 {sha}{RS}\n"),
+  )
+  .unwrap();
+  // Its index, at 0.5.
+  let mut db = open(&data.join("index.sqlite")).unwrap();
+  index(&mut db, &journal).unwrap();
+  db.pragma_update(None, "user_version", user_version(FROM_SCHEMAS[1]))
+    .unwrap();
+  drop(db);
+
+  let report = run(&data, false);
+  assert_eq!(
+    report,
+    Report {
+      converted: 1,
+      manifests: 1,
+      taken: 1,
+      failed: vec![],
+      index: Some(FROM_SCHEMAS[1]),
+    }
+  );
+  // Only the header changed.
+  assert_eq!(
+    archived(&journal, "2026-11-07"),
+    format!("journal dgg.0.3{RS}\n{body}")
+  );
+  let manifest =
+    fs::read_to_string(archive::manifest_path(&journal, "2026-11-07"));
+  assert!(
+    manifest
+      .unwrap()
+      .starts_with(&format!("journal-archive dgg.0.2{RS}\n"))
+  );
+  assert_eq!(
+    fs::read_to_string(&taken).unwrap(),
+    format!("synced-archives dgg.0.2{RS}\n2026-10-30 {sha}{RS}\n")
+  );
+
+  // The index's offsets moved with the header, a byte on.
+  let db = Connection::open(data.join("index.sqlite")).unwrap();
+  assert_eq!(schema(&db), user_version(SCHEMA_VERSION));
+  let path = "archive/2026/11/2026-11-07.journal.zst";
+  let unparsed: i64 = db
+    .query_row(
+      "SELECT offset FROM unparsed WHERE path = ?1",
+      [path],
+      |row| row.get(0),
+    )
+    .unwrap();
+  let new = archived(&journal, "2026-11-07");
+  assert!(new[unparsed as usize..].starts_with("30 a 1 frame MSG not\njson"));
+  drop(db);
+  let mut db = open(&data.join("index.sqlite")).unwrap();
+  assert_eq!(index(&mut db, &journal).unwrap().records, 0);
 }

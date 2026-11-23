@@ -42,7 +42,7 @@ use {
 
 /// Bumped whenever the schema changes; an index at another version must be
 /// rebuilt. While the major is 0, every change bumps the minor.
-pub const SCHEMA_VERSION: Version = Version { major: 0, minor: 5 };
+pub const SCHEMA_VERSION: Version = Version { major: 0, minor: 6 };
 
 /// How a schema version is stored in SQLite's `user_version`:
 /// `major << 16 | minor`.
@@ -61,7 +61,7 @@ pub fn schema_version(user_version: i64) -> Version {
 /// The current schema. Every version's schema is kept in `schemas/index/`;
 /// add a new file there (and bump [`SCHEMA_VERSION`]) rather than editing
 /// an old one.
-const SCHEMA: &str = include_str!("../schemas/index/v0.5.sql");
+const SCHEMA: &str = include_str!("../schemas/index/v0.6.sql");
 
 /// Records are committed in batches of this many, with their checkpoint.
 const BATCH: usize = 10_000;
@@ -99,7 +99,7 @@ impl ::std::fmt::Display for Error {
         version.minor,
         SCHEMA_VERSION.major,
         SCHEMA_VERSION.minor,
-        if *version == crate::migrate::FROM_SCHEMA {
+        if crate::migrate::FROM_SCHEMAS.contains(version) {
           "migrate"
         } else {
           "index --rebuild"

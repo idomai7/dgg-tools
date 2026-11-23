@@ -40,12 +40,12 @@ fn manifest_format() {
   // Entries end at RS LF.
   let rows =
     format!("2026-11-08 10 20 1 {sha}\u{1e}\n2026-11-09 10 20 2 {sha}\u{1e}\n");
-  assert_eq!(text, format!("journal-archive dgg.0.1\n{rows}"));
+  assert_eq!(text, format!("journal-archive dgg.0.2\u{1e}\n{rows}"));
   let sorted = vec![entry("2026-11-08", 1), entry("2026-11-09", 2)];
   let decoded = archive::decode(&text).unwrap();
   assert_eq!(decoded, (Variant::Dgg, sorted.clone()));
   let kick = archive::encode(Variant::Kick, &entries);
-  assert_eq!(kick, format!("journal-archive kick.0.0\n{rows}"));
+  assert_eq!(kick, format!("journal-archive kick.0.0\u{1e}\n{rows}"));
   assert_eq!(archive::decode(&kick).unwrap(), (Variant::Kick, sorted));
   // An entry this version doesn't know is skipped, as are informational
   // fields.
@@ -70,10 +70,10 @@ fn manifest_format() {
     // Each version's header has one form.
     "journal-archive 0.1\n".to_owned(),
     "journal-archive dgg.0.0\n".to_owned(),
-    format!("journal-archive dgg.0.1\n2026-11-08 10 x 1 {sha}\u{1e}\n"),
-    "journal-archive dgg.0.1\n2026-11-08 10 20 1 ABCD\u{1e}\n".to_owned(),
+    format!("journal-archive dgg.0.2\u{1e}\n2026-11-08 10 x 1 {sha}\u{1e}\n"),
+    "journal-archive dgg.0.2\u{1e}\n2026-11-08 10 20 1 ABCD\u{1e}\n".to_owned(),
     // An entry without its end.
-    format!("journal-archive dgg.0.1\n2026-11-08 10 20 1 {sha}\n"),
+    format!("journal-archive dgg.0.2\u{1e}\n2026-11-08 10 20 1 {sha}\n"),
   ] {
     assert_eq!(archive::decode(&bad), None, "{bad:?}");
   }

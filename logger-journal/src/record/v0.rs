@@ -1,8 +1,8 @@
 //! dgg's format version 0, pre-release: any minor may break, so readers
 //! accept only the minors they know.
 //!
-//! After the `journal dgg.0.<minor>` header, a line ending at LF, each
-//! record is
+//! After the `journal dgg.0.<minor>` header, ending at RS LF as the records
+//! do, each record is
 //!
 //! ```text
 //! <receive-time> <instance> <connection> <kind> <data><RS><LF>
@@ -37,6 +37,8 @@
 //!   Before, it was `journal 0.<minor>`, each record was one line, ending at
 //!   LF, and text data holding an LF went base64 instead. Those files are
 //!   still read ([`LEGACY`]), but no longer written.
+//! - `0.3`: the header ends at RS LF too, so every record, the header
+//!   included, can be split on it. 0.2's, ending at LF, is still read.
 
 pub use super::fields::{valid_instance, valid_token};
 use {
@@ -47,7 +49,7 @@ use {
   ::std::borrow::Cow,
 };
 
-pub const VERSION: Version = Version { major: 0, minor: 2 };
+pub const VERSION: Version = Version { major: 0, minor: 3 };
 
 /// The last version with a record per line, its header naming no variant.
 pub const LEGACY: Version = Version { major: 0, minor: 1 };

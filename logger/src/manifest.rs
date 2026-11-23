@@ -1,15 +1,15 @@
 //! The journal files a host has, for `sync` to compare against its own.
 //!
 //! ```text
-//! journal-manifest dgg.0.1
+//! journal-manifest dgg.0.2<RS><LF>
 //! live/<YYYY-MM-DD>/<instance>.journal <size in bytes><RS><LF>
 //! backfill/live/<YYYY-MM-DD>/<instance>.journal <size in bytes><RS><LF>
 //! archive/<YYYY>/<MM>/<YYYY-MM-DD>.journal.zst <size> <sha-256><RS><LF>
 //! backfill/archive/<YYYY>/<MM>/<YYYY-MM-DD>.journal.zst <size> <sha-256><RS><LF>
 //! ```
 //!
-//! One entry per file after the header, ending at RS LF as the journal's
-//! records do, versioned like the journal's (see
+//! One entry per file after the header, each, the header too, ending at RS
+//! LF as the journal's records do, versioned like the journal's (see
 //! [`Header`]): the variant of the journal root it lists, and its version,
 //! optionally followed by informational fields. Then the live files, then
 //! the backfill journal's, then the archives of both,
@@ -28,6 +28,7 @@
 //! - `0.0`: `journal-manifest 0.0`, naming no variant.
 //! - `0.1`: names the variant; entries end at RS LF, not LF. A live file may
 //!   be numbered, `<instance>.<n>.journal`, as its instance's id allows.
+//! - `0.2`: the header ends at RS LF too.
 
 use {
   ::logger_journal::{
@@ -44,10 +45,14 @@ use {
 pub const FORMAT: Format = Format {
   magic: "journal-manifest",
   last_unnamed: Version { major: 0, minor: 0 },
+  rs_header: &[
+    (Variant::Dgg, Version { major: 0, minor: 2 }),
+    (Variant::Kick, Version { major: 0, minor: 0 }),
+  ],
 };
 
 /// The version of dgg's manifest this crate writes and reads.
-pub const VERSION: Version = Version { major: 0, minor: 1 };
+pub const VERSION: Version = Version { major: 0, minor: 2 };
 
 /// One file and its size.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -142,8 +147,7 @@ pub fn list(journal_root: &Path) -> io::Result<Vec<File>> {
 
 /// A manifest of `files`, of dgg's journal.
 pub fn encode(files: &[File]) -> String {
-  let header = Header::new(Variant::Dgg, VERSION).line_as(FORMAT);
-  let mut text = format!("{header}\n");
+  let mut text = Header::new(Variant::Dgg, VERSION).text_as(FORMAT);
   for file in files {
     text += &format!("{} {}", file.path, file.size);
     if let Some(sha256) = &file.sha256 {

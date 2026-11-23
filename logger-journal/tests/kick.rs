@@ -26,7 +26,11 @@ fn header() {
     .with("channel", "one");
   let line = format!("journal kick.0.0 ; endpoint={A} channel=one");
   assert_eq!(header.line(), line);
-  assert_eq!(Header::parse(line.as_bytes()), Some(header.clone()));
+  // It ends at RS LF, as its records do.
+  assert_eq!(header.text(), format!("{line}\u{1e}\n"));
+  let parsed = Header::parse(format!("{line}\u{1e}").as_bytes());
+  assert_eq!(parsed, Some(header.clone()));
+  assert_eq!(Header::parse(line.as_bytes()), None);
   assert_eq!(header.get("channel"), Some("one"));
   assert_eq!(header.get("other"), None);
   assert!(header.readable());
@@ -205,7 +209,7 @@ fn rolls_over_at_midnight_and_carries_on_after_a_restart() {
     .iter()
     .map(|f| fs::read_to_string(f).unwrap())
     .collect();
-  let header = format!("journal kick.0.0 ; endpoint={A} channel=one\n");
+  let header = format!("journal kick.0.0 ; endpoint={A} channel=one\u{1e}\n");
   assert_eq!(texts[0], format!("{header}{DAY} i 1 open {A}\u{1e}\n"));
   let next = DAY + day;
   assert_eq!(
@@ -225,6 +229,8 @@ fn lines_before_any_open_go_in_a_file_with_no_endpoint() {
   let text = fs::read_to_string(&files[0]).unwrap();
   assert_eq!(
     text,
-    format!("journal kick.0.0 ; channel=one\n{DAY} i 1 close why\u{1e}\n")
+    format!(
+      "journal kick.0.0 ; channel=one\u{1e}\n{DAY} i 1 close why\u{1e}\n"
+    )
   );
 }

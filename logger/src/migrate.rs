@@ -1,6 +1,8 @@
 //! Migrate: rewrites the journal's archives, and the backfill journal's,
-//! from `journal 0.1`, a record per line, to `journal dgg.0.2`, records
-//! ending at RS LF, and upgrades the index to match.
+//! from older versions to the newest, `journal dgg.0.3`, its header and
+//! records ending at RS LF, and upgrades the index to match. From `journal
+//! 0.1`, a record per line, every record is converted; from `journal
+//! dgg.0.2`, whose header ended at LF, only the header changes.
 //!
 //! Live files are left alone: compaction converts them into archives, with
 //! the same checks.
@@ -15,7 +17,7 @@
 //!
 //! A month at a time, once all its archives have been validated: the index
 //! is upgraded for them, then each new file is renamed over its old one,
-//! then the month's manifest is written (`journal-archive dgg.0.1`). A month
+//! then the month's manifest is written (`journal-archive dgg.0.2`). A month
 //! with a failure is left as it was and reported; the rest carry on.
 //!
 //! The index holds offsets into journal files in two tables: `files` (an
@@ -24,9 +26,10 @@
 //! archive's rows are mapped to the new file's offsets, if they're for the
 //! old SHA-256; others are left, as the index reads those archives again
 //! anyway. Once every month has been migrated, the index's schema goes from
-//! 0.4 to 0.5, which only says its archive offsets are into `dgg.0.2` files.
+//! 0.4 or 0.5 to 0.6, which only says its archive offsets are into
+//! `dgg.0.3` files.
 //!
-//! Rerunning it is safe. An archive already `dgg.0.2` is only checked
+//! Rerunning it is safe. An archive already the newest is only checked
 //! against its manifest entry, which is rewritten from the file if a crash
 //! came between the rename and the manifest; and conversion is
 //! deterministic, so an archive converted again after a crash between the
@@ -34,7 +37,7 @@
 //! for. Leftover new files are removed first.
 //!
 //! Each journal root's `control/synced-archives` (see
-//! [`taken`](crate::taken)) from before headers is rewritten too, once what
+//! [`taken`](crate::taken)) of an older version is rewritten too, once what
 //! the new one lists has been checked to be what the old one did.
 //!
 //! It holds `index.lock`, `compact.lock` and `sync.lock` in the data
@@ -69,8 +72,13 @@ use {
   },
 };
 
-/// The index schema this upgrades from; it upgrades to [`SCHEMA_VERSION`].
-pub const FROM_SCHEMA: Version = Version { major: 0, minor: 4 };
+/// The index schemas this upgrades from: 0.4, its archive offsets into
+/// `journal 0.1` files, and 0.5, into `dgg.0.2` ones. It upgrades to
+/// [`SCHEMA_VERSION`].
+pub const FROM_SCHEMAS: [Version; 2] = [
+  Version { major: 0, minor: 4 },
+  Version { major: 0, minor: 5 },
+];
 
 /// The locks in the data directory it holds, a supervisor's.
 pub const LOCKS: [&str; 3] = ["index.lock", "compact.lock", "sync.lock"];
@@ -171,24 +179,24 @@ pub fn migrate(
   let schema = |v: Version| format!("{}.{}", v.major, v.minor);
   match &index {
     None => say("index: none to upgrade"),
-    Some((_, version)) if *version != FROM_SCHEMA => {
+    Some((_, version)) if !FROM_SCHEMAS.contains(version) => {
       say(&format!(
         "index: schema {}, as it should be",
         schema(*version)
       ));
     }
-    Some(_) if !report.failed.is_empty() => say(&format!(
+    Some((_, version)) if !report.failed.is_empty() => say(&format!(
       "index: left at schema {}, until nothing's left as it was",
-      schema(FROM_SCHEMA)
+      schema(*version)
     )),
-    Some((db, _)) => {
+    Some((db, version)) => {
       if !dry_run {
         db.pragma_update(None, "user_version", user_version(SCHEMA_VERSION))
           .map_err(io::Error::other)?;
       }
       say(&format!(
         "index: schema {} {would}upgraded to {}",
-        schema(FROM_SCHEMA),
+        schema(*version),
         schema(SCHEMA_VERSION)
       ));
     }
@@ -196,7 +204,7 @@ pub fn migrate(
   Ok(report)
 }
 
-/// Rewrites journal `root`'s `synced-archives` from before headers, if it
+/// Rewrites journal `root`'s `synced-archives` of an older version, if it
 /// is, once the new contents are checked to list the same; whether it was
 /// (or with a dry run, would be).
 fn migrate_taken(root: &Path, dry_run: bool) -> Result<bool, String> {
@@ -208,12 +216,18 @@ fn migrate_taken(root: &Path, dry_run: bool) -> Result<bool, String> {
     return Ok(false);
   };
   let (version, listed) = taken::decode(&text).ok_or("not readable")?;
-  if version != taken::LEGACY {
+  if version == taken::VERSION {
     return Ok(false);
   }
-  // Every line an entry, so none is dropped unnoticed.
-  if listed.len() != text.lines().count() {
-    return Err("a line that isn't `<day> <sha-256>`".into());
+  // Every line, or record, an entry, so none is dropped unnoticed.
+  let entries = if version == taken::LEGACY {
+    text.lines().count()
+  } else {
+    let (_, body) = text.split_once('\n').unwrap_or_default();
+    Framing::RsLf.split(body.as_bytes()).0.len()
+  };
+  if listed.len() != entries {
+    return Err("an entry that isn't `<day> <sha-256>`".into());
   }
   let new = taken::encode(&listed);
   if taken::decode(&new) != Some((taken::VERSION, listed)) {
@@ -280,7 +294,7 @@ fn open_index(
     .pragma_query_value(None, "user_version", |row| row.get(0))
     .map_err(io::Error::other)?;
   let version = schema_version(version);
-  if version != FROM_SCHEMA && version != SCHEMA_VERSION {
+  if !FROM_SCHEMAS.contains(&version) && version != SCHEMA_VERSION {
     say(&format!(
       "index: schema {}.{}, left alone; rebuild it",
       version.major, version.minor
@@ -445,8 +459,8 @@ impl Month<'_> {
         .filter(|header| header.variant == Variant::Dgg && header.readable())
         .ok_or_else(|| failed("not a readable dgg journal".into()))?;
       let body = &bytes[header_end + 1..];
-      if header.framing() == Framing::RsLf {
-        let (records, _) = Framing::RsLf.split(body);
+      if header.version == convert::newest(Variant::Dgg).version {
+        let (records, _) = header.framing().split(body);
         let found = Archive {
           day: day.clone(),
           compressed: compressed.len() as u64,
@@ -480,7 +494,9 @@ impl Month<'_> {
       write_checked(&candidate, &new_compressed)
         .map_err(|e| failed(e.to_string()))?;
       let offsets = &converted.last().unwrap().offsets;
-      validate(&path, &candidate, offsets, &bytes, &new).map_err(failed)?;
+      let old_end = header.framing().end();
+      validate(&path, &candidate, offsets, (&bytes, old_end), &new)
+        .map_err(failed)?;
       *entry = Archive {
         day,
         compressed: new_compressed.len() as u64,
@@ -575,7 +591,7 @@ impl Month<'_> {
   }
 }
 
-/// The journal `bytes`, of a record per line after its `header`, which ends
+/// The journal `bytes`, of an older version, after its `header`, which ends
 /// at `body`, converted: the new journal, its records, and each record
 /// boundary's offset in the old mapped to the new's.
 fn convert_archive(
@@ -583,16 +599,17 @@ fn convert_archive(
   body: usize,
   bytes: &[u8],
 ) -> Result<(Vec<u8>, u64, Offsets), String> {
-  let (records, tail) = Framing::Lf.split(&bytes[body..]);
+  let end = header.framing().end();
+  let (records, tail) = header.framing().split(&bytes[body..]);
   if !tail.is_empty() {
     return Err("a torn record at its end".into());
   }
   let newest = convert::newest(Variant::Dgg);
-  let mut new = format!("{}\n", newest.line()).into_bytes();
+  let mut new = newest.text().into_bytes();
   let mut offsets = HashMap::from([(0, 0), (body as u64, new.len() as u64)]);
   let (mut old_at, mut count) = (body, 0);
   for record in records {
-    old_at += record.len() + 1;
+    old_at += record.len() + end.len();
     if !record.is_empty() {
       let converted =
         convert::record(header, record).map_err(|e| e.to_string())?;
@@ -623,12 +640,12 @@ fn write_checked(path: &Path, bytes: &[u8]) -> io::Result<()> {
 
 /// Whether the archives at `old` and `new` read the same, record by record,
 /// at offsets `offsets` maps; `old_bytes` and `new_bytes` are their
-/// journals.
+/// journals, `old_end` how the old's records end.
 fn validate(
   old: &Path,
   new: &Path,
   offsets: &Offsets,
-  old_bytes: &[u8],
+  (old_bytes, old_end): (&[u8], &[u8]),
   new_bytes: &[u8],
 ) -> Result<(), String> {
   let read = |path: &Path| -> Result<Vec<_>, String> {
@@ -662,7 +679,7 @@ fn validate(
       ) => {
         old_error == new_error
           && maps(*old_at, *new_at)
-          && record_at(old_bytes, *old_at, b"\n")
+          && record_at(old_bytes, *old_at, old_end)
             == record_at(new_bytes, *new_at, &[RS, b'\n'])
       }
       _ => false,

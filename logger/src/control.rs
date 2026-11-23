@@ -15,11 +15,13 @@
 //! The first line is the format name and `<major>.<minor>` version. Each
 //! later line is `<key> <value>`.
 //!
-//! `capture-status dgg.0.1` is the same but for its header, versioned like
-//! the journal's (see [`Header`]), and its entries ending at RS LF, as the
-//! journal's records do. It's read, but not yet written: an instance hands
-//! off only to one whose status it can read, so instances that read only
-//! 0.0 must be gone before any writes 0.1 (see [`Status::encode_next`]). `healthy-since` is omitted while the
+//! `capture-status dgg.0.2` is the same but for its header, versioned like
+//! the journal's (see [`Header`]), and its header and entries ending at RS
+//! LF, as the journal's records do. It's read, but not yet written: an
+//! instance hands off only to one whose status it can read, so instances
+//! that can't read it must be gone before any writes it (see
+//! [`Status::encode_next`]). `dgg.0.1`, its header ending at LF, was never
+//! written, but is read too. `healthy-since` is omitted while the
 //! instance isn't healthy; `build` (the [`BUILD`](crate::BUILD) it runs) by
 //! instances from before it was added. It came without a version bump:
 //! readers have always skipped keys they don't know, and old instances must
@@ -55,10 +57,11 @@ pub const HEADER: &str = "capture-status 0.0";
 pub const FORMAT: Format = Format {
   magic: "capture-status",
   last_unnamed: Version { major: 0, minor: 0 },
+  rs_header: &[(Variant::Dgg, Version { major: 0, minor: 2 })],
 };
 
 /// The version read, and to be written once every instance reads it.
-pub const NEXT: Version = Version { major: 0, minor: 1 };
+pub const NEXT: Version = Version { major: 0, minor: 2 };
 
 /// File extension of status files.
 pub const EXTENSION: &str = "status";
@@ -80,20 +83,21 @@ pub struct Status {
 impl Status {
   /// The file contents, in `capture-status 0.0`.
   pub fn encode(&self) -> String {
-    self.encode_with(HEADER, "\n")
+    self.encode_with(&format!("{HEADER}\n"), "\n")
   }
 
-  /// The file contents, in `capture-status dgg.0.1`, for once every
+  /// The file contents, in `capture-status dgg.0.2`, for once every
   /// instance reads it.
   pub fn encode_next(&self) -> String {
-    let header = Header::new(Variant::Dgg, NEXT).line_as(FORMAT);
+    let header = Header::new(Variant::Dgg, NEXT).text_as(FORMAT);
     self.encode_with(&header, "\u{1e}\n")
   }
 
-  /// The contents with `header`, each entry ending at `end`.
+  /// The contents with `header`, its end included, each entry ending at
+  /// `end`.
   fn encode_with(&self, header: &str, end: &str) -> String {
     let mut text = format!(
-      "{header}\ninstance {}{end}started {}{end}heartbeat {}{end}",
+      "{header}instance {}{end}started {}{end}heartbeat {}{end}",
       self.instance, self.started, self.heartbeat
     );
     if let Some(since) = self.healthy_since {
@@ -110,10 +114,8 @@ impl Status {
   pub fn decode(text: &str) -> Option<Self> {
     let (first, body) = text.split_once('\n')?;
     let header = Header::parse_as(FORMAT, first.as_bytes())?;
-    let legacy = Version { major: 0, minor: 0 };
-    if header.variant != Variant::Dgg
-      || (header.version != legacy && header.version != NEXT)
-    {
+    let readable = [0, 1, 2].map(|minor| Version { major: 0, minor });
+    if header.variant != Variant::Dgg || !readable.contains(&header.version) {
       return None;
     }
     let (entries, tail) = header.framing_as(FORMAT).split(body.as_bytes());

@@ -7,19 +7,18 @@
 //! opening every archive:
 //!
 //! ```text
-//! journal-archive dgg.0.1
+//! journal-archive dgg.0.2<RS><LF>
 //! <YYYY-MM-DD> <compressed bytes> <bytes> <records> <sha-256><RS><LF>
 //! ```
 //!
-//! After the header, ending at LF, each entry ends at RS LF, as the
-//! journal's records do.
+//! The header and each entry end at RS LF, as the journal's records do.
 //! `bytes` and `records` are of the decompressed journal, `records` counted
 //! by its framing, after its header; the SHA-256 is of the compressed file,
 //! lowercase hex.
 //!
 //! The header is versioned like the journal's (see
 //! [`Header`](crate::Header)): each variant on its own, `journal-archive
-//! dgg.0.1` and `journal-archive kick.0.0`, optionally with informational
+//! dgg.0.2` and `journal-archive kick.0.0`, optionally with informational
 //! fields. While the major is 0 (pre-release) any minor may break, so readers
 //! accept only the versions they know. From 1.0 on, readers will ignore
 //! lines they don't recognise, so a minor bump may add kinds of entry;
@@ -31,7 +30,8 @@
 //!   `lines`: an archive's records were its lines then. Still read, and
 //!   written again as 0.1 when its month's manifest is next recorded.
 //! - `0.1`: names the variant; counts records; entries end at RS LF, not
-//!   LF.
+//!   LF, but the header at LF. Still read.
+//! - `0.2`: the header ends at RS LF too.
 
 use {
   crate::{
@@ -49,12 +49,16 @@ use {
 pub const FORMAT: Format = Format {
   magic: "journal-archive",
   last_unnamed: Version { major: 0, minor: 0 },
+  rs_header: &[
+    (Variant::Dgg, Version { major: 0, minor: 2 }),
+    (Variant::Kick, Version { major: 0, minor: 0 }),
+  ],
 };
 
 /// The version of `variant`'s manifest this crate writes.
 pub fn version(variant: Variant) -> Version {
   match variant {
-    Variant::Dgg => Version { major: 0, minor: 1 },
+    Variant::Dgg => Version { major: 0, minor: 2 },
     Variant::Kick => Version { major: 0, minor: 0 },
   }
 }
@@ -62,7 +66,7 @@ pub fn version(variant: Variant) -> Version {
 /// Whether this crate reads `variant`'s manifest at `version`.
 fn readable(variant: Variant, version: Version) -> bool {
   version == self::version(variant)
-    || (variant == Variant::Dgg && version == Version { major: 0, minor: 0 })
+    || (variant == Variant::Dgg && version.major == 0 && version.minor < 2)
 }
 
 /// The manifest's file name in each month directory.
@@ -107,8 +111,7 @@ fn digits(text: &str) -> bool {
 pub fn encode(variant: Variant, archives: &[Archive]) -> String {
   let mut archives = archives.to_vec();
   archives.sort_by(|a, b| a.day.cmp(&b.day));
-  let header = Header::new(variant, version(variant)).line_as(FORMAT);
-  let mut text = format!("{header}\n");
+  let mut text = Header::new(variant, version(variant)).text_as(FORMAT);
   for archive in archives {
     text += &format!(
       "{} {} {} {} {}\u{1e}\n",

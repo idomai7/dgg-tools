@@ -130,29 +130,40 @@ fn header_is_checked() {
   drop(writer);
   let path = live_files(root.path()).unwrap()[0].clone();
   let text = fs::read_to_string(&path).unwrap();
-  assert_eq!(text, "journal dgg.0.2\n0 a 1 frame MSG 1\u{1e}\n");
+  assert_eq!(text, "journal dgg.0.3\u{1e}\n0 a 1 frame MSG 1\u{1e}\n");
 
   let with = |header: &str| {
-    fs::write(&path, text.replacen("journal dgg.0.2", header, 1)).unwrap();
+    let text = text.replacen("journal dgg.0.3\u{1e}", header, 1);
+    fs::write(&path, text).unwrap();
     Reader::open(&path, 0)
   };
+  let mut reader = with("journal dgg.0.3\u{1e}").unwrap();
+  assert_eq!(reader.version(), Some(Version { major: 0, minor: 3 }));
+  assert_eq!(frame(reader.next().unwrap()), "MSG 1");
+  // 0.2's header ended at LF; its records at RS LF, as now.
   let mut reader = with("journal dgg.0.2").unwrap();
   assert_eq!(reader.version(), Some(Version { major: 0, minor: 2 }));
   assert_eq!(frame(reader.next().unwrap()), "MSG 1");
   // Within major 0 another minor may have broken anything: refused.
   let v07 = Version { major: 0, minor: 7 };
   assert!(matches!(
-    with("journal dgg.0.7"),
+    with("journal dgg.0.7\u{1e}"),
     Err(ReadError::Version(Variant::Dgg, v)) if v == v07
   ));
   // As is a major without a decoder.
   let v2 = Version { major: 2, minor: 0 };
   assert!(matches!(
-    with("journal dgg.2.0"),
+    with("journal dgg.2.0\u{1e}"),
     Err(ReadError::Version(Variant::Dgg, v)) if v == v2
   ));
-  // Each version's header has one form.
-  for header in ["journal 0.2", "journal dgg.0.1"] {
+  // Each version's header has one form, and one end.
+  for header in [
+    "journal 0.2",
+    "journal dgg.0.1",
+    "journal dgg.0.3",
+    "journal dgg.0.2\u{1e}",
+    "journal 0.1\u{1e}",
+  ] {
     assert!(matches!(with(header), Err(ReadError::Header { .. })));
   }
   assert!(matches!(
@@ -204,7 +215,7 @@ fn records_may_span_lines() {
   let path = &live_files(root.path()).unwrap()[0];
   assert_eq!(
     fs::read_to_string(path).unwrap(),
-    "journal dgg.0.2\n0 a 1 frame MSG 1\nand 2\n\u{1e}\n0 a 1 frame MSG 3\u{1e}\n"
+    "journal dgg.0.3\u{1e}\n0 a 1 frame MSG 1\nand 2\n\u{1e}\n0 a 1 frame MSG 3\u{1e}\n"
   );
   let mut reader = Reader::open(path, 0).unwrap();
   assert_eq!(frame(reader.next().unwrap()), "MSG 1\nand 2\n");
@@ -246,7 +257,7 @@ fn legacy_files_are_read_and_never_appended_to() {
   assert_eq!(names, ["a.2.journal", "a.journal"]);
   assert_eq!(
     fs::read_to_string(&files[0]).unwrap(),
-    "journal dgg.0.2\n0 a 1 frame MSG 1\u{1e}\n"
+    "journal dgg.0.3\u{1e}\n0 a 1 frame MSG 1\u{1e}\n"
   );
   assert_eq!(
     fs::read_to_string(&day).unwrap(),
@@ -258,7 +269,7 @@ fn legacy_files_are_read_and_never_appended_to() {
   drop(writer);
   assert_eq!(live_files(root.path()).unwrap().len(), 2);
   let header = Header::new(Variant::Dgg, v0::VERSION);
-  assert_eq!(header.line(), "journal dgg.0.2");
+  assert_eq!(header.text(), "journal dgg.0.3\u{1e}\n");
   assert_eq!(header.framing(), Framing::RsLf);
 }
 

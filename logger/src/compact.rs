@@ -10,7 +10,7 @@
 //! can't ever be read.
 //!
 //! Each input is split by its own framing, and the archive is written in the
-//! newest version, `journal dgg.0.2`, its records ending at RS LF. Inputs of
+//! newest version, `journal dgg.0.3`, its header and records ending at RS LF. Inputs of
 //! `journal 0.1`, a record per line, are [converted](convert::record): each
 //! record is copied byte for byte, unless it holds an RS; that one is
 //! decoded and encoded again, its text as base64, and either way checked to
@@ -260,7 +260,7 @@ pub fn compact_day(
     kept
   });
   let header = Header::new(Variant::Dgg, v0::VERSION);
-  let mut journal = format!("{}\n", header.line()).into_bytes();
+  let mut journal = header.text().into_bytes();
   for record in &records {
     journal.extend_from_slice(record);
     journal.extend_from_slice(header.framing().end());
