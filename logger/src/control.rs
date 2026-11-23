@@ -4,31 +4,34 @@
 //! up to date:
 //!
 //! ```text
-//! capture-status 0.0
-//! instance <id>
-//! started <unix ms>
-//! heartbeat <unix ms>
-//! healthy-since <unix ms>
-//! build <version>+<commit>
+//! capture-status dgg.0.2<RS><LF>
+//! instance <id><RS><LF>
+//! started <unix ms><RS><LF>
+//! heartbeat <unix ms><RS><LF>
+//! healthy-since <unix ms><RS><LF>
+//! build <version>+<commit><RS><LF>
 //! ```
 //!
-//! The first line is the format name and `<major>.<minor>` version. Each
-//! later line is `<key> <value>`.
+//! The header, versioned like the journal's (see [`Header`]), and each
+//! entry, `<key> <value>`, end at RS LF, as the journal's records do.
+//! `healthy-since` is omitted while the instance isn't healthy; `build`
+//! (the [`BUILD`](crate::BUILD) it runs) by instances from before it was
+//! added. It came without a version bump: readers have always skipped keys
+//! they don't know, and old instances must still read new ones' statuses
+//! to hand off to them.
 //!
-//! `capture-status dgg.0.2` is the same but for its header, versioned like
-//! the journal's (see [`Header`]), and its header and entries ending at RS
-//! LF, as the journal's records do. It's read, but not yet written: an
-//! instance hands off only to one whose status it can read, so instances
-//! that can't read it must be gone before any writes it (see
-//! [`Status::encode_next`]). `dgg.0.1`, its header ending at LF, was never
-//! written, but is read too. `healthy-since` is omitted while the
-//! instance isn't healthy; `build` (the [`BUILD`](crate::BUILD) it runs) by
-//! instances from before it was added. It came without a version bump:
-//! readers have always skipped keys they don't know, and old instances must
-//! still read new ones' statuses to hand off to them.
+//! Versions of dgg's:
+//!
+//! - `0.0`: `capture-status 0.0`, naming no variant, each entry a line.
+//!   Still read: an instance hands off only to one whose status it can
+//!   read, and those running before an upgrade write it.
+//! - `0.1`: named, its header ending at LF, entries at RS LF. Never
+//!   written.
+//! - `0.2`: the header ends at RS LF too. Read by builds from before it
+//!   was written, so that they could hand off to the builds writing it.
 //!
 //! While the major is 0 (pre-release) any minor may break, so readers accept
-//! only the exact header they write. From 1.0 on, readers will ignore keys
+//! only the versions they know. From 1.0 on, readers will ignore keys
 //! they don't recognise, so a minor bump may add keys; anything else will be
 //! a major bump.
 //!
@@ -50,9 +53,6 @@ use {
   },
 };
 
-/// The header line this crate writes, and reads with [`NEXT`]'s.
-pub const HEADER: &str = "capture-status 0.0";
-
 /// Its format.
 pub const FORMAT: Format = Format {
   magic: "capture-status",
@@ -60,8 +60,8 @@ pub const FORMAT: Format = Format {
   rs_header: &[(Variant::Dgg, Version { major: 0, minor: 2 })],
 };
 
-/// The version read, and to be written once every instance reads it.
-pub const NEXT: Version = Version { major: 0, minor: 2 };
+/// The version this crate writes.
+pub const VERSION: Version = Version { major: 0, minor: 2 };
 
 /// File extension of status files.
 pub const EXTENSION: &str = "status";
@@ -81,21 +81,10 @@ pub struct Status {
 }
 
 impl Status {
-  /// The file contents, in `capture-status 0.0`.
+  /// The file contents.
   pub fn encode(&self) -> String {
-    self.encode_with(&format!("{HEADER}\n"), "\n")
-  }
-
-  /// The file contents, in `capture-status dgg.0.2`, for once every
-  /// instance reads it.
-  pub fn encode_next(&self) -> String {
-    let header = Header::new(Variant::Dgg, NEXT).text_as(FORMAT);
-    self.encode_with(&header, "\u{1e}\n")
-  }
-
-  /// The contents with `header`, its end included, each entry ending at
-  /// `end`.
-  fn encode_with(&self, header: &str, end: &str) -> String {
+    let header = Header::new(Variant::Dgg, VERSION).text_as(FORMAT);
+    let end = "\u{1e}\n";
     let mut text = format!(
       "{header}instance {}{end}started {}{end}heartbeat {}{end}",
       self.instance, self.started, self.heartbeat

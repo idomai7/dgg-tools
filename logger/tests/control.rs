@@ -19,19 +19,16 @@ fn format() {
   let text = healthy.encode();
   assert_eq!(
     text,
-    "capture-status 0.0\ninstance a\nstarted 5\nheartbeat 1000\n\
-     healthy-since 7\n"
+    "capture-status dgg.0.2\u{1e}\ninstance a\u{1e}\nstarted 5\u{1e}\n\
+     heartbeat 1000\u{1e}\nhealthy-since 7\u{1e}\n"
   );
-  assert_eq!(Status::decode(&text), Some(healthy));
+  assert_eq!(Status::decode(&text), Some(healthy.clone()));
   let unhealthy = status("a", 5, None);
   assert_eq!(Status::decode(&unhealthy.encode()), Some(unhealthy));
-  let built = Status {
-    build: Some("0.1.0+93b72b343555".into()),
-    ..status("a", 5, Some(7))
-  };
-  let text = built.encode();
-  assert!(text.ends_with("healthy-since 7\nbuild 0.1.0+93b72b343555\n"));
-  assert_eq!(Status::decode(&text), Some(built));
+  // As builds from before 0.2 write it, during an upgrade's handoff.
+  let old = "capture-status 0.0\ninstance a\nstarted 5\nheartbeat 1000\n\
+             healthy-since 7\n";
+  assert_eq!(Status::decode(old), Some(healthy));
 }
 
 #[test]
@@ -124,12 +121,12 @@ fn remove_waits_out_a_reader_that_blocks_deletion() {
 }
 
 #[test]
-fn reads_the_next_version_too() {
+fn records_end_at_rs_lf() {
   let built = Status {
     build: Some("0.1.0+93b72b343555".into()),
     ..status("a", 5, Some(7))
   };
-  let text = built.encode_next();
+  let text = built.encode();
   assert_eq!(
     text,
     "capture-status dgg.0.2\u{1e}\ninstance a\u{1e}\nstarted 5\u{1e}\n\
