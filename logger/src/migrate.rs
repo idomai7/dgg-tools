@@ -33,6 +33,10 @@
 //! index's commit and the rename gives the SHA-256 the index was upgraded
 //! for. Leftover new files are removed first.
 //!
+//! Each journal root's `control/synced-archives` (see
+//! [`taken`](crate::taken)) from before headers is rewritten too, once what
+//! the new one lists has been checked to be what the old one did.
+//!
 //! It holds `index.lock`, `compact.lock` and `sync.lock` in the data
 //! directory while it runs, waiting for them as a supervisor does, so
 //! nothing indexes, compacts or syncs meanwhile. A dry run converts and
@@ -43,6 +47,7 @@ use {
   crate::{
     compact::DEFAULT_LEVEL,
     index::{SCHEMA_VERSION, schema_version, user_version},
+    taken,
   },
   ::common::{atomic_file, fs::MissingOk},
   ::logger_journal::{
@@ -77,6 +82,8 @@ pub struct Report {
   pub converted: u64,
   /// Manifests written.
   pub manifests: u64,
+  /// `synced-archives` files rewritten.
+  pub taken: u64,
   /// Months left as they were, with why.
   pub failed: Vec<String>,
   /// The index's schema before, if there's one with a known schema.
@@ -113,6 +120,18 @@ pub fn migrate(
     (journal.clone(), ""),
     (backfill_root(&journal), "backfill/"),
   ] {
+    let name = format!("{prefix}{}", taken::PATH);
+    match migrate_taken(&root, dry_run) {
+      Ok(false) => {}
+      Ok(true) => {
+        report.taken += 1;
+        say(&format!("{name}: rewritten"));
+      }
+      Err(why) => {
+        say(&format!("{name}: left as it was: {why}"));
+        report.failed.push(format!("{name}: {why}"));
+      }
+    }
     for month in months(&root)? {
       let at = Month {
         root: &root,
@@ -161,6 +180,35 @@ pub fn migrate(
     ));
   }
   Ok(report)
+}
+
+/// Rewrites journal `root`'s `synced-archives` from before headers, if it
+/// is, once the new contents are checked to list the same; whether it was
+/// (or with a dry run, would be).
+fn migrate_taken(root: &Path, dry_run: bool) -> Result<bool, String> {
+  let path = root.join(taken::PATH);
+  let Some(text) = fs::read_to_string(&path)
+    .missing_ok()
+    .map_err(|e| e.to_string())?
+  else {
+    return Ok(false);
+  };
+  let (version, listed) = taken::decode(&text).ok_or("not readable")?;
+  if version != taken::LEGACY {
+    return Ok(false);
+  }
+  // Every line an entry, so none is dropped unnoticed.
+  if listed.len() != text.lines().count() {
+    return Err("a line that isn't `<day> <sha-256>`".into());
+  }
+  let new = taken::encode(&listed);
+  if taken::decode(&new) != Some((taken::VERSION, listed)) {
+    return Err("would read differently rewritten".into());
+  }
+  if !dry_run {
+    atomic_file::replace(&path, new).map_err(|e| e.to_string())?;
+  }
+  Ok(true)
 }
 
 /// Waits for each of [`LOCKS`] in `data`, and holds them.

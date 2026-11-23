@@ -127,6 +127,18 @@ fn before(dir: &TempDir) -> PathBuf {
     "2026-11-07",
     &legacy(&["60 backfill-x 1 fetchrange linkers 0 60".into()]),
   );
+  // A peer's archive taken, listed as before headers.
+  let taken = journal.join("control/synced-archives");
+  fs::create_dir_all(taken.parent().unwrap()).unwrap();
+  fs::write(
+    &taken,
+    format!(
+      "2026-10-30 {}
+",
+      "ab".repeat(32)
+    ),
+  )
+  .unwrap();
   let mut db = open(&data.join("index.sqlite")).unwrap();
   index(&mut db, &journal).unwrap();
   db.pragma_update(None, "user_version", user_version(FROM_SCHEMA))
@@ -153,6 +165,7 @@ fn converts_archives_and_upgrades_the_index() {
     Report {
       converted: 3,
       manifests: 3,
+      taken: 1,
       failed: vec![],
       index: Some(FROM_SCHEMA),
     }
@@ -187,6 +200,16 @@ fn converts_archives_and_upgrades_the_index() {
     assert_eq!(entry.compressed, compressed.len() as u64);
     assert_eq!(entry.bytes, archived(&root, day).len() as u64);
   }
+
+  assert_eq!(
+    fs::read_to_string(journal.join("control/synced-archives")).unwrap(),
+    format!(
+      "synced-archives dgg.0.1
+2026-10-30 {}{RS}
+",
+      "ab".repeat(32)
+    )
+  );
 
   // The index is at 0.5, its offsets into the new files.
   let db = Connection::open(data.join("index.sqlite")).unwrap();
@@ -223,7 +246,7 @@ fn converts_archives_and_upgrades_the_index() {
   // Once done, there's nothing to do.
   let files = snapshot(&data);
   let again = run(&data, false);
-  assert_eq!((again.converted, again.manifests), (0, 0));
+  assert_eq!((again.converted, again.manifests, again.taken), (0, 0, 0));
   assert_eq!(again.index, Some(SCHEMA_VERSION));
   let mut after = snapshot(&data);
   // Only SQLite's own files may have changed.
@@ -271,7 +294,10 @@ fn a_dry_run_changes_nothing() {
   };
   let was = files();
   let report = run(&data, true);
-  assert_eq!((report.converted, report.failed.len()), (3, 0));
+  assert_eq!(
+    (report.converted, report.taken, report.failed.len()),
+    (3, 1, 0)
+  );
   assert_eq!(files(), was);
 }
 

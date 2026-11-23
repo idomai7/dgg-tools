@@ -33,13 +33,14 @@ impl Migrate {
     };
     let would = if self.dry_run { "would be " } else { "" };
     eprintln!(
-      "{} archives {would}converted, {} manifests {would}written",
-      report.converted, report.manifests
+      "{} archives {would}converted, {} manifests {would}written, \
+       {} synced-archives {would}rewritten",
+      report.converted, report.manifests, report.taken
     );
     if report.failed.is_empty() {
       ExitCode::SUCCESS
     } else {
-      eprintln!("{} months left as they were", report.failed.len());
+      eprintln!("{} left as they were", report.failed.len());
       ExitCode::FAILURE
     }
   }

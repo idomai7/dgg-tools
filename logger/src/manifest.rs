@@ -2,31 +2,32 @@
 //!
 //! ```text
 //! journal-manifest dgg.0.1
-//! live/<YYYY-MM-DD>/<instance>.journal <size in bytes>
-//! backfill/live/<YYYY-MM-DD>/<instance>.journal <size in bytes>
-//! archive/<YYYY>/<MM>/<YYYY-MM-DD>.journal.zst <size in bytes> <sha-256>
-//! backfill/archive/<YYYY>/<MM>/<YYYY-MM-DD>.journal.zst <size> <sha-256>
+//! live/<YYYY-MM-DD>/<instance>.journal <size in bytes><RS><LF>
+//! backfill/live/<YYYY-MM-DD>/<instance>.journal <size in bytes><RS><LF>
+//! archive/<YYYY>/<MM>/<YYYY-MM-DD>.journal.zst <size> <sha-256><RS><LF>
+//! backfill/archive/<YYYY>/<MM>/<YYYY-MM-DD>.journal.zst <size> <sha-256><RS><LF>
 //! ```
 //!
-//! One line per file after the header, versioned like the journal's (see
+//! One entry per file after the header, ending at RS LF as the journal's
+//! records do, versioned like the journal's (see
 //! [`Header`]): the variant of the journal root it lists, and its version,
 //! optionally followed by informational fields. Then the live files, then
 //! the backfill journal's, then the archives of both,
 //! as their monthly manifests describe them. Paths are relative to the
 //! journal root, `/`-separated, and checked with [`valid_live_path`] and
-//! [`archive_path`]. (Older readers skip the lines with paths they don't
+//! [`archive_path`]. (Older readers skip the entries with paths they don't
 //! accept.)
 //!
 //! While the major is 0 (pre-release) any minor may break, so readers accept
 //! only the exact variant and version they write. From 1.0 on, readers will
-//! ignore lines they don't recognise, so a minor bump may add kinds of
+//! ignore entries they don't recognise, so a minor bump may add kinds of
 //! entry; anything else will be a major bump.
 //!
 //! Versions of dgg's:
 //!
 //! - `0.0`: `journal-manifest 0.0`, naming no variant.
-//! - `0.1`: names the variant. A live file may be numbered,
-//!   `<instance>.<n>.journal`, as its instance's id allows.
+//! - `0.1`: names the variant; entries end at RS LF, not LF. A live file may
+//!   be numbered, `<instance>.<n>.journal`, as its instance's id allows.
 
 use {
   ::logger_journal::{
@@ -148,20 +149,25 @@ pub fn encode(files: &[File]) -> String {
     if let Some(sha256) = &file.sha256 {
       text += &format!(" {sha256}");
     }
-    text.push('\n');
+    text += "\u{1e}\n";
   }
   text
 }
 
 /// Parses a manifest, or `None` if it isn't one this crate can read.
 pub fn decode(text: &str) -> Option<Vec<File>> {
-  let mut lines = text.strip_suffix('\n')?.split('\n');
-  let header = Header::parse_as(FORMAT, lines.next()?.as_bytes())?;
+  let (first, body) = text.split_once('\n')?;
+  let header = Header::parse_as(FORMAT, first.as_bytes())?;
   if header.variant != Variant::Dgg || header.version != VERSION {
     return None;
   }
+  let (entries, tail) = header.framing_as(FORMAT).split(body.as_bytes());
+  if !tail.is_empty() {
+    return None;
+  }
   let mut files = Vec::new();
-  for line in lines {
+  for entry in entries {
+    let line = ::std::str::from_utf8(entry).ok()?;
     let fields: Vec<_> = line.split(' ').collect();
     let (path, size, sha256) = match fields[..] {
       [path, size] if valid_live_path(path) => (path, size, None),

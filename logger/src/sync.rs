@@ -16,7 +16,7 @@
 //! hosts hold the same bytes. Otherwise it's decompressed into a live file,
 //! `live/<day>/archive-<sha-256 prefix>.journal`, which the next compaction
 //! merges with the rest of the day. Either way it's recorded in
-//! [`TAKEN`], and not taken again.
+//! [`TAKEN`] (see [`taken`](crate::taken)), and not taken again.
 //!
 //! The peer is trusted for what the journal says, but not for how much:
 //! a manifest over [`MAX_MANIFEST`], or a file over [`MAX_FILE`] (listed,
@@ -44,9 +44,9 @@ use {
 };
 
 /// The file, under each journal root (the journal's and the backfill
-/// journal's), listing the archives taken from peers: `<day> <sha-256>`
-/// lines.
-pub const TAKEN: &str = "control/synced-archives";
+/// journal's), listing the archives taken from peers (see
+/// [`taken`](crate::taken)).
+pub const TAKEN: &str = crate::taken::PATH;
 
 /// The largest manifest taken from a peer. A year of files lists in well
 /// under 1 MB.
@@ -267,20 +267,6 @@ fn invalid(why: &str) -> io::Error {
   io::Error::new(io::ErrorKind::InvalidData, why)
 }
 
-/// The archives listed in `root`'s [`TAKEN`], as `(day, sha-256)`.
-fn taken(root: &Path) -> io::Result<Vec<(String, String)>> {
-  let Some(text) = fs::read_to_string(root.join(TAKEN)).missing_ok()? else {
-    return Ok(Vec::new());
-  };
-  Ok(
-    text
-      .lines()
-      .filter_map(|line| line.split_once(' '))
-      .map(|(day, sha256)| (day.into(), sha256.into()))
-      .collect(),
-  )
-}
-
 /// Whether the archive of `day` with `sha256` is new to journal `root`: it
 /// isn't the archive here, and wasn't taken before.
 fn wanted(root: &Path, day: &str, sha256: &str) -> io::Result<bool> {
@@ -291,7 +277,7 @@ fn wanted(root: &Path, day: &str, sha256: &str) -> io::Result<bool> {
   {
     return Ok(false);
   }
-  let taken = taken(root)?;
+  let taken = crate::taken::read(root)?;
   Ok(!taken.iter().any(|(d, s)| d == day && s == sha256))
 }
 
@@ -413,11 +399,7 @@ fn take(
       unpack(download, Some(file), MAX_FILE).map(|_| ())
     })?;
   }
-  let path = root.join(TAKEN);
-  fs::create_dir_all(path.parent().unwrap())?;
-  let mut file = OpenOptions::new().create(true).append(true).open(path)?;
-  file.write_all(format!("{day} {sha256}\n").as_bytes())?;
-  file.sync_data()?;
+  crate::taken::add(root, day, sha256)?;
   Ok(installed)
 }
 

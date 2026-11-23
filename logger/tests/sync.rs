@@ -84,19 +84,20 @@ fn manifest_format() {
   assert_eq!(
     text,
     format!(
-      "journal-manifest dgg.0.1\nlive/2026-11-08/a-1.journal 42\n\
-       archive/2026/11/2026-11-07.journal.zst 9 {sha}\n"
+      "journal-manifest dgg.0.1\nlive/2026-11-08/a-1.journal 42\u{1e}\n\
+       archive/2026/11/2026-11-07.journal.zst 9 {sha}\u{1e}\n"
     )
   );
   assert_eq!(manifest::decode(&text), Some(files.clone()));
   // An entry kind this version doesn't know is skipped.
   let body = text.strip_prefix("journal-manifest dgg.0.1\n").unwrap();
-  let extra =
-    format!("journal-manifest dgg.0.1 ; note=x\narchive/2026/11 9\n{body}");
+  let extra = format!(
+    "journal-manifest dgg.0.1 ; note=x\narchive/2026/11 9\u{1e}\n{body}"
+  );
   assert_eq!(manifest::decode(&extra), Some(files));
   // An archive needs a whole SHA-256.
-  let short =
-    "journal-manifest dgg.0.1\narchive/2026/11/2026-11-07.journal.zst 9 ab\n";
+  let short = "journal-manifest dgg.0.1\n\
+               archive/2026/11/2026-11-07.journal.zst 9 ab\u{1e}\n";
   assert_eq!(manifest::decode(short), None);
   for bad in [
     // Within major 0, only the exact variant and version are read.
@@ -104,7 +105,9 @@ fn manifest_format() {
     "journal-manifest dgg.0.2\nlive/2026-11-08/a-1.journal 42\n",
     "journal-manifest dgg.1.0\nlive/2026-11-08/a-1.journal 42\n",
     "journal-manifest kick.0.1\n",
-    "journal-manifest dgg.0.1\nlive/2026-11-08/a-1.journal x\n",
+    "journal-manifest dgg.0.1\nlive/2026-11-08/a-1.journal x\u{1e}\n",
+    // An entry without its end.
+    "journal-manifest dgg.0.1\nlive/2026-11-08/a-1.journal 42\n",
     "journal-manifest dgg.0.1",
   ] {
     assert_eq!(manifest::decode(bad), None, "{bad:?}");
@@ -336,7 +339,8 @@ async fn takes_archives_without_overwriting() {
     2
   );
   let taken = fs::read_to_string(local.path().join(TAKEN)).unwrap();
-  assert_eq!(taken.lines().count(), 2);
+  assert!(taken.starts_with("synced-archives dgg.0.1\n"), "{taken}");
+  assert_eq!(::logger::taken::read(local.path()).unwrap().len(), 2);
   let stats = sync(&peer, local.path()).await.unwrap();
   assert_eq!((stats.installed, stats.merging, stats.bytes), (0, 0, 0));
 }
@@ -469,7 +473,11 @@ async fn takes_no_more_than_the_manifest_says() {
     sync(&peer, local.path()).await
   };
   let manifest = |text: String| {
-    let text = format!("journal-manifest dgg.0.1\n{text}");
+    // Each entry ends at RS LF.
+    let text = format!(
+      "journal-manifest dgg.0.1\n{}",
+      text.replace('\n', "\u{1e}\n")
+    );
     ::axum::Router::new().route("/manifest", get(move || async { text }))
   };
 
