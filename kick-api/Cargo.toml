@@ -33,6 +33,8 @@ official = [
   "dep:sha2",
   "dep:tokio",
 ]
+# web.kick.com's unofficial API, web::Web: a channel's chat history.
+web = ["protocol", "dep:reqwest"]
 
 [dependencies]
 common.workspace = true
@@ -77,6 +79,10 @@ required-features = ["official"]
 [[test]]
 name = "oauth"
 required-features = ["official"]
+
+[[test]]
+name = "web"
+required-features = ["web"]
 
 [[example]]
 name = "probe"

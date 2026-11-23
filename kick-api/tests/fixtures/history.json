@@ -1,0 +1,57 @@
+{
+  "data": {
+    "messages": [
+      {
+        "id": "0b6e3c52-1f0d-4a8e-9c1e-2f4b8f0a1c01",
+        "chat_id": 1000,
+        "user_id": 42,
+        "content": "hello [emote:1:wave]",
+        "type": "message",
+        "metadata": "{\"message_ref\":\"1795462741000\"}",
+        "sender": {
+          "id": 42,
+          "slug": "someone",
+          "username": "Someone",
+          "identity": {
+            "color": "#00FF00",
+            "badges": [
+              {"type": "subscriber", "text": "Subscriber", "count": 3}
+            ],
+            "badges_v2": [
+              {
+                "name": "Subscriber",
+                "badge_type": "custom",
+                "image_url": "https://example.com/badge.png",
+                "selected": true,
+                "metadata": {"level": 3},
+                "sort_order": 1
+              }
+            ]
+          }
+        },
+        "created_at": "2026-11-23T19:39:02Z",
+        "thread_parent_id": null
+      },
+      {
+        "id": "0b6e3c52-1f0d-4a8e-9c1e-2f4b8f0a1c02",
+        "chat_id": 1000,
+        "user_id": 43,
+        "content": "a reply",
+        "type": "reply",
+        "metadata": "{\"original_sender\":{\"id\":42}}",
+        "sender": {
+          "id": 43,
+          "slug": "another",
+          "username": "another",
+          "identity": {"color": "#FF0000", "badges": []}
+        },
+        "created_at": "2026-11-23T19:39:01Z",
+        "thread_parent_id": null,
+        "something_new": 1
+      }
+    ],
+    "cursor": "1795462741000000",
+    "pinned_message": null
+  },
+  "message": "OK"
+}
