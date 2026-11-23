@@ -388,8 +388,10 @@ undocumented endpoints anonymously: no token, no login, no app. Planned
     channels. A list's changes take effect at the supervisor's next start.
   - When dgg's capture hands off, `kick-capture` gets 90 s to hand off too
     before it's stopped.
-  - Open: `install` bridges only dgg's capture, so an upgrade leaves Kick a
-    gap of a few seconds that nothing fills.
+  - `install` bridges Kick's capture as it does dgg's, with
+    `kick-capture --bridge`, and waits for the old one to hand off to it.
+    A Kick bridge that isn't healthy in time is only warned of: dgg's
+    capture comes first. `kick-channels` moves with the root.
 - **Cross-host handoff:** done. Tested live: the old instance retired about 38 s
   after the new one started.
 - **`serve` / `sync`:** done. The supervisor's side is in [deploy](deploy.md).
