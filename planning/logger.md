@@ -55,11 +55,22 @@ the [overall rules](README.md), and [deploy](deploy.md) for the mesh it runs on.
     `journal 0.1`. `logger-journal` reads that alongside `kick.0.0`.
   - **dgg moves to RS LF (planned):** dgg's journals move to Kick's framing,
     with records ending at RS LF, as a new version of dgg's variant
-    (`dgg.0.<minor>`). Existing `journal 0.1` files stay readable. Still to
-    decide:
-    - Whether compaction rewrites old days in the new format.
-    - What has to follow the framing rather than split on LF: compaction,
-      sync's checks, the index, and deploy's status page.
+    (`dgg.0.<minor>`).
+    - **Migration:** existing `journal 0.1` journals are rewritten in the new
+      format by a migration.
+      1. It writes each file's new version alongside the old.
+      2. It validates: every record of the new file is parsed and compared
+         with the old file's, parsed by its own parser. Each must be
+         byte-for-byte identical: same records, same order, same fields and
+         data. A file that fails is reported, and nothing of it is removed.
+      3. Only once the validation has passed are the old files removed.
+    - Still to decide:
+      - Which journals it covers: live, archived (`.zst`, with their
+        manifests' digests) and backfill.
+      - What changes with it: index offsets point into the old files, so the
+        index is rebuilt, and sync's peers must agree on the new archives.
+      - What has to follow the framing rather than split on LF: compaction,
+        sync's checks, the index, and deploy's status page.
 
 ## Design
 - **Journal layout:**
