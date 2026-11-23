@@ -17,8 +17,9 @@ decisions live in its own document here:
 
 ## Layout
 The layout is flat: each crate is a direct child of the root.
-- `common/`: small tools any crate may share, one module each, such as
-  `atomic_file`, replacing a file whole. It depends on little beyond `std`.
+- `common/`: small tools any crate may share, one module each: `atomic_file`,
+  `format`, `random` and `time`. It depends on little beyond `std`: getrandom,
+  base64 and fastrand, for `random`.
 - `dgg-api/`: destiny.gg's APIs, kept lightweight for any tool to depend on: the
   chat socket client and event types, and more of dgg's endpoints to come.
 - `kick-api/`: Kick's APIs, kept lightweight for any tool to depend on. So far,
@@ -51,9 +52,10 @@ The layout is flat: each crate is a direct child of the root.
   - Test fixtures made from real data are anonymised before they're committed:
     users' names and ids, channels, and any other ids or uuids that trace back
     to a real account or session.
-- **Shared tools:** a tool more than one crate needs goes in a module of
-  `common`, rather than a crate of its own, so the workspace doesn't fill up
-  with tiny crates. Its modules depend on little beyond `std`.
+- **Shared tools:** a general-purpose tool goes in a module of `common`, even
+  before a second crate needs it, rather than in a crate of its own, so the
+  workspace doesn't fill up with tiny crates. Its modules depend on little
+  beyond `std`, and only on small, canonical crates.
 - **Deployment:** must stay portable across Windows and Linux.
   - Auditable, with nothing beyond the hosting itself: no VPN service, DNS
     provider or alerting service.
