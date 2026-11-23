@@ -179,10 +179,16 @@ impl Header {
     self.version.readable_in(self.variant)
   }
 
-  /// How the file's records end: at LF for dgg's up to 0.1, at RS LF
-  /// otherwise.
+  /// How the journal file's records end: at LF for dgg's up to 0.1, at RS
+  /// LF otherwise.
   pub fn framing(&self) -> Framing {
-    if JOURNAL.unnamed(self.variant, self.version) {
+    self.framing_as(JOURNAL)
+  }
+
+  /// How a file in `format` ends its entries after this header: at LF for
+  /// a version from before variants, at RS LF otherwise.
+  pub fn framing_as(&self, format: Format) -> Framing {
+    if format.unnamed(self.variant, self.version) {
       Framing::Lf
     } else {
       Framing::RsLf

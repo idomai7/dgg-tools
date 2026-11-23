@@ -8,9 +8,11 @@
 //!
 //! ```text
 //! journal-archive dgg.0.1
-//! <YYYY-MM-DD> <compressed bytes> <bytes> <records> <sha-256 of the archive>
+//! <YYYY-MM-DD> <compressed bytes> <bytes> <records> <sha-256><RS><LF>
 //! ```
 //!
+//! After the header, ending at LF, each entry ends at RS LF, as the
+//! journal's records do.
 //! `bytes` and `records` are of the decompressed journal, `records` counted
 //! by its framing, after its header; the SHA-256 is of the compressed file,
 //! lowercase hex.
@@ -28,7 +30,8 @@
 //! - `0.0`: `journal-archive 0.0`, naming no variant, its third count called
 //!   `lines`: an archive's records were its lines then. Still read, and
 //!   written again as 0.1 when its month's manifest is next recorded.
-//! - `0.1`: names the variant; counts records.
+//! - `0.1`: names the variant; counts records; entries end at RS LF, not
+//!   LF.
 
 use {
   crate::{
@@ -108,7 +111,7 @@ pub fn encode(variant: Variant, archives: &[Archive]) -> String {
   let mut text = format!("{header}\n");
   for archive in archives {
     text += &format!(
-      "{} {} {} {} {}\n",
+      "{} {} {} {} {}\u{1e}\n",
       archive.day,
       archive.compressed,
       archive.bytes,
@@ -122,13 +125,18 @@ pub fn encode(variant: Variant, archives: &[Archive]) -> String {
 /// Parses a manifest: its variant and archives, or `None` if it isn't one
 /// this crate can read.
 pub fn decode(text: &str) -> Option<(Variant, Vec<Archive>)> {
-  let mut lines = text.strip_suffix('\n')?.split('\n');
-  let header = Header::parse_as(FORMAT, lines.next()?.as_bytes())?;
+  let (first, body) = text.split_once('\n')?;
+  let header = Header::parse_as(FORMAT, first.as_bytes())?;
   if !readable(header.variant, header.version) {
     return None;
   }
+  let (entries, tail) = header.framing_as(FORMAT).split(body.as_bytes());
+  if !tail.is_empty() {
+    return None;
+  }
   let mut archives = Vec::new();
-  for line in lines {
+  for entry in entries {
+    let line = ::std::str::from_utf8(entry).ok()?;
     let fields: Vec<_> = line.split(' ').collect();
     let [day, compressed, bytes, count, sha256] = fields[..] else {
       continue;

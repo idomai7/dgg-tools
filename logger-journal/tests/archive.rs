@@ -37,7 +37,9 @@ fn manifest_format() {
   let entries = [entry("2026-11-09", 2), entry("2026-11-08", 1)];
   let text = archive::encode(Variant::Dgg, &entries);
   let sha = "ab".repeat(32);
-  let rows = format!("2026-11-08 10 20 1 {sha}\n2026-11-09 10 20 2 {sha}\n");
+  // Entries end at RS LF.
+  let rows =
+    format!("2026-11-08 10 20 1 {sha}\u{1e}\n2026-11-09 10 20 2 {sha}\u{1e}\n");
   assert_eq!(text, format!("journal-archive dgg.0.1\n{rows}"));
   let sorted = vec![entry("2026-11-08", 1), entry("2026-11-09", 2)];
   let decoded = archive::decode(&text).unwrap();
@@ -48,14 +50,16 @@ fn manifest_format() {
   // An entry this version doesn't know is skipped, as are informational
   // fields.
   let extra = format!(
-    "journal-archive dgg.0.1 ; note=x\nsomething new\n2026-11-08 10 20 1 {sha}\n"
+    "journal-archive dgg.0.1 ; note=x\nsomething new\u{1e}\n\
+     2026-11-08 10 20 1 {sha}\u{1e}\n"
   );
   let first = vec![entry("2026-11-08", 1)];
   assert_eq!(
     archive::decode(&extra).unwrap(),
     (Variant::Dgg, first.clone())
   );
-  // The version before variants, counting lines, which were records then.
+  // The version before variants, counting lines, which were records then,
+  // each entry a line.
   let legacy = format!("journal-archive 0.0\n2026-11-08 10 20 1 {sha}\n");
   assert_eq!(archive::decode(&legacy).unwrap(), (Variant::Dgg, first));
   for bad in [
@@ -66,8 +70,10 @@ fn manifest_format() {
     // Each version's header has one form.
     "journal-archive 0.1\n".to_owned(),
     "journal-archive dgg.0.0\n".to_owned(),
-    format!("journal-archive dgg.0.1\n2026-11-08 10 x 1 {sha}\n"),
-    "journal-archive dgg.0.1\n2026-11-08 10 20 1 ABCD\n".to_owned(),
+    format!("journal-archive dgg.0.1\n2026-11-08 10 x 1 {sha}\u{1e}\n"),
+    "journal-archive dgg.0.1\n2026-11-08 10 20 1 ABCD\u{1e}\n".to_owned(),
+    // An entry without its end.
+    format!("journal-archive dgg.0.1\n2026-11-08 10 20 1 {sha}\n"),
   ] {
     assert_eq!(archive::decode(&bad), None, "{bad:?}");
   }
