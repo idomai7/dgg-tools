@@ -8,8 +8,8 @@ description = "A chat client and moderation tools for Kick channels"
 common.workspace = true
 logger-journal.workspace = true
 kick-api = { workspace = true, features = [
-  "channel",
   "client",
+  "lookup",
   "official",
   "protocol",
   "web",

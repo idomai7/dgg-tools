@@ -21,7 +21,7 @@ use {
     process::ExitCode,
     sync::Arc,
   },
-  ::tokio::{net::TcpListener, process::Command as Process},
+  ::tokio::{net::TcpListener, task},
 };
 
 /// Names kick-mod, by its codename, to Kick's unofficial API, as it asks.
@@ -153,7 +153,11 @@ async fn ids(
   let mut api = None;
   let mut failed = false;
   for slug in slugs.iter().map(|slug| slug.trim()) {
-    let (broadcaster, ids) = match look_up(slug).await {
+    let owned = slug.to_owned();
+    let looked_up = task::spawn_blocking(move || channel::look_up(&owned))
+      .await
+      .map_err(|e| e.to_string())?;
+    let (broadcaster, ids) = match looked_up {
       Ok(channel) => (channel.user_id, Some((channel.id, channel.chatroom.id))),
       Err(e) => {
         eprintln!("{slug}: the lookup failed: {e}");
@@ -192,22 +196,6 @@ async fn ids(
   } else {
     Ok(())
   }
-}
-
-/// Asks the unofficial lookup for `slug` with curl.
-async fn look_up(slug: &str) -> Result<channel::Channel, String> {
-  let output = Process::new("curl")
-    .args(["-sS", "-m", "20", "-H", "Accept: application/json"])
-    .arg(channel::url(slug))
-    .output()
-    .await
-    .map_err(|e| format!("running curl: {e}"))?;
-  if !output.status.success() {
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    return Err(format!("curl: {}", stderr.trim()));
-  }
-  let body = String::from_utf8_lossy(&output.stdout);
-  channel::parse(&body).map_err(|e| format!("{e}: {}", body.trim()))
 }
 
 /// The broadcaster's id for `slug`, from the official API.
