@@ -1,7 +1,8 @@
 # logger
 
-The logger: `logger-journal` and `logger`, run as `dgg-logger` subcommands. See
-the [overall rules](README.md), and [deploy](deploy.md) for the mesh it runs on.
+The logger, codenamed Ledgerline: `logger-journal` and `logger`, run as
+`dgg-logger` subcommands. See the [overall rules](README.md), and
+[deploy](deploy.md) for the mesh it runs on.
 
 ## Decisions
 - **Storage:** an append-only raw journal is the source of truth. SQLite
