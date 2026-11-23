@@ -142,8 +142,8 @@ async fn ids(
   let mut api = None;
   let mut failed = false;
   for slug in slugs.iter().map(|slug| slug.trim()) {
-    let (broadcaster, chatroom) = match look_up(slug).await {
-      Ok(channel) => (channel.user_id, Some(channel.chatroom.id)),
+    let (broadcaster, ids) = match look_up(slug).await {
+      Ok(channel) => (channel.user_id, Some((channel.id, channel.chatroom.id))),
       Err(e) => {
         eprintln!("{slug}: the lookup failed: {e}");
         if api.is_none() {
@@ -161,17 +161,19 @@ async fn ids(
       }
     };
     let recorded = channels::update(path, |channels: &mut Channels| {
-      channels::record(channels, slug, broadcaster, chatroom)
+      let (channel, chatroom) = ids.unzip();
+      channels::record(channels, slug, broadcaster, channel, chatroom)
     })?;
     let channel = &recorded[slug];
-    match channel.chatroom_id {
-      Some(chatroom) => {
-        println!("{slug}: broadcaster={broadcaster} chatroom={chatroom}")
-      }
-      None => println!(
-        "{slug}: broadcaster={broadcaster} chatroom unknown: enter it in {}",
-        path.display()
-      ),
+    let id = |id: Option<u64>| id.map_or("unknown".into(), |id| id.to_string());
+    let (channel_id, chatroom) =
+      (id(channel.channel_id), id(channel.chatroom_id));
+    println!(
+      "{slug}: broadcaster={broadcaster} channel={channel_id} \
+       chatroom={chatroom}"
+    );
+    if channel.channel_id.is_none() || channel.chatroom_id.is_none() {
+      println!("{slug}: enter the unknown ids in {}", path.display());
     }
   }
   if failed {

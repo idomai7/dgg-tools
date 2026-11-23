@@ -209,7 +209,11 @@ async fn lists_the_channels_as_they_are_now() {
   assert_eq!(status, 200);
   assert_eq!(
     ::serde_json::from_str::<::serde_json::Value>(&body).unwrap(),
-    ::serde_json::json!({"one": {"broadcaster_user_id": 1, "chatroom_id": null}})
+    ::serde_json::json!({"one": {
+      "broadcaster_user_id": 1,
+      "channel_id": null,
+      "chatroom_id": null,
+    }})
   );
   fs::write(server.channels(), "{ not json").unwrap();
   assert_eq!(server.get("/api/channels", &[]).await.0, 500);

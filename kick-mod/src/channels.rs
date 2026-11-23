@@ -3,7 +3,11 @@
 //!
 //! ```json
 //! {
-//!   "<slug>": { "broadcaster_user_id": 456, "chatroom_id": 123 }
+//!   "<slug>": {
+//!     "broadcaster_user_id": 456,
+//!     "channel_id": 789,
+//!     "chatroom_id": 123
+//!   }
 //! }
 //! ```
 //!
@@ -28,6 +32,10 @@ pub type Channels = BTreeMap<String, Channel>;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Channel {
   pub broadcaster_user_id: u64,
+  /// The channel's own id, which Kick's chat history is asked by: `null`
+  /// until it's known, and missing from files written before it was kept.
+  #[serde(default)]
+  pub channel_id: Option<u64>,
   /// `null` until it's known: entered by hand when the lookup fails.
   pub chatroom_id: Option<u64>,
   /// Fields kick-mod doesn't know, kept as they were.
@@ -60,20 +68,26 @@ pub fn update(
   Ok(channels)
 }
 
-/// Records what a lookup found of `slug`. A chatroom id that wasn't found
-/// leaves the one there, perhaps entered by hand; other fields are kept.
+/// Records what a lookup found of `slug`. A channel or chatroom id that
+/// wasn't found leaves the one there, perhaps entered by hand; other fields
+/// are kept.
 pub fn record(
   channels: &mut Channels,
   slug: &str,
   broadcaster_user_id: u64,
+  channel_id: Option<u64>,
   chatroom_id: Option<u64>,
 ) {
   let channel = channels.entry(slug.into()).or_insert(Channel {
     broadcaster_user_id,
+    channel_id: None,
     chatroom_id: None,
     rest: Map::new(),
   });
   channel.broadcaster_user_id = broadcaster_user_id;
+  if channel_id.is_some() {
+    channel.channel_id = channel_id;
+  }
   if chatroom_id.is_some() {
     channel.chatroom_id = chatroom_id;
   }
