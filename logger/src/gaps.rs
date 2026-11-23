@@ -1,7 +1,7 @@
 //! Gaps: stretches of time when no capture instance was connected.
 //!
 //! Each connection covers from its `open` to its `close`, or to its last
-//! line if it never closed (its instance crashed). The union of those spans
+//! record if it never closed (its instance crashed). The union of those spans
 //! is what was captured live; the holes between them are gaps.
 //!
 //! A gap may still have been filled: the connection that ended it replays

@@ -1,4 +1,4 @@
-//! Kick's variant: its header, lines and writer. Endpoints and slugs are made
+//! Kick's variant: its header, records and writer. Endpoints and slugs are made
 //! up.
 
 use {
@@ -113,7 +113,7 @@ fn base64(text: &str) -> String {
   STANDARD.encode(text)
 }
 
-/// Each file's header, and its lines' bodies.
+/// Each file's header, and its records' bodies.
 fn read(root: &Path) -> Vec<(String, Vec<Body>)> {
   live_files(root)
     .unwrap()

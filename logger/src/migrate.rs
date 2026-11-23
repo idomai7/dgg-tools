@@ -584,11 +584,11 @@ fn validate(
           && maps(old.next, new.next)
       }
       (
-        Err(ReadError::Line {
+        Err(ReadError::Record {
           offset: old_at,
           error: old_error,
         }),
-        Err(ReadError::Line {
+        Err(ReadError::Record {
           offset: new_at,
           error: new_error,
         }),
@@ -603,7 +603,7 @@ fn validate(
     if !same {
       let at = match old {
         Ok(entry) => entry.offset,
-        Err(ReadError::Line { offset, .. }) => *offset,
+        Err(ReadError::Record { offset, .. }) => *offset,
         Err(_) => 0,
       };
       return Err(format!("the record at {at} reads differently converted"));

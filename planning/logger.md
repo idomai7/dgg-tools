@@ -38,14 +38,14 @@ the [overall rules](README.md), and [deploy](deploy.md) for the mesh it runs on.
       format. Keys are `[a-z0-9_]+`; values can't hold a space.
     - dgg's header is still written without a variant or fields.
     - `endpoint`: the websocket address for dgg, the socket URL for Kick. It's
-      the same URL the `open` lines record: the one connected to, as given. So a
+      the same URL the `open` records hold: the one connected to, as given. So a
       file only ever holds connections to one endpoint, and connecting to a
       different endpoint starts the next file, `<instance>.<n>.journal`,
       numbered in sequence.
       - Even going back to an earlier endpoint starts the next file, so a
         day's files are in order by number. By name they sort out of order
         (`i.2.journal` before `i.journal`), so readers go by number.
-      - Lines before any `open` go in a file whose header has no endpoint.
+      - Records before any `open` go in a file whose header has no endpoint.
     - `channel` (Kick): the channel the file's connection is subscribed to, also
       given by the path.
   - **Layout:** each platform has its own journal root, so sync and compact
@@ -65,7 +65,7 @@ the [overall rules](README.md), and [deploy](deploy.md) for the mesh it runs on.
       0.2, on the upgrade day or when a 0.1 archive is merged again.
       Archives are always written in the new version. A 0.1 record is copied
       byte for byte unless it holds an RS; then it's decoded and encoded
-      again, as `frame64` and the like. A line that doesn't decode is kept
+      again, as `frame64` and the like. A record that doesn't decode is kept
       byte for byte, as now; one that also holds an RS can't be, so the day
       is refused and reported.
     - **Archive manifests:** the monthly manifest is versioned like the
@@ -351,7 +351,7 @@ the [overall rules](README.md), and [deploy](deploy.md) for the mesh it runs on.
       truncated one.
     - Nick casing comes from native rows, failing that from a source that keeps
       case.
-  - Journaled as one `fetched` line per message, plus a `fetchrange` per page,
+  - Journaled as one `fetched` record per message, plus a `fetchrange` per page,
     in the run's own `backfill/` files. The index stores them as
     `source = backfill:<origin>`.
   - **History import:** `backfill --source linkers --from <date> [--to <date>]`
@@ -373,7 +373,7 @@ the [overall rules](README.md), and [deploy](deploy.md) for the mesh it runs on.
   `backfill/`, skipping the files of runs still going.
   - It merges the day's live files and any existing archive for that day, byte
     for byte, sorted by receive time.
-  - Each distinct line is kept as often as any one input has it: dgg does send
+  - Each distinct record is kept as often as any one input has it: dgg does send
     identical frames twice in one millisecond.
   - Torn tails are dropped.
   - The archive is written to a temp file, fsynced and verified, then renamed
@@ -389,12 +389,12 @@ the [overall rules](README.md), and [deploy](deploy.md) for the mesh it runs on.
   `--interval` seconds, default 1; prints a summary every `--report` seconds,
   default 60).
 - **`logger gaps`:** done. It reports stretches when no connection was open (a
-  connection that never closed ends at its last line), and whether the next
+  connection that never closed ends at its last record), and whether the next
   connection's `HISTORY` reached back far enough to cover each one.
 - **`logger backfill`:** fetches uncovered gaps, or with `--from` a span of
   history, from rustlesearch or linkers.ooo into the journal's `backfill/`
   directory.
-  - It writes one `fetched` line per message and a `fetchrange` per page.
+  - It writes one `fetched` record per message and a `fetchrange` per page.
   - It's limited by `--max-requests` (default 50) and stops when the rate limit
     has fewer than `--reserve` (10) requests left.
   - `--dry-run` lists the gaps it would fetch.

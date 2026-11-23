@@ -32,8 +32,8 @@ pub const SYNC_INTERVAL: Duration = Duration::from_secs(1);
 /// midnight (by each record's `receive_time`), or to its
 /// [backfill](Writer::backfill) files.
 ///
-/// Every line is written with a single `write` call, so a crash leaves at
-/// most one torn line at the tail. Call [`Writer::sync_if_due`] on a timer to
+/// Every record is written with a single `write` call, so a crash leaves at
+/// most one torn record at the tail. Call [`Writer::sync_if_due`] on a timer to
 /// bound how much a power loss can take.
 pub struct Writer {
   root: PathBuf,
@@ -94,14 +94,14 @@ impl Writer {
     Ok(writer)
   }
 
-  /// The instance id written on every line.
+  /// The instance id written on every record.
   pub fn instance(&self) -> &str {
     &self.instance
   }
 
-  /// Appends one line to the live file for `receive_time`'s UTC day, opening
-  /// (and on a day change, syncing and switching) files as needed. The line
-  /// reaches the OS before this returns, but isn't fsynced; see
+  /// Appends one record to the live file for `receive_time`'s UTC day,
+  /// opening (and on a day change, syncing and switching) files as needed.
+  /// The record reaches the OS before this returns, but isn't fsynced; see
   /// [`Writer::sync`].
   pub fn write(
     &mut self,
@@ -112,7 +112,7 @@ impl Writer {
     self.write_on(receive_time, receive_time, connection, body)
   }
 
-  /// Like [`Writer::write`], but files the line under `file_time`'s UTC day
+  /// Like [`Writer::write`], but files the record under `file_time`'s UTC day
   /// instead: for backfill, the time of the message it holds.
   pub fn write_on(
     &mut self,
@@ -136,10 +136,10 @@ impl Writer {
       connection,
       body,
     };
-    let mut line = Vec::new();
-    record.encode(&mut line);
+    let mut encoded = Vec::new();
+    record.encode(&mut encoded);
     let (_, file) = self.open.as_mut().unwrap();
-    file.write_all(&line)?;
+    file.write_all(&encoded)?;
     self.dirty = true;
     Ok(())
   }

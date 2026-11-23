@@ -90,7 +90,7 @@ pub(crate) fn valid_kind(kind: &str) -> bool {
 }
 
 /// A record's fields, its data still encoded.
-pub(crate) struct Line<'a> {
+pub(crate) struct Fields<'a> {
   pub receive_time: i64,
   pub instance: &'a str,
   pub connection: u64,
@@ -130,14 +130,14 @@ pub(crate) fn encode(
 /// Splits one record, without its end, into its fields.
 pub(crate) fn decode(
   framing: Framing,
-  line: &[u8],
-) -> Result<Line<'_>, DecodeError> {
+  record: &[u8],
+) -> Result<Fields<'_>, DecodeError> {
   use DecodeError::Bad;
-  if line.contains(&framing.reserved()) {
+  if record.contains(&framing.reserved()) {
     return Err(Bad("the record's end inside it"));
   }
-  let line = ::std::str::from_utf8(line).map_err(|_| Bad("not utf-8"))?;
-  let mut parts = line.splitn(5, ' ');
+  let record = ::std::str::from_utf8(record).map_err(|_| Bad("not utf-8"))?;
+  let mut parts = record.splitn(5, ' ');
   let mut field = || parts.next().ok_or(Bad("too few fields"));
   let (receive_time, instance, connection, kind) =
     (field()?, field()?, field()?, field()?);
@@ -151,7 +151,7 @@ pub(crate) fn decode(
   if !valid_kind(kind) {
     return Err(Bad("bad kind"));
   }
-  Ok(Line {
+  Ok(Fields {
     receive_time: receive_time
       .parse()
       .map_err(|_| Bad("receive_time out of range"))?,
@@ -164,7 +164,7 @@ pub(crate) fn decode(
   })
 }
 
-impl Line<'_> {
+impl Fields<'_> {
   /// The data, base64-decoded.
   pub fn unbase64(&self) -> Result<Vec<u8>, DecodeError> {
     BASE64

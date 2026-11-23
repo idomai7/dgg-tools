@@ -38,11 +38,11 @@
 //!   LF, and text data holding an LF went base64 instead. Those files are
 //!   still read ([`LEGACY`]), but no longer written.
 
-pub use super::line::{valid_instance, valid_token};
+pub use super::fields::{valid_instance, valid_token};
 use {
   super::{
     DecodeError, Version, digits,
-    line::{self, Framing},
+    fields::{self, Framing},
   },
   ::std::borrow::Cow,
 };
@@ -57,7 +57,7 @@ pub const LEGACY: Version = Version { major: 0, minor: 1 };
 pub struct Record {
   /// Local receive time, unix ms.
   pub receive_time: i64,
-  /// Capture instance that wrote the line.
+  /// Capture instance that wrote the record.
   pub instance: String,
   /// Connection number within the instance, counting from 1.
   pub connection: u64,
@@ -123,7 +123,7 @@ impl Record {
       }
     };
     let binary = matches!(self.body, Body::Binary(_));
-    line::encode(
+    fields::encode(
       out,
       Framing::RsLf,
       self.receive_time,
@@ -136,28 +136,28 @@ impl Record {
   }
 
   /// Decodes one record, without its RS LF.
-  pub fn decode(line: &[u8]) -> Result<Self, DecodeError> {
-    Self::decode_framed(Framing::RsLf, line)
+  pub fn decode(record: &[u8]) -> Result<Self, DecodeError> {
+    Self::decode_framed(Framing::RsLf, record)
   }
 
   /// Decodes one record, without its end, from a file with `framing`:
   /// [`Framing::Lf`] for a [`LEGACY`] file.
   pub fn decode_framed(
     framing: Framing,
-    line: &[u8],
+    record: &[u8],
   ) -> Result<Self, DecodeError> {
-    let line = line::decode(framing, line)?;
-    let data = line.data;
-    let body = match line.kind {
+    let fields = fields::decode(framing, record)?;
+    let data = fields.data;
+    let body = match fields.kind {
       "frame" => Body::Frame(data.into()),
       "open" => Body::Open(data.into()),
       "close" => Body::Close(data.into()),
-      "frame64" => Body::Frame(line.text64()?),
-      "open64" => Body::Open(line.text64()?),
-      "close64" => Body::Close(line.text64()?),
-      "binary" => Body::Binary(line.unbase64()?),
+      "frame64" => Body::Frame(fields.text64()?),
+      "open64" => Body::Open(fields.text64()?),
+      "close64" => Body::Close(fields.text64()?),
+      "binary" => Body::Binary(fields.unbase64()?),
       "fetched" => fetched(data)?,
-      "fetched64" => fetched(&line.text64()?)?,
+      "fetched64" => fetched(&fields.text64()?)?,
       "fetchrange" => {
         let mut parts = data.split(' ');
         let (Some(source), Some(from), Some(to), None) =
@@ -174,15 +174,15 @@ impl Record {
       kind => return Err(DecodeError::Unknown(kind.into())),
     };
     Ok(Self {
-      receive_time: line.receive_time,
-      instance: line.instance.into(),
-      connection: line.connection,
+      receive_time: fields.receive_time,
+      instance: fields.instance.into(),
+      connection: fields.connection,
       body,
     })
   }
 }
 
-/// Decodes a `fetched` line's data: `<source> <timestamp> <nick> <text>`.
+/// Decodes a `fetched` record's data: `<source> <timestamp> <nick> <text>`.
 fn fetched(data: &str) -> Result<Body, DecodeError> {
   let mut parts = data.splitn(4, ' ');
   let (Some(source), Some(timestamp), Some(nick)) =

@@ -20,16 +20,16 @@ use {
 /// Appends one instance's records for one Kick channel to its live files,
 /// rolling over at UTC midnight (by each record's `receive_time`), and
 /// starting the day's next file, `<instance>.<n>.journal`, when an `open`
-/// line is to a different endpoint than the file's.
+/// record is to a different endpoint than the file's.
 ///
-/// Every line is written with a single `write` call, so a crash leaves at
-/// most one torn line at the tail. Call [`Writer::sync_if_due`] on a timer to
+/// Every record is written with a single `write` call, so a crash leaves at
+/// most one torn record at the tail. Call [`Writer::sync_if_due`] on a timer to
 /// bound how much a power loss can take.
 pub struct Writer {
   root: PathBuf,
   instance: String,
   channel: String,
-  /// The last `open` line's endpoint.
+  /// The last `open` record's endpoint.
   endpoint: Option<String>,
   open: Option<Open>,
   dirty: bool,
@@ -74,17 +74,17 @@ impl Writer {
     }
   }
 
-  /// The instance id written on every line.
+  /// The instance id written on every record.
   pub fn instance(&self) -> &str {
     &self.instance
   }
 
-  /// Appends one line to the live file for `receive_time`'s UTC day and the
-  /// endpoint, opening (and on a change, syncing and switching) files as
-  /// needed. The line reaches the OS before this returns, but isn't
+  /// Appends one record to the live file for `receive_time`'s UTC day and
+  /// the endpoint, opening (and on a change, syncing and switching) files as
+  /// needed. The record reaches the OS before this returns, but isn't
   /// fsynced; see [`Writer::sync`].
   ///
-  /// An `open` line to an endpoint that isn't a [`valid_token`] fails, as
+  /// An `open` record to an endpoint that isn't a [`valid_token`] fails, as
   /// the header couldn't hold it.
   pub fn write(
     &mut self,
@@ -119,10 +119,10 @@ impl Writer {
       connection,
       body,
     };
-    let mut line = Vec::new();
-    record.encode(&mut line);
+    let mut encoded = Vec::new();
+    record.encode(&mut encoded);
     let open = self.open.as_mut().unwrap();
-    open.file.write_all(&line)?;
+    open.file.write_all(&encoded)?;
     self.dirty = true;
     Ok(())
   }

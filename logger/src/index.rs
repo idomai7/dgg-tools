@@ -364,7 +364,7 @@ fn index_file(
           };
           index_body(&transaction, &origin, record.body, stats)?;
         }
-        Err(ReadError::Line { offset, error }) => {
+        Err(ReadError::Record { offset, error }) => {
           unparsed(&transaction, path, offset, 0, &format!("{error:?}"))?;
           stats.unparsed += 1;
         }

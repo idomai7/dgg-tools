@@ -16,7 +16,7 @@ use {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Entry {
   pub offset: u64,
-  /// Offset just past this line: where to resume reading.
+  /// Offset just past this record: where to resume reading.
   pub next: u64,
   pub record: Record,
 }
@@ -29,8 +29,8 @@ pub enum ReadError {
   Header { found: String },
   /// The file's variant and major version have no decoder in this crate.
   Version(Variant, Version),
-  /// A complete line that couldn't be decoded. Reading continues past it.
-  Line { offset: u64, error: DecodeError },
+  /// A complete record that couldn't be decoded. Reading continues past it.
+  Record { offset: u64, error: DecodeError },
 }
 
 impl From<io::Error> for ReadError {
@@ -39,7 +39,7 @@ impl From<io::Error> for ReadError {
   }
 }
 
-/// Reads complete lines from an offset on, decoding them with the decoder
+/// Reads complete records from an offset on, decoding them with the decoder
 /// for the file's header variant and version.
 ///
 /// A trailing record without its end (see [`Header::framing`]) is still
@@ -52,13 +52,13 @@ pub struct Reader {
   inner: Box<dyn BufRead + Send>,
   header: Option<Header>,
   offset: u64,
-  line: Vec<u8>,
+  record: Vec<u8>,
   done: bool,
 }
 
 impl Reader {
   /// Opens `path` and reads its header, then resumes at `offset` (0, or any
-  /// offset inside the header, means the first line after it).
+  /// offset inside the header, means the first record after it).
   ///
   /// A file whose header hasn't been completely written yet reads as empty.
   pub fn open(path: &Path, offset: u64) -> Result<Self, ReadError> {
@@ -78,7 +78,7 @@ impl Reader {
         inner,
         header: None,
         offset: 0,
-        line: Vec::new(),
+        record: Vec::new(),
         done: true,
       });
     };
@@ -102,7 +102,7 @@ impl Reader {
       inner,
       header: Some(header),
       offset,
-      line: Vec::new(),
+      record: Vec::new(),
       done: false,
     })
   }
@@ -117,7 +117,7 @@ impl Reader {
     Some(self.header.as_ref()?.version)
   }
 
-  /// Offset just past the last complete line read so far.
+  /// Offset just past the last complete record read so far.
   pub fn offset(&self) -> u64 {
     self.offset
   }
@@ -130,13 +130,13 @@ impl Iterator for Reader {
     let header = self.header.as_ref()?;
     let end = header.framing().end();
     while !self.done {
-      self.line.clear();
+      self.record.clear();
       // A record may span lines: read them until its end.
       let complete = loop {
-        match self.inner.read_until(b'\n', &mut self.line) {
+        match self.inner.read_until(b'\n', &mut self.record) {
           Ok(0) => break false,
-          Ok(_) if self.line.ends_with(end) => break true,
-          Ok(_) if self.line.last() == Some(&b'\n') => {}
+          Ok(_) if self.record.ends_with(end) => break true,
+          Ok(_) if self.record.last() == Some(&b'\n') => {}
           Ok(_) => break false,
           Err(e) => {
             self.done = true;
@@ -148,10 +148,10 @@ impl Iterator for Reader {
         self.done = true;
         break;
       }
-      let n = self.line.len();
+      let n = self.record.len();
       let offset = self.offset;
       self.offset += n as u64;
-      let text = &self.line[..n - end.len()];
+      let text = &self.record[..n - end.len()];
       if text.is_empty() {
         continue;
       }
@@ -161,7 +161,7 @@ impl Iterator for Reader {
           next: self.offset,
           record,
         }),
-        Err(error) => Err(ReadError::Line { offset, error }),
+        Err(error) => Err(ReadError::Record { offset, error }),
       });
     }
     None

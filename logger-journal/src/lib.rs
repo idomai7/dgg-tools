@@ -1,4 +1,4 @@
-//! The logger's journal: append-only line files that are the source of truth
+//! The logger's journal: append-only files of records, the source of truth
 //! for everything captured from dgg chat.
 //!
 //! Its first variant is dgg's; Kick's is [`record::kick`], written by
@@ -23,7 +23,7 @@
 //! The first line of every file is its [`record::Header`]: `journal
 //! <major>.<minor>` for dgg, `journal kick.<major>.<minor>` for Kick, each
 //! variant versioned on its own. The rest of the file is in that version's
-//! line format. Each major version has its own module under [`record`]
+//! record format. Each major version has its own module under [`record`]
 //! describing its structure, encoding and decoding, so old and new formats
 //! coexist:
 //!

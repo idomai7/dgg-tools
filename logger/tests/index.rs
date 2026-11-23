@@ -156,7 +156,7 @@ fn resumes_from_checkpoints() {
   let again = index(&mut db, &journal(&root)).unwrap();
   assert_eq!((again.records, again.messages), (0, 0));
 
-  // b keeps writing; only the new line is read.
+  // b keeps writing; only the new record is read.
   let mut b = Writer::new(journal(&root), "b");
   b.write(93, 1, frame(format!("MSG {}", message(40, "z", "third"))))
     .unwrap();

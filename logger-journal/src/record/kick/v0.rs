@@ -32,7 +32,7 @@
 use {
   super::super::{
     DecodeError, Version,
-    line::{self, Framing},
+    fields::{self, Framing},
   },
   ::std::borrow::Cow,
 };
@@ -44,7 +44,7 @@ pub const VERSION: Version = Version { major: 0, minor: 0 };
 pub struct Record {
   /// Local receive time, unix ms.
   pub receive_time: i64,
-  /// Instance that wrote the line.
+  /// Instance that wrote the record.
   pub instance: String,
   /// Connection number within the instance, counting from 1.
   pub connection: u64,
@@ -74,7 +74,7 @@ impl Record {
       Body::Binary(bytes) => ("binary", Cow::Borrowed(bytes.as_slice())),
     };
     let binary = matches!(self.body, Body::Binary(_));
-    line::encode(
+    fields::encode(
       out,
       Framing::RsLf,
       self.receive_time,
@@ -87,22 +87,22 @@ impl Record {
   }
 
   /// Decodes one record, without its RS LF.
-  pub fn decode(line: &[u8]) -> Result<Self, DecodeError> {
-    let line = line::decode(Framing::RsLf, line)?;
-    let body = match line.kind {
-      "frame" => Body::Frame(line.data.into()),
-      "open" => Body::Open(line.data.into()),
-      "close" => Body::Close(line.data.into()),
-      "frame64" => Body::Frame(line.text64()?),
-      "open64" => Body::Open(line.text64()?),
-      "close64" => Body::Close(line.text64()?),
-      "binary" => Body::Binary(line.unbase64()?),
+  pub fn decode(record: &[u8]) -> Result<Self, DecodeError> {
+    let fields = fields::decode(Framing::RsLf, record)?;
+    let body = match fields.kind {
+      "frame" => Body::Frame(fields.data.into()),
+      "open" => Body::Open(fields.data.into()),
+      "close" => Body::Close(fields.data.into()),
+      "frame64" => Body::Frame(fields.text64()?),
+      "open64" => Body::Open(fields.text64()?),
+      "close64" => Body::Close(fields.text64()?),
+      "binary" => Body::Binary(fields.unbase64()?),
       kind => return Err(DecodeError::Unknown(kind.into())),
     };
     Ok(Self {
-      receive_time: line.receive_time,
-      instance: line.instance.into(),
-      connection: line.connection,
+      receive_time: fields.receive_time,
+      instance: fields.instance.into(),
+      connection: fields.connection,
       body,
     })
   }

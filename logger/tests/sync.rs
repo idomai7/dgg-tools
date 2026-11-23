@@ -229,8 +229,8 @@ async fn pulls_only_what_is_missing() {
   same("live/1970-01-01/a.journal");
   same("live/1970-01-02/a.journal");
 
-  // The remote file grows, ending mid-line: only the new bytes come over,
-  // the unfinished line included, and the next round finishes it.
+  // The remote file grows, ending mid-record: only the new bytes come over,
+  // the unfinished record included, and the next round finishes it.
   let path = "live/1970-01-02/a.journal";
   let append = |bytes: &[u8]| {
     let mut file = OpenOptions::new()
@@ -369,18 +369,19 @@ async fn takes_backfill_archives() {
   );
 }
 
-/// The lines of `root`'s archive of 1970-01-01, sorted.
-fn archived_lines(root: &::std::path::Path) -> Vec<String> {
+/// The records of `root`'s archive of 1970-01-01, sorted.
+fn archived_records(root: &::std::path::Path) -> Vec<String> {
   let path = root.join("archive/1970/01/1970-01-01.journal.zst");
   let bytes = ::zstd::decode_all(fs::File::open(path).unwrap()).unwrap();
-  let mut lines: Vec<String> = String::from_utf8(bytes)
-    .unwrap()
-    .lines()
-    .skip(1)
+  let text = String::from_utf8(bytes).unwrap();
+  let (header, body) = text.split_once('\n').unwrap();
+  assert_eq!(header, "journal dgg.0.2");
+  let mut records: Vec<String> = body
+    .split_terminator("\u{1e}\n")
     .map(str::to_owned)
     .collect();
-  lines.sort();
-  lines
+  records.sort();
+  records
 }
 
 #[::tokio::test]
@@ -430,11 +431,11 @@ async fn a_mesh_settles() {
       break;
     }
   }
-  // Each node holds every line once, whatever order its ties are in.
-  let all = archived_lines(&roots[0]);
+  // Each node holds every record once, whatever order its ties are in.
+  let all = archived_records(&roots[0]);
   assert_eq!(all.len(), 9);
   for root in &roots[1..] {
-    assert_eq!(archived_lines(root.path()), all);
+    assert_eq!(archived_records(root.path()), all);
   }
   // A settled mesh stays settled.
   for (n, root) in roots.iter().enumerate() {

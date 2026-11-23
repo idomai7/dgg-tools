@@ -3,7 +3,7 @@
 //!
 //! Each time range is fetched from its end backwards, page by page, until a
 //! page reaches back past its start. Messages inside the range are written
-//! as `fetched` lines, and each page's span as a `fetchrange` line, to this
+//! as `fetched` records, and each page's span as a `fetchrange` record, to this
 //! run's own files in the journal's `backfill/` directory, filed by the
 //! messages' day. Nothing there is canonical: matching it against what was
 //! captured natively is left to the index, where native messages win.
@@ -87,7 +87,7 @@ pub struct Stats {
   pub requests: u64,
   /// Requests that failed and were retried.
   pub retried: u64,
-  /// `fetched` lines written.
+  /// `fetched` records written.
   pub messages: u64,
   /// Messages dropped because their nick couldn't be journaled.
   pub skipped: u64,

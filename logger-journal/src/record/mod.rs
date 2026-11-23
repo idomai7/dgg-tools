@@ -5,11 +5,11 @@
 //! Kick, each optionally followed by ` ;` and informational fields. dgg's
 //! files up to 0.1 name no variant: `journal 0.1`.
 
+mod fields;
 pub mod kick;
-mod line;
 pub mod v0;
 
-pub use line::{Framing, RS};
+pub use fields::{Framing, RS};
 
 /// Format name at the start of every file's header line.
 pub const MAGIC: &str = "journal";
@@ -163,7 +163,7 @@ impl Header {
   /// [token](v0::valid_token); they couldn't be read back.
   pub fn with(mut self, key: &str, value: &str) -> Self {
     assert!(valid_key(key), "not a valid key: {key:?}");
-    assert!(line::valid_token(value), "not a valid value: {value:?}");
+    assert!(fields::valid_token(value), "not a valid value: {value:?}");
     self.info.push((key.into(), value.into()));
     self
   }
@@ -247,7 +247,7 @@ impl Header {
     let mut header = Self::new(variant, version);
     for field in info.into_iter().flat_map(|info| info.split(' ')) {
       let (key, value) = field.split_once('=')?;
-      if !valid_key(key) || !line::valid_token(value) {
+      if !valid_key(key) || !fields::valid_token(value) {
         return None;
       }
       header.info.push((key.into(), value.into()));
@@ -284,13 +284,13 @@ pub enum DecodeError {
 
 impl Record {
   /// Decodes one record, without its end, from a file with `header`.
-  pub fn decode(header: &Header, line: &[u8]) -> Result<Self, DecodeError> {
+  pub fn decode(header: &Header, record: &[u8]) -> Result<Self, DecodeError> {
     let framing = header.framing();
     match (header.variant, header.version.major) {
       (Variant::Dgg, 0) => {
-        v0::Record::decode_framed(framing, line).map(Self::V0)
+        v0::Record::decode_framed(framing, record).map(Self::V0)
       }
-      (Variant::Kick, 0) => kick::v0::Record::decode(line).map(Self::Kick0),
+      (Variant::Kick, 0) => kick::v0::Record::decode(record).map(Self::Kick0),
       (_, major) => Err(DecodeError::NoDecoder(major)),
     }
   }

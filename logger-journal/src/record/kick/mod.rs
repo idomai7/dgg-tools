@@ -3,8 +3,8 @@
 //!
 //! The header is `journal kick.<major>.<minor> ; endpoint=<url>
 //! channel=<slug>` (see [`Header`](super::Header)): `endpoint` is the
-//! socket the file's connections are to, the same URL its `open` lines
-//! record, and `channel` the slug they're subscribed for. Each channel has a
+//! socket the file's connections are to, the same URL its `open` records
+//! hold, and `channel` the slug they're subscribed for. Each channel has a
 //! journal root of its own (see [`channel_root`](crate::layout::channel_root)),
 //! and a file only ever holds connections to one endpoint: a different one
 //! starts the next file (see [`writer::kick`](crate::writer::kick)).

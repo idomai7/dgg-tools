@@ -1,4 +1,4 @@
-//! Where journal files live, independent of the line format inside them.
+//! Where journal files live, independent of the record format inside them.
 
 use {
   ::common::fs::MissingOk,
@@ -77,7 +77,7 @@ pub fn live_files(root: &Path) -> io::Result<Vec<PathBuf>> {
 /// The backfill journal under journal `root`: a journal root of its own,
 /// laid out the same way (`backfill/live/YYYY-MM-DD/`, `backfill/archive/
 /// YYYY/MM/`), so everything here works on it too. It holds only what was
-/// fetched from other archives (`fetched` and `fetchrange` lines), never
+/// fetched from other archives (`fetched` and `fetchrange` records), never
 /// anything captured natively: everything under it is non-canonical.
 pub fn backfill_root(root: &Path) -> PathBuf {
   root.join("backfill")

@@ -68,5 +68,9 @@ pub fn record<'a>(
     (Err(old), Err(new)) => old == new && *converted == *record,
     _ => false,
   };
-  if same { Ok(converted) } else { Err(Error::Changed) }
+  if same {
+    Ok(converted)
+  } else {
+    Err(Error::Changed)
+  }
 }

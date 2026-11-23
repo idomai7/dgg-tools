@@ -280,7 +280,7 @@ fn torn_line_is_isolated_on_reopen() {
   assert_eq!(frame(read.next().unwrap()), "MSG 1");
   assert!(matches!(
     read.next(),
-    Some(Err(ReadError::Line {
+    Some(Err(ReadError::Record {
       error: DecodeError::Unknown(_),
       ..
     }))
