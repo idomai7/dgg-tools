@@ -1,6 +1,6 @@
 # logger
 
-The logger, codenamed Ledgerline: `logger-journal` and `logger`, run as
+The logger, codenamed ledgerline: `logger-journal` and `logger`, run as
 `dgg-logger` subcommands. See the [overall rules](README.md), and
 [deploy](deploy.md) for the mesh it runs on.
 

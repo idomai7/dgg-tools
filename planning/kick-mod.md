@@ -1,7 +1,7 @@
 # kick-mod
 
-A chat client and moderation tools for Kick channels. Kick only, built on
-[kick-api](kick-api.md). See the [overall rules](README.md).
+A chat client and moderation tools for Kick channels, codenamed gavelgab. Kick
+only, built on [kick-api](kick-api.md). See the [overall rules](README.md).
 
 ## Scope (first version)
 - Several Kick channels managed at once, as broadcaster on my own channels and
@@ -159,7 +159,7 @@ Each is a pause for review.
    - Needs each channel's channel id, which `channels.json` doesn't have yet:
      `ids` records it as `channel_id`, from the unofficial lookup that has the
      chatroom id. A channel without one isn't filled.
-   - Requests name kick-mod in their `User-Agent` (`kick-mod/<version>`).
+   - Requests name kick-mod in their `User-Agent` (`gavelgab/<version>`).
 
 Later, each its own step:
 - Automod rules.

@@ -206,7 +206,7 @@ now, the omnichat later. Kick only, and similar in scope to `dgg-api`. See the
   - `web` (feature `web`): `web.kick.com`'s unofficial API, for now only a
     channel's chat history (see below).
     - `web::Client::new(user_agent)`: every request names the tool with an
-      honest `User-Agent`, such as `kick-mod/0.1.0`, never a browser's.
+      honest `User-Agent`, such as `gavelgab/0.1.0`, never a browser's.
       Requests without one are refused (403).
     - `history(channel_id, cursor)`: a page of the channel's messages,
       newest first, and the cursor for the page before. `cursor_at(ms)` makes
