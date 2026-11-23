@@ -12,7 +12,8 @@ use {
     channels::{self, Channels},
     chat::Chat,
     config::{self, Config},
-    serve,
+    modlog,
+    serve::{self, Served},
   },
   ::std::{
     path::{Path, PathBuf},
@@ -33,6 +34,9 @@ struct Args {
   /// The signed-in moderator's token.
   #[arg(long, global = true, default_value = account::DEFAULT_TOKEN_PATH)]
   token: PathBuf,
+  /// Every action taken.
+  #[arg(long, global = true, default_value = modlog::DEFAULT_PATH)]
+  modlog: PathBuf,
   #[command(subcommand)]
   command: Command,
 }
@@ -61,7 +65,9 @@ async fn main() -> ExitCode {
   let _ = ::rustls::crypto::ring::default_provider().install_default();
   let args = Args::parse();
   let done = match args.command {
-    Command::Serve => run(&args.config, args.channels, args.token).await,
+    Command::Serve => {
+      run(&args.config, args.channels, args.token, args.modlog).await
+    }
     Command::Ids { slugs } => ids(&args.config, &args.channels, &slugs).await,
   };
   match done {
@@ -77,6 +83,7 @@ async fn run(
   config: &Path,
   channels: PathBuf,
   token: PathBuf,
+  modlog: PathBuf,
 ) -> Result<(), String> {
   let config = Config::load(config)?;
   let known = channels::load(&channels)?;
@@ -93,8 +100,13 @@ async fn run(
     known.len(),
     listen.port()
   );
-  let chat = Chat::start(&known, &Options::default());
-  serve::run(listener, channels, account, chat)
+  let served = Served {
+    chat: Chat::start(&known, &Options::default()),
+    channels,
+    modlog,
+    account,
+  };
+  serve::run(listener, served)
     .await
     .map_err(|e| format!("serving: {e}"))
 }

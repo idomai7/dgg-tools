@@ -119,17 +119,35 @@
   .deleted .text { text-decoration: line-through; }
   .deleted, .gone { opacity: 0.45; }
   .tag { color: var(--down); font-size: 0.8rem; margin-left: 0.3rem; }
+  .failed { color: var(--down); }
+  #reason {
+    font: inherit;
+    color: inherit;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 0.1rem 0.4rem;
+    width: 16rem;
+    max-width: 100%;
+  }
+  .actions { visibility: hidden; margin-left: 0.4rem; white-space: nowrap; }
+  .line:hover .actions, .line:focus-within .actions { visibility: visible; }
+  .actions button { font-size: 0.75rem; padding: 0 0.3rem; margin-right: 0.15rem; }
+  .actions button.ban { color: var(--down); }
 </style>
 </head>
 <body>
 <header>
   <h1>kick-mod</h1>
   <span id="account" class="faint">…</span>
+  <input id="reason" maxlength="100" placeholder="Reason (optional)"
+    title="Sent with the next action, then cleared">
 </header>
 <div id="channels" class="faint">Loading the channels…</div>
 <script>
   const shown = document.getElementById("channels");
   const account = document.getElementById("account");
+  const reason = document.getElementById("reason");
   // How many lines a column keeps.
   const KEPT = 500;
 
@@ -219,6 +237,62 @@
     return out;
   }
 
+  /**
+   * Asks kick-mod to act, as the button says: Kick's answer shows in the
+   * chat, and a refusal in the column.
+   */
+  async function act(col, button, asked) {
+    button.disabled = true;
+    const why = reason.value.trim();
+    try {
+      const answer = await fetch("/api/actions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...asked, reason: why || null }),
+      });
+      if (answer.ok) {
+        if (reason.value.trim() === why) reason.value = "";
+        return;
+      }
+      failed(col, asked, await answer.text());
+    } catch (error) {
+      failed(col, asked, `kick-mod unreachable: ${error}`);
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  function failed(col, asked, why) {
+    const what = asked.action === "timeout"
+      ? `timeout (${asked.minutes} min)`
+      : asked.action;
+    const line = element("div", "notice failed",
+      `${what} of ${asked.user.username} failed: ${why}`);
+    append(col, line);
+  }
+
+  function button(col, label, asked, className) {
+    const made = element("button", className, label);
+    made.type = "button";
+    made.onclick = () => act(col, made, asked);
+    return made;
+  }
+
+  // Timeouts offered on each message, in minutes.
+  const TIMEOUTS = [[1, "1m"], [10, "10m"], [60, "1h"], [1440, "1d"]];
+
+  function actions(col, update) {
+    const user = { id: update.sender.id, username: update.sender.username };
+    const on = { channel: update.slug, user, message_id: update.id };
+    const out = element("span", "actions");
+    out.append(button(col, "del", { ...on, action: "delete" }));
+    for (const [minutes, label] of TIMEOUTS) {
+      out.append(button(col, label, { ...on, action: "timeout", minutes }));
+    }
+    out.append(button(col, "ban", { ...on, action: "ban" }, "ban"));
+    return out;
+  }
+
   function message(update) {
     const line = element("div");
     line.dataset.id = update.id;
@@ -231,6 +305,13 @@
     if (update.sender.color) name.style.color = update.sender.color;
     line.append(name, ": ", content(update.content));
     return line;
+  }
+
+  function unban(col, update) {
+    const out = element("span", "actions");
+    const asked = { channel: update.slug, user: update.user, action: "unban" };
+    out.append(button(col, "unban", asked));
+    return out;
   }
 
   function lines(col, selector) {
@@ -251,9 +332,12 @@
           ? `${update.state}: ${update.detail}`
           : update.state;
         break;
-      case "message":
-        append(col, message(update));
+      case "message": {
+        const line = message(update);
+        line.append(actions(col, update));
+        append(col, line);
         break;
+      }
       case "deleted":
         for (const line of lines(col, `[data-id="${CSS.escape(update.id)}"]`)) {
           if (line.classList.contains("deleted")) continue;
@@ -270,7 +354,10 @@
           ? "banned"
           : `timed out for ${update.minutes ?? "?"} min`;
         const until = update.until ? ` (until ${clock(update.until)})` : "";
-        notice(col, `${update.user.username} ${what}${by(update.by)}${until}`);
+        const line = element("div", "notice",
+          `${update.user.username} ${what}${by(update.by)}${until}`);
+        line.append(unban(col, update));
+        append(col, line);
         break;
       }
       case "unbanned":

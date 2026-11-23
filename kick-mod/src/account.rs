@@ -48,6 +48,8 @@ pub struct Account {
   pending: Mutex<VecDeque<SignIn>>,
   /// The signed-in moderator's, if any.
   api: RwLock<Option<Arc<Api>>>,
+  /// Who Kick last said is signed in with which API.
+  known: Mutex<Option<(Arc<Api>, User)>>,
 }
 
 impl Account {
@@ -69,6 +71,7 @@ impl Account {
       token_path: token_path.into(),
       pending: Mutex::new(VecDeque::new()),
       api: RwLock::new(None),
+      known: Mutex::new(None),
     };
     let path = &account.token_path;
     let in_path = |e: &dyn Display| format!("{}: {e}", path.display());
@@ -119,7 +122,11 @@ impl Account {
     let api = self.user_api(token);
     *self.api.write().unwrap() = Some(api.clone());
     match api.users(&[]).await {
-      Ok(users) => users.into_iter().next().ok_or("Kick named no user".into()),
+      Ok(users) => {
+        let user = users.into_iter().next().ok_or("Kick named no user")?;
+        self.know(&api, &user);
+        Ok(user)
+      }
       Err(e) => Err(format!("signed in, but Kick didn't say who: {e}")),
     }
   }
@@ -131,7 +138,13 @@ impl Account {
       return Ok(None);
     };
     match api.users(&[]).await {
-      Ok(users) => Ok(users.into_iter().next()),
+      Ok(users) => {
+        let user = users.into_iter().next();
+        if let Some(user) = &user {
+          self.know(&api, user);
+        }
+        Ok(user)
+      }
       Err(e) if dead(&e) => {
         self.forget(&api);
         Ok(None)
@@ -161,6 +174,24 @@ impl Account {
   /// The signed-in moderator's API, if anyone is signed in.
   pub fn api(&self) -> Option<Arc<Api>> {
     self.api.read().unwrap().clone()
+  }
+
+  /// The signed-in moderator's API, and who they are: as Kick last said,
+  /// or asked of it if it hasn't since they signed in.
+  pub async fn moderator(&self) -> Result<Option<(Arc<Api>, User)>, Error> {
+    let Some(api) = self.api() else {
+      return Ok(None);
+    };
+    if let Some((known, user)) = &*self.known.lock().unwrap()
+      && Arc::ptr_eq(known, &api)
+    {
+      return Ok(Some((api, user.clone())));
+    }
+    Ok(self.me().await?.and_then(|user| Some((self.api()?, user))))
+  }
+
+  fn know(&self, api: &Arc<Api>, user: &User) {
+    *self.known.lock().unwrap() = Some((api.clone(), user.clone()));
   }
 
   fn user_api(&self, token: Token) -> Arc<Api> {

@@ -6,7 +6,14 @@ mod fake;
 use {
   ::common::temp_dir::TempDir,
   ::kick_api::{official::oauth::App, realtime::Options},
-  ::kick_mod::{account::Account, channels, chat::Chat, serve},
+  ::kick_mod::{
+    account::Account,
+    actions::{Action, Asked, Target},
+    channels,
+    chat::Chat,
+    modlog::{self, Answer, Entry, Moderator},
+    serve::{self, Served},
+  },
   ::reqwest::{
     Url,
     header::{HOST, LOCATION, ORIGIN},
@@ -47,8 +54,13 @@ impl Server {
     let http = ::reqwest::Client::new();
     let account = Account::new(http, app, &kick.base, redirect, token);
     let channels = dir.path().join("channels.json");
-    let chat = Chat::start(&channels::load(&channels).unwrap(), &options);
-    ::tokio::spawn(serve::run(listener, channels, account.unwrap(), chat));
+    let served = Served {
+      chat: Chat::start(&channels::load(&channels).unwrap(), &options),
+      channels,
+      modlog: dir.path().join("modlog.jsonl"),
+      account: account.unwrap(),
+    };
+    ::tokio::spawn(serve::run(listener, served));
     Self {
       base: format!("http://127.0.0.1:{port}"),
       port,
@@ -84,6 +96,36 @@ impl Server {
 
   fn channels(&self) -> ::std::path::PathBuf {
     self.dir.path().join("channels.json")
+  }
+
+  /// Signs in, as user 7, `moderator`, with the access token `access-1`.
+  async fn sign_in(&self) {
+    let to_kick = Url::parse(&self.redirect("/sign-in").await).unwrap();
+    let (_, state) = to_kick.query_pairs().find(|(k, _)| k == "state").unwrap();
+    self.kick.answer(
+      "/oauth/token",
+      200,
+      r#"{"access_token":"access-1","refresh_token":"refresh-1","expires_in":3600}"#,
+    );
+    self.kick.answer(
+      "/users",
+      200,
+      r#"{"data":[{"user_id":7,"name":"moderator"}],"message":"OK"}"#,
+    );
+    let back = format!("/oauth/callback?code=code-1&state={state}");
+    assert_eq!(self.redirect(&back).await, "/");
+  }
+
+  async fn act(&self, asked: Value) -> (u16, String) {
+    let url = format!("{}/api/actions", self.base);
+    let response = self.http.post(url).json(&asked).send().await.unwrap();
+    (response.status().as_u16(), response.text().await.unwrap())
+  }
+
+  /// The mod log, so far.
+  fn modlog(&self) -> Vec<Entry> {
+    let path = self.dir.path().join("modlog.jsonl");
+    modlog::parse(&fs::read_to_string(path).unwrap_or_default()).unwrap()
   }
 
   async fn events(&self) -> Events {
@@ -406,4 +448,166 @@ async fn a_page_opened_later_sees_the_status_now() {
   assert_eq!(first.status("one").await, "live");
   let mut later = server.events().await;
   assert_eq!(later.status("one").await, "live");
+}
+
+const ONE: &str = r#"{"one": {"broadcaster_user_id": 1, "chatroom_id": null}}"#;
+
+#[tokio::test]
+async fn acts_as_the_moderator_and_logs_it() {
+  let server = Server::start_with(ONE, Options::default()).await;
+  server.sign_in().await;
+  server
+    .kick
+    .answer("/moderation/bans", 200, r#"{"data":{},"message":"OK"}"#);
+  server.kick.answer("/chat/m1", 204, "");
+  let user = json!({"id": 9, "username": "someone"});
+
+  let timeout = json!({
+    "channel": "one",
+    "action": "timeout",
+    "minutes": 10,
+    "user": user,
+    "message_id": "m1",
+    "reason": " spam ",
+  });
+  assert_eq!(server.act(timeout).await, (204, String::new()));
+  let delete = json!({
+    "channel": "one",
+    "action": "delete",
+    "user": user,
+    "message_id": "m1",
+  });
+  assert_eq!(server.act(delete).await, (204, String::new()));
+  let unban = json!({"channel": "one", "action": "unban", "user": user});
+  assert_eq!(server.act(unban).await, (204, String::new()));
+
+  // Who's signed in was asked once, at the sign-in.
+  let requests = server.kick.requests();
+  let sent: Vec<_> = requests
+    .iter()
+    .filter(|r| r.path != "/oauth/token" && r.path != "/users")
+    .map(|r| {
+      assert_eq!(r.bearer.as_deref(), Some("access-1"));
+      let body = ::serde_json::from_str(&r.body).unwrap_or(Value::Null);
+      (r.method.as_str(), r.path.as_str(), body)
+    })
+    .collect();
+  let ban = json!({
+    "broadcaster_user_id": 1,
+    "user_id": 9,
+    "duration": 10,
+    "reason": "spam",
+  });
+  let unbanned = json!({"broadcaster_user_id": 1, "user_id": 9});
+  assert_eq!(
+    sent,
+    [
+      ("POST", "/moderation/bans", ban),
+      ("DELETE", "/chat/m1", Value::Null),
+      ("DELETE", "/moderation/bans", unbanned),
+    ]
+  );
+  assert_eq!(requests.iter().filter(|r| r.path == "/users").count(), 1);
+
+  let logged = server.modlog();
+  let asked: Vec<_> = logged.iter().map(|e| &e.asked).collect();
+  let target = Target {
+    id: 9,
+    username: "someone".into(),
+  };
+  assert_eq!(
+    asked,
+    [
+      &Asked {
+        channel: "one".into(),
+        action: Action::Timeout { minutes: 10 },
+        user: target.clone(),
+        message_id: Some("m1".into()),
+        reason: Some("spam".into()),
+      },
+      &Asked {
+        channel: "one".into(),
+        action: Action::Delete,
+        user: target.clone(),
+        message_id: Some("m1".into()),
+        reason: None,
+      },
+      &Asked {
+        channel: "one".into(),
+        action: Action::Unban,
+        user: target,
+        message_id: None,
+        reason: None,
+      },
+    ]
+  );
+  let moderator = Moderator {
+    user_id: 7,
+    name: Some("moderator".into()),
+  };
+  for entry in &logged {
+    assert_eq!(entry.by, moderator);
+    assert_eq!(entry.broadcaster_user_id, 1);
+    assert_eq!(entry.answer, Answer::Done);
+  }
+}
+
+#[tokio::test]
+async fn says_and_logs_what_kick_refused() {
+  let server = Server::start_with(ONE, Options::default()).await;
+  server.sign_in().await;
+  server
+    .kick
+    .answer("/moderation/bans", 403, r#"{"message":"Forbidden"}"#);
+  let ban = json!({
+    "channel": "one",
+    "action": "ban",
+    "user": {"id": 9, "username": "someone"},
+  });
+  assert_eq!(
+    server.act(ban).await,
+    (502, "Kick refused 403: Forbidden".into())
+  );
+  let logged = server.modlog();
+  assert_eq!(logged.len(), 1);
+  assert_eq!(
+    logged[0].answer,
+    Answer::Refused {
+      status: Some(403),
+      error: "Forbidden".into(),
+    }
+  );
+}
+
+#[tokio::test]
+async fn refuses_what_it_cant_do() {
+  let server = Server::start_with(ONE, Options::default()).await;
+  let user = json!({"id": 9, "username": "someone"});
+  let ban = json!({"channel": "one", "action": "ban", "user": user});
+  assert_eq!(server.act(ban).await, (401, "sign in to moderate".into()));
+
+  server.sign_in().await;
+  let elsewhere = json!({"channel": "two", "action": "ban", "user": user});
+  assert_eq!(
+    server.act(elsewhere).await,
+    (404, "no channel two in channels.json".into())
+  );
+  let long = json!({
+    "channel": "one",
+    "action": "timeout",
+    "minutes": 10081,
+    "user": user,
+  });
+  assert_eq!(server.act(long).await.0, 400);
+  // None of them reached Kick, or the log.
+  assert!(!server.kick.paths().contains(&"/moderation/bans".into()));
+  assert_eq!(server.modlog(), []);
+
+  let from_elsewhere = server
+    .http
+    .post(format!("{}/api/actions", server.base))
+    .header(ORIGIN, "https://example.com")
+    .json(&json!({"channel": "one", "action": "ban", "user": user}));
+  let status = from_elsewhere.send().await.unwrap().status().as_u16();
+  assert_eq!(status, 403);
 }
