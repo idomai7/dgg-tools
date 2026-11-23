@@ -282,3 +282,88 @@ fn skips_what_it_cant_read() {
     [format!("{}: not a journal", other.display())]
   );
 }
+
+/// A history page of `messages`, newest first, as Kick serves it.
+fn page(messages: &[Value]) -> String {
+  json!({
+    "data": {"messages": messages, "cursor": "1", "pinned_message": null},
+    "message": "OK",
+  })
+  .to_string()
+}
+
+fn history_message(id: &str, sender: u64, username: &str, at: i64) -> Value {
+  json!({
+    "id": id,
+    "chat_id": 1001,
+    "user_id": sender,
+    "content": format!("said {id}"),
+    "type": "message",
+    "metadata": "{}",
+    "sender": {"id": sender, "username": username, "slug": username},
+    "created_at": ::common::time::rfc3339(at),
+    "thread_parent_id": null,
+  })
+}
+
+#[test]
+fn with_the_messages_a_gap_was_filled_with() {
+  let dir = TempDir::new("kick-mod-history");
+  let filled = page(&[
+    history_message("m2", USER, "someone", DAY + 2_000),
+    history_message("m3", 9, "someoneelse", DAY + 2_000),
+    // Received before the gap too.
+    history_message("m1", USER, "someone", DAY),
+  ]);
+  journal(
+    dir.path(),
+    "kick-mod-1",
+    vec![
+      (DAY + 1, message("m1", USER, "someone", "said m1")),
+      (
+        DAY + 4_000,
+        Body::History {
+          cursor: None,
+          page: filled,
+        },
+      ),
+      // A page that doesn't decode is skipped.
+      (
+        DAY + 4_001,
+        Body::History {
+          cursor: Some("1".into()),
+          page: "<html>".into(),
+        },
+      ),
+      (DAY + 5_000, message("m4", USER, "someone", "said m4")),
+      (
+        DAY + 6_000,
+        frame(
+          "MessageDeletedEvent",
+          json!({
+            "id": "d1", "message": {"id": "m2"},
+          }),
+        ),
+      ),
+    ],
+  );
+
+  let history = history::read(dir.path(), "", SLUG, USER).unwrap();
+  let said: Vec<_> = history
+    .messages
+    .iter()
+    .map(|said| (said.id.as_str(), said.recovered, said.deleted.is_some()))
+    .collect();
+  assert_eq!(
+    said,
+    [
+      ("m1", false, false),
+      ("m2", true, true),
+      ("m4", false, false),
+    ]
+  );
+  let m2 = &history.messages[1];
+  assert_eq!((m2.received, m2.at), (DAY + 4_000, Some(DAY + 2_000)));
+  assert_eq!(m2.content, "said m2");
+  assert!(history.unreadable.is_empty());
+}

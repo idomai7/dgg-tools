@@ -5,14 +5,15 @@
 //! whole on each lookup, with no index: kick-mod's journals hold only what
 //! it heard while running. Its frames are read into events by the same code
 //! as live chat; a file still being written is read up to its last complete
-//! record.
+//! record. The messages a gap was filled with (its `history` records) are
+//! read too, but those it has from the connection itself.
 
 use {
   crate::{
     chat::{self, What},
     modlog::{self, Entry},
   },
-  ::kick_api::realtime::Frame,
+  ::kick_api::{realtime::Frame, web},
   ::logger_journal::{
     ReadError, Reader, Record, archive,
     layout::{channel_root, live_files},
@@ -20,7 +21,7 @@ use {
   },
   ::serde::Serialize,
   ::std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     io,
     path::{Path, PathBuf},
   },
@@ -35,7 +36,8 @@ pub struct History {
   pub user_id: u64,
   /// The newest name seen, if any.
   pub username: Option<String>,
-  /// Their messages: the newest [`MAX_MESSAGES`].
+  /// Their messages, by when Kick says they were sent: the newest
+  /// [`MAX_MESSAGES`].
   pub messages: Vec<Said>,
   /// How many older messages were left out.
   pub earlier: usize,
@@ -50,7 +52,8 @@ pub struct History {
 /// One of their messages.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Said {
-  /// When kick-mod received it, unix ms.
+  /// When kick-mod received it, unix ms: for a recovered one, when the
+  /// history was fetched.
   pub received: i64,
   /// When Kick says it was sent, unix ms.
   pub at: Option<i64>,
@@ -58,6 +61,15 @@ pub struct Said {
   /// Emotes inline as `[emote:<id>:<name>]`.
   pub content: String,
   pub deleted: Option<Deletion>,
+  /// Whether it was recovered from Kick's chat history, to fill a gap.
+  pub recovered: bool,
+}
+
+impl Said {
+  /// When it was sent, as near as is known.
+  fn time(&self) -> i64 {
+    self.at.unwrap_or(self.received)
+  }
 }
 
 /// A message's deletion.
@@ -132,6 +144,8 @@ fn files(root: &Path) -> io::Result<Vec<PathBuf>> {
 fn read_journal(files: &[PathBuf], history: &mut History) {
   let user_id = history.user_id;
   let mut deletions = HashMap::new();
+  // Messages from the history, kept unless the connection had them too.
+  let mut recovered = Vec::new();
   // The newest name seen, by when it was received.
   let mut named: Option<(i64, String)> = None;
   let mut name = |received, username: &str| {
@@ -164,10 +178,31 @@ fn read_journal(files: &[PathBuf], history: &mut History) {
       let Record::Kick0(record) = entry.record else {
         continue;
       };
-      let Body::Frame(raw) = record.body else {
-        continue;
-      };
       let received = record.receive_time;
+      let raw = match record.body {
+        Body::Frame(raw) => raw,
+        Body::History { page, .. } => {
+          // A page that doesn't decode is kept in the journal, as served.
+          let Ok(page) = web::parse(&page) else {
+            continue;
+          };
+          let theirs =
+            page.messages.into_iter().filter(|m| m.sender.id == user_id);
+          recovered.extend(theirs.map(|m| {
+            let said = Said {
+              received,
+              at: m.created_at,
+              id: m.id,
+              content: m.content,
+              deleted: None,
+              recovered: true,
+            };
+            (m.sender.username, said)
+          }));
+          continue;
+        }
+        _ => continue,
+      };
       let frame = Frame::new(record.connection, raw);
       for what in chat::events(&frame).filter_map(What::from_event) {
         match what {
@@ -184,6 +219,7 @@ fn read_journal(files: &[PathBuf], history: &mut History) {
               id,
               content,
               deleted: None,
+              recovered: false,
             });
           }
           What::Deleted { id, ai } => {
@@ -200,7 +236,18 @@ fn read_journal(files: &[PathBuf], history: &mut History) {
       }
     }
   }
-  history.messages.sort_by_key(|said| said.received);
+  let mut ids: HashSet<String> = history
+    .messages
+    .iter()
+    .map(|said| said.id.clone())
+    .collect();
+  for (username, said) in recovered {
+    if ids.insert(said.id.clone()) {
+      name(said.time(), &username);
+      history.messages.push(said);
+    }
+  }
+  history.messages.sort_by_key(Said::time);
   history.events.sort_by_key(|happened| happened.received);
   for said in &mut history.messages {
     said.deleted = deletions.get(&said.id).copied();
