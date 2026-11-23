@@ -87,6 +87,7 @@ fn config(dir: &TempDir, capture: Program, index: Program) -> Config {
     &dir.path().join("logs"),
   );
   config.capture = capture;
+  config.migrate = script(dir.path(), "migrate", &[Step::Exit(0)]);
   config.index = index;
   config.compact = quiet;
   config.compact_first = Duration::from_secs(3600);
@@ -211,6 +212,7 @@ fn runs_the_loggers_commands() {
       .join(" ")
   };
   assert_eq!(args(&config.capture), "capture --data data");
+  assert_eq!(args(&config.migrate), "migrate --data data");
   assert_eq!(args(&config.index), "index --follow --data data");
   assert_eq!(args(&config.compact), "compact --data data");
   assert_eq!(args(&config.sync), "sync --data data");
@@ -310,4 +312,54 @@ fn skips_sync_without_a_peer() {
   let dir = TempDir::new("deploy-supervise-no-peer-file");
   run_with_sync(&dir, None);
   assert!(!dir.path().join("logs").join("sync.log").exists());
+}
+
+/// Where `line` first is in the supervisor's log.
+fn said(dir: &TempDir, line: &str) -> usize {
+  let log = log(dir, "supervisor");
+  log
+    .find(line)
+    .unwrap_or_else(|| panic!("{line:?} not in:\n{log}"))
+}
+
+#[test]
+fn indexes_once_migrated() {
+  let dir = TempDir::new("deploy-supervise-migrate");
+  let capture = script(
+    dir.path(),
+    "capture",
+    &[Step::Say("capturing"), Step::Sleep(4), Step::Exit(0)],
+  );
+  let index = script(dir.path(), "index", &[Step::Say("indexing")]);
+  let mut config = config(&dir, capture, index);
+  config.migrate = script(
+    dir.path(),
+    "migrate",
+    &[Step::Say("migrating"), Step::Sleep(1), Step::Exit(0)],
+  );
+  run(&config, &Stop::new()).unwrap();
+  // Capture doesn't wait for it; the index does.
+  assert!(said(&dir, "capture: started") < said(&dir, "migrate: exited"));
+  assert!(said(&dir, "migrate: exited") < said(&dir, "index: started"));
+  assert!(log(&dir, "migrate").contains(" migrating"));
+  assert!(log(&dir, "index").contains(" indexing"));
+}
+
+#[test]
+fn a_failed_migration_leaves_index_compact_and_sync_off() {
+  let dir = TempDir::new("deploy-supervise-migrate");
+  let capture = script(
+    dir.path(),
+    "capture",
+    &[Step::Say("capturing"), Step::Sleep(2), Step::Exit(0)],
+  );
+  let index = script(dir.path(), "index", &[Step::Say("indexing")]);
+  let mut config = config(&dir, capture, index);
+  config.migrate = script(dir.path(), "migrate", &[Step::Exit(1)]);
+  config.compact_first = Duration::from_millis(10);
+  run(&config, &Stop::new()).unwrap();
+  said(&dir, "migrate failed");
+  assert!(log(&dir, "capture").contains(" capturing"));
+  assert!(!log(&dir, "supervisor").contains("index: started"));
+  assert!(!log(&dir, "supervisor").contains("compact: started"));
 }

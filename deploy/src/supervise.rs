@@ -4,6 +4,12 @@
 //! - `dgg-logger capture` is restarted after it fails. When it exits cleanly it has
 //!   handed off to a newer instance, so the supervisor stops everything and
 //!   exits too: starting a newer supervisor is how an upgrade happens.
+//! - `dgg-logger migrate` runs once, at start, alongside capture: it brings
+//!   the journal's archives and the index up to this build's formats, and
+//!   does nothing once they are. It waits for the locks below, so it runs
+//!   once an older supervisor has exited. Only once it has succeeded do
+//!   index, compact and sync start; if it fails, they wait for the next
+//!   start.
 //! - `dgg-logger index --follow` is always restarted. Only one supervisor runs it
 //!   at a time (`index.lock` in the data directory), so during a handoff the
 //!   new one waits for the old one to exit.
@@ -76,6 +82,7 @@ impl Default for Backoff {
 #[derive(Clone, Debug)]
 pub struct Config {
   pub capture: Program,
+  pub migrate: Program,
   pub index: Program,
   pub compact: Program,
   /// `sync`, without its peer: that's added from `peers`.
@@ -105,6 +112,7 @@ impl Config {
     };
     Self {
       capture: command(&["capture"]),
+      migrate: command(&["migrate"]),
       index: command(&["index", "--follow"]),
       compact: command(&["compact"]),
       sync: command(&["sync"]),
@@ -177,7 +185,12 @@ pub fn run(config: &Config, stop: &Stop) -> io::Result<Exit> {
     Ok(Arc::new(Mutex::new(log)))
   };
   let supervisor = open("supervisor")?;
-  let logs = [open("capture")?, open("index")?, open("compact")?];
+  let logs = [
+    open("capture")?,
+    open("migrate")?,
+    open("index")?,
+    open("compact")?,
+  ];
   let sync_log = match &config.peers {
     Some(_) => Some(open("sync")?),
     None => None,
@@ -201,8 +214,11 @@ pub fn run(config: &Config, stop: &Stop) -> io::Result<Exit> {
     lifeline: &lifeline,
   };
   let handed_off = AtomicBool::new(false);
+  // References, so the threads started from the migration's can take them.
+  let (context, programs, sync_log, supervisor) =
+    (&context, &programs, &sync_log, &supervisor);
   thread::scope(|scope| {
-    let [capture_log, index_log, compact_log] = &logs;
+    let [capture_log, migrate_log, index_log, compact_log] = &logs;
     scope.spawn(|| {
       let ended = keep_running(
         &config.capture,
@@ -210,41 +226,57 @@ pub fn run(config: &Config, stop: &Stop) -> io::Result<Exit> {
         capture_log,
         &config.backoff,
         true,
-        &context,
+        context,
       );
       if ended {
-        log_line(&supervisor, "capture handed off; stopping");
+        log_line(supervisor, "capture handed off; stopping");
         handed_off.store(true, Ordering::SeqCst);
       }
       programs.request();
     });
-    scope.spawn(|| {
-      let lock = config.lock_dir.join("index.lock");
-      let Some(_lock) = hold(&lock, &supervisor, &programs) else {
+    // The rest wait for the migration.
+    scope.spawn(move || {
+      match run_once(&config.migrate, "migrate", None, migrate_log, context) {
+        Some(Some(status)) if status.success() => {}
+        // Stopped.
+        None => return,
+        Some(_) => {
+          log_line(
+            supervisor,
+            "migrate failed; index, compact and sync wait for the next start",
+          );
+          return;
+        }
+      }
+      scope.spawn(move || {
+        let lock = config.lock_dir.join("index.lock");
+        let Some(_lock) = hold(&lock, supervisor, programs) else {
+          return;
+        };
+        keep_running(
+          &config.index,
+          "index",
+          index_log,
+          &config.backoff,
+          false,
+          context,
+        );
+      });
+      scope.spawn(move || {
+        let schedule = Schedule {
+          name: "compact",
+          lock: config.lock_dir.join("compact.lock"),
+          first: config.compact_first,
+          every: config.compact_every,
+        };
+        periodically(&schedule, compact_log, context, || {
+          vec![(None, config.compact.clone())]
+        });
+      });
+      let (Some(peers), Some(sync_log)) = (&config.peers, sync_log) else {
         return;
       };
-      keep_running(
-        &config.index,
-        "index",
-        index_log,
-        &config.backoff,
-        false,
-        &context,
-      );
-    });
-    scope.spawn(|| {
-      let schedule = Schedule {
-        name: "compact",
-        lock: config.lock_dir.join("compact.lock"),
-        first: config.compact_first,
-        every: config.compact_every,
-      };
-      periodically(&schedule, compact_log, &context, || {
-        vec![(None, config.compact.clone())]
-      });
-    });
-    if let (Some(peers), Some(sync_log)) = (&config.peers, &sync_log) {
-      scope.spawn(|| {
+      scope.spawn(move || {
         let schedule = Schedule {
           name: "sync",
           lock: config.lock_dir.join("sync.lock"),
@@ -253,7 +285,7 @@ pub fn run(config: &Config, stop: &Stop) -> io::Result<Exit> {
         };
         // What the peers were last round, to report only changes.
         let last = Mutex::new(None::<String>);
-        periodically(&schedule, sync_log, &context, || {
+        periodically(&schedule, sync_log, context, || {
           let found = peer::gather(peers);
           let mut said = if found.pull.is_empty() {
             format!("sync: no peers in {}", peers.display())
@@ -270,7 +302,7 @@ pub fn run(config: &Config, stop: &Stop) -> io::Result<Exit> {
           }
           let mut last = last.lock().unwrap();
           if last.as_ref() != Some(&said) {
-            log_line(&supervisor, &said);
+            log_line(supervisor, &said);
             *last = Some(said);
           }
           let ca = peer::ca(peers);
@@ -286,10 +318,10 @@ pub fn run(config: &Config, stop: &Stop) -> io::Result<Exit> {
             .collect()
         });
       });
-    }
+    });
     while !programs.wait(Duration::from_millis(200)) {
       if stop.requested() {
-        log_line(&supervisor, "stopping");
+        log_line(supervisor, "stopping");
         programs.request();
       }
     }
@@ -299,7 +331,7 @@ pub fn run(config: &Config, stop: &Stop) -> io::Result<Exit> {
   } else {
     Exit::Stopped
   };
-  log_line(&supervisor, &format!("supervisor exiting: {exit:?}"));
+  log_line(supervisor, &format!("supervisor exiting: {exit:?}"));
   Ok(exit)
 }
 

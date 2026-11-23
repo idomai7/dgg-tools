@@ -36,8 +36,14 @@ use {
 pub const STALE_MS: i64 = 5000;
 
 /// The logs a supervisor writes, in the order they're offered.
-pub const LOGS: [&str; 5] =
-  ["capture", "index", "compact", "supervisor", "sync"];
+pub const LOGS: [&str; 6] = [
+  "capture",
+  "index",
+  "compact",
+  "supervisor",
+  "sync",
+  "migrate",
+];
 
 /// One of the logger's processes.
 #[derive(Clone, Debug, PartialEq)]
