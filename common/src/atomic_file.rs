@@ -56,7 +56,9 @@ pub fn temporary(path: &Path) -> PathBuf {
   temporary.into()
 }
 
-fn rename(from: &Path, to: &Path) -> io::Result<()> {
+/// Renames `from` over `to`, trying a few times: Windows refuses while
+/// another process has `to` open.
+pub fn rename(from: &Path, to: &Path) -> io::Result<()> {
   let mut tries = 1;
   loop {
     match fs::rename(from, to) {

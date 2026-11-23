@@ -2,7 +2,7 @@
 //! zstd archives.
 
 use {
-  crate::compact::{closed_days, compact_day},
+  crate::compact::{DEFAULT_LEVEL, closed_days, compact_day},
   ::clap::Args,
   ::common::time::now_ms,
   ::logger_journal::layout::backfill_root,
@@ -18,7 +18,7 @@ pub struct Compact {
   #[arg(long, default_value_t = 1.0)]
   grace_hours: f64,
   /// zstd level, 1 (fast) to 22 (smallest).
-  #[arg(long, default_value_t = 19)]
+  #[arg(long, default_value_t = DEFAULT_LEVEL)]
   level: i32,
   /// Only list the days that would be compacted.
   #[arg(long)]

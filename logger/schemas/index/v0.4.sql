@@ -1,4 +1,4 @@
--- Index schema version 0.4, the current one (logger::index::SCHEMA_VERSION).
+-- Index schema version 0.4.
 --
 -- Changes from v0.3: files gains digest, so a re-merged archive (whose
 -- offsets no longer line up) is read again from the start.

@@ -53,6 +53,9 @@ use {
   },
 };
 
+/// The zstd level archives are compressed at by default.
+pub const DEFAULT_LEVEL: i32 = 19;
+
 /// What compacting one day did.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Day {
