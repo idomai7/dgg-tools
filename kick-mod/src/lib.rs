@@ -6,10 +6,8 @@
 //! - [`channels`]: `data/kick-mod/channels.json`, the channels kick-mod
 //!   knows, which it writes too.
 //! - [`serve`]: the page.
-//! - [`files`]: writing kick-mod's files.
 
 pub mod account;
 pub mod channels;
 pub mod config;
-pub mod files;
 pub mod serve;

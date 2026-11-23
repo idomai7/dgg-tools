@@ -9,7 +9,7 @@
 //! again.
 
 use {
-  crate::files,
+  ::common::atomic_file,
   ::kick_api::official::{
     Api, Error,
     api::User,
@@ -207,5 +207,5 @@ fn dead(error: &Error) -> bool {
 }
 
 fn save(path: &Path, token: &Token) -> io::Result<()> {
-  files::replace(path, &::serde_json::to_string(token)?)
+  atomic_file::replace(path, ::serde_json::to_string(token)?)
 }

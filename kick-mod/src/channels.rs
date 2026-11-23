@@ -10,11 +10,11 @@
 //! It's written whole, pretty-printed and sorted by slug. [`update`]
 //! re-reads it just before writing, so hand edits made while kick-mod runs
 //! survive, and fields kick-mod doesn't know are kept. It's
-//! [replaced](files::replace) whole, never half-written. A hand edit saved
-//! between the read and the write is still lost.
+//! [replaced](::common::atomic_file) whole, never half-written. A hand edit
+//! saved between the read and the write is still lost.
 
 use {
-  crate::files,
+  ::common::atomic_file,
   ::serde::{Deserialize, Serialize},
   ::serde_json::{Map, Value},
   ::std::{collections::BTreeMap, fs, io, path::Path},
@@ -82,5 +82,5 @@ pub fn record(
 fn write(path: &Path, channels: &Channels) -> io::Result<()> {
   let mut text = ::serde_json::to_string_pretty(channels)?;
   text.push('\n');
-  files::replace(path, &text)
+  atomic_file::replace(path, text)
 }
