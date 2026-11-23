@@ -114,14 +114,16 @@ the [overall rules](README.md), and [deploy](deploy.md) for the mesh it runs on.
         above. Its size, bytes, records and SHA-256 are taken from the file
         as read back.
       - **Replacing it:** a month at a time. Once every archive of a month
-        has been validated, each is renamed over its old one, then the
-        month's manifest is written (`journal-archive dgg.0.1`) with the new
-        entries. A month with a failure is left as it was, and reported, and
-        the rest carry on.
+        has been validated, the index is upgraded for them (below), then each
+        is renamed over its old one, then the month's manifest is written
+        (`journal-archive dgg.0.1`) with the new entries. A month with a
+        failure is left as it was, and reported, and the rest carry on.
       - **Rerunning it** is safe: an archive already in `dgg.0.2` isn't
         converted again, only checked against its manifest entry, which is
         rewritten from the file if a crash came between the rename and the
-        manifest. Leftover `.new` files are removed first.
+        manifest. Leftover `.new` files are removed first. A conversion is
+        deterministic, so one redone after a crash gives the same bytes and
+        SHA-256 as the index was upgraded for.
       - `dgg-logger migrate --dry-run` converts and validates without
         replacing anything, and reports what it would do.
       - **Taken archives:** `control/synced-archives` lists peers' archives by
@@ -129,12 +131,38 @@ the [overall rules](README.md), and [deploy](deploy.md) for the mesh it runs on.
         same bytes on both hosts, so they still match. One that was merged
         with local files differs, so after both hosts migrate it's taken once
         more and merged again; deduplication makes that harmless.
-      - **Index:** `index --rebuild` after. Changed digests alone would make
-        it read every archive again, which deduplication makes harmless, but
-        `unparsed` rows keyed by old offsets would linger.
-      - **Rollout:** stop both hosts' supervisors; install the new build on
-        both; `migrate --dry-run`, then `migrate`, on each; `index
-        --rebuild`; start the supervisors.
+      - **Upgrading the index,** rather than rebuilding it. Only two tables
+        hold offsets into journal files: `files` (an archive's checkpoint and
+        SHA-256) and `unparsed` (where a record that couldn't be indexed
+        starts). Messages hold none. Validating an archive pairs each old
+        record with its new one, so their offsets map exactly.
+        - For each archive of the month, in one transaction: if its `files`
+          row has the old SHA-256, its offset is mapped to the new file's
+          (a record's end, or the header's), its digest set to the new
+          SHA-256, and its `unparsed` rows' offsets mapped too (a record's
+          start). An offset that isn't a record's boundary fails the month.
+        - A row with any other digest, or none, is left alone: the index
+          reads that archive again anyway, as it would have.
+        - The transaction commits before the archives are renamed. A crash
+          between leaves rows naming new SHA-256s while the old archives are
+          still there; the index would read those again harmlessly, and the
+          rerun converts them to exactly those SHA-256s.
+        - Once every month has been migrated, the index's schema becomes
+          0.5: the same tables, its archive offsets into `dgg.0.2` files. An
+          index at 0.4 is refused, as now, so nothing indexes old offsets
+          into new archives. `index --rebuild` still works at any time.
+      - **The supervisor runs it:** there's one host, and no peers sync now.
+        On starting, before anything else, it runs `migrate`, which does
+        nothing once every manifest is `dgg.0.1` and the index is at 0.5.
+        - `capture` starts at once regardless: it only writes live files,
+          already `dgg.0.2`.
+        - `index`, `compact` and `sync` start once the migration has
+          succeeded. If it fails, they don't, and the failure is in the
+          supervisor's log and the status page; the next start tries again.
+        - Converting at level 19 is slow, so a large journal can take a
+          while; capture runs meanwhile.
+      - **Rollout:** install the new build and restart the supervisor.
+        `migrate --dry-run` can be run by hand first.
     - **Steps,** each its own commit and review. A and B ship together:
       without B, compaction splits the new files on LF.
       1. **A, logger-journal:** RS LF framing by header, `dgg.0.2`, the
