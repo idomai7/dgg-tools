@@ -17,7 +17,7 @@ pub struct Index {
   /// Delete the index and rebuild it from the whole journal.
   #[arg(long)]
   rebuild: bool,
-  /// Keep running, indexing new journal lines as they're written. Stopping
+  /// Keep running, indexing new journal records as they're written. Stopping
   /// it at any point is safe: an interrupted batch is rolled back and redone.
   #[arg(long)]
   follow: bool,
@@ -107,11 +107,11 @@ impl Reporter {
         eprintln!("skipped {file}: {why}");
       }
     }
-    self.totals.lines += stats.lines;
+    self.totals.records += stats.records;
     self.totals.messages += stats.messages;
     self.totals.backfilled += stats.backfilled;
     self.totals.unparsed += stats.unparsed;
-    if self.totals.lines > 0 && self.since.elapsed() >= self.period {
+    if self.totals.records > 0 && self.since.elapsed() >= self.period {
       print_counts(&self.totals);
       self.totals = Stats::default();
       self.since = Instant::now();
@@ -121,8 +121,8 @@ impl Reporter {
 
 fn print_counts(stats: &Stats) {
   eprintln!(
-    "{} lines, {} new messages ({} backfilled), {} unparsed",
-    stats.lines, stats.messages, stats.backfilled, stats.unparsed
+    "{} records, {} new messages ({} backfilled), {} unparsed",
+    stats.records, stats.messages, stats.backfilled, stats.unparsed
   );
 }
 

@@ -216,7 +216,7 @@ fn converts_archives_and_upgrades_the_index() {
   // So indexing reads nothing again, and nothing's lost.
   let mut db = open(&data.join("index.sqlite")).unwrap();
   let stats = index(&mut db, &journal).unwrap();
-  assert_eq!(stats.lines, 0);
+  assert_eq!(stats.records, 0);
   assert_eq!(messages(&db), had);
   drop(db);
 

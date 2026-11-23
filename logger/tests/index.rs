@@ -105,7 +105,7 @@ fn indexes_and_deduplicates() {
   write_journal(&root);
   let mut db = open(&database(&root)).unwrap();
   let stats = index(&mut db, &journal(&root)).unwrap();
-  assert_eq!((stats.lines, stats.messages, stats.unparsed), (11, 3, 2));
+  assert_eq!((stats.records, stats.messages, stats.unparsed), (11, 3, 2));
   assert_eq!(stats.skipped, []);
   assert_eq!(
     messages(&db),
@@ -154,7 +154,7 @@ fn resumes_from_checkpoints() {
   let mut db = open(&database(&root)).unwrap();
   index(&mut db, &journal(&root)).unwrap();
   let again = index(&mut db, &journal(&root)).unwrap();
-  assert_eq!((again.lines, again.messages), (0, 0));
+  assert_eq!((again.records, again.messages), (0, 0));
 
   // b keeps writing; only the new line is read.
   let mut b = Writer::new(journal(&root), "b");
@@ -162,7 +162,7 @@ fn resumes_from_checkpoints() {
     .unwrap();
   drop(b);
   let more = index(&mut db, &journal(&root)).unwrap();
-  assert_eq!((more.lines, more.messages), (1, 1));
+  assert_eq!((more.records, more.messages), (1, 1));
   assert_eq!(messages(&db).len(), 4);
 
   // A rebuild from scratch gives the same index.
@@ -434,7 +434,7 @@ fn follows_files_into_archives() {
     .unwrap()
     .unwrap();
   let archived = index(&mut db, &journal(&root)).unwrap();
-  assert_eq!((archived.lines, archived.messages), (3, 0));
+  assert_eq!((archived.records, archived.messages), (3, 0));
   let paths = |db: &Connection| -> Vec<(String, bool)> {
     db.prepare("SELECT path, digest IS NOT NULL FROM files ORDER BY path")
       .unwrap()
@@ -446,7 +446,7 @@ fn follows_files_into_archives() {
   let archive_path = "archive/1970/01/1970-01-01.journal.zst".to_owned();
   assert_eq!(paths(&db), [(archive_path.clone(), true)]);
   let idle = index(&mut db, &journal(&root)).unwrap();
-  assert_eq!(idle.lines, 0);
+  assert_eq!(idle.records, 0);
 
   // A late file re-merges the archive: its digest changes, so it's read
   // again from the start, and the late message arrives.
@@ -458,7 +458,7 @@ fn follows_files_into_archives() {
     .unwrap()
     .unwrap();
   let remerged = index(&mut db, &journal(&root)).unwrap();
-  assert_eq!((remerged.lines, remerged.messages), (5, 1));
+  assert_eq!((remerged.records, remerged.messages), (5, 1));
   assert_eq!(paths(&db), [(archive_path, true)]);
 
   // Rebuilding from archives alone gives the same index.

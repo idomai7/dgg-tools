@@ -63,7 +63,7 @@ pub fn schema_version(user_version: i64) -> Version {
 /// an old one.
 const SCHEMA: &str = include_str!("../schemas/index/v0.5.sql");
 
-/// Lines are committed in batches of this many, with their checkpoint.
+/// Records are committed in batches of this many, with their checkpoint.
 const BATCH: usize = 10_000;
 
 #[derive(Debug)]
@@ -112,13 +112,13 @@ impl ::std::fmt::Display for Error {
 /// What one [`index`] run did.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Stats {
-  /// Journal lines read.
-  pub lines: u64,
+  /// Journal records read.
+  pub records: u64,
   /// Messages added to the index (not counting ones already there).
   pub messages: u64,
   /// Of those, how many were backfilled.
   pub backfilled: u64,
-  /// Lines or HISTORY entries that couldn't be indexed; see `unparsed`.
+  /// Records or HISTORY entries that couldn't be indexed; see `unparsed`.
   pub unparsed: u64,
   /// Files skipped because their header couldn't be read, with why.
   pub skipped: Vec<(String, String)>,
@@ -333,18 +333,18 @@ fn index_file(
 ) -> Result<(), Error> {
   loop {
     let transaction = db.transaction()?;
-    let mut lines = 0;
+    let mut records = 0;
     // Latest receive time per connection in this batch.
     let mut last_seen = HashMap::new();
     for entry in reader.by_ref().take(BATCH) {
-      lines += 1;
+      records += 1;
       match entry {
         Ok(Entry {
           offset,
           record: Record::Kick0(_),
           ..
         }) => {
-          unparsed(&transaction, path, offset, 0, "a Kick line, in dgg's")?;
+          unparsed(&transaction, path, offset, 0, "a Kick record, in dgg's")?;
           stats.unparsed += 1;
         }
         Ok(Entry {
@@ -355,14 +355,14 @@ fn index_file(
           let key = (record.instance.clone(), record.connection);
           let seen = last_seen.entry(key).or_insert(record.receive_time);
           *seen = record.receive_time.max(*seen);
-          let line = Line {
+          let origin = Origin {
             path,
             offset,
             instance: &record.instance,
             connection: record.connection,
             received: record.receive_time,
           };
-          index_body(&transaction, &line, record.body, stats)?;
+          index_body(&transaction, &origin, record.body, stats)?;
         }
         Err(ReadError::Line { offset, error }) => {
           unparsed(&transaction, path, offset, 0, &format!("{error:?}"))?;
@@ -386,15 +386,15 @@ fn index_file(
       params![path, reader.offset() as i64, digest],
     )?;
     transaction.commit()?;
-    stats.lines += lines;
-    if lines < BATCH as u64 {
+    stats.records += records;
+    if records < BATCH as u64 {
       return Ok(());
     }
   }
 }
 
 /// Where a record came from.
-struct Line<'a> {
+struct Origin<'a> {
   path: &'a str,
   offset: u64,
   instance: &'a str,
@@ -404,7 +404,7 @@ struct Line<'a> {
 
 fn index_body(
   db: &Transaction,
-  line: &Line,
+  origin: &Origin,
   body: Body,
   stats: &mut Stats,
 ) -> Result<(), Error> {
@@ -414,23 +414,33 @@ fn index_body(
         "INSERT OR IGNORE INTO connections
           (instance, connection, url, opened, last_seen)
           VALUES (?1, ?2, ?3, ?4, ?4)",
-        params![line.instance, line.connection as i64, url, line.received],
+        params![
+          origin.instance,
+          origin.connection as i64,
+          url,
+          origin.received
+        ],
       )?;
     }
     Body::Close(reason) => {
       db.execute(
         "UPDATE connections SET closed = ?3, close_reason = ?4
           WHERE instance = ?1 AND connection = ?2",
-        params![line.instance, line.connection as i64, line.received, reason],
+        params![
+          origin.instance,
+          origin.connection as i64,
+          origin.received,
+          reason
+        ],
       )?;
     }
     Body::Frame(frame) => {
       let (event, payload) = frame.split_once(' ').unwrap_or((&frame, ""));
       match event {
         "MSG" => {
-          message(db, line, 0, payload, "live", stats)?;
+          message(db, origin, 0, payload, "live", stats)?;
         }
-        "HISTORY" => history(db, line, payload, stats)?,
+        "HISTORY" => history(db, origin, payload, stats)?,
         _ => {}
       }
     }
@@ -439,7 +449,7 @@ fn index_body(
       timestamp,
       nick,
       text,
-    } => fetched(db, line, &source, timestamp, &nick, &text, stats)?,
+    } => fetched(db, origin, &source, timestamp, &nick, &text, stats)?,
     Body::FetchRange { source, from, to } => {
       db.execute(
         "INSERT OR IGNORE INTO fetch_ranges (source, start_time, end_time)
@@ -456,12 +466,18 @@ fn index_body(
 /// the oldest one on the connection so gaps it covers can be told apart.
 fn history(
   db: &Transaction,
-  line: &Line,
+  origin: &Origin,
   payload: &str,
   stats: &mut Stats,
 ) -> Result<(), Error> {
   let Ok(Value::Array(entries)) = ::serde_json::from_str(payload) else {
-    unparsed(db, line.path, line.offset, 0, "HISTORY not a JSON array")?;
+    unparsed(
+      db,
+      origin.path,
+      origin.offset,
+      0,
+      "HISTORY not a JSON array",
+    )?;
     stats.unparsed += 1;
     return Ok(());
   };
@@ -470,8 +486,8 @@ fn history(
     let Value::String(frame) = entry else {
       unparsed(
         db,
-        line.path,
-        line.offset,
+        origin.path,
+        origin.offset,
         item,
         "HISTORY entry not a frame",
       )?;
@@ -480,7 +496,7 @@ fn history(
     };
     if let Some(payload) = frame.strip_prefix("MSG ")
       && let Some(timestamp) =
-        message(db, line, item, payload, "history", stats)?
+        message(db, origin, item, payload, "history", stats)?
     {
       oldest = Some(oldest.map_or(timestamp, |o: i64| o.min(timestamp)));
     }
@@ -489,7 +505,7 @@ fn history(
     db.execute(
       "UPDATE connections SET history_from = min(coalesce(history_from, ?3), ?3)
         WHERE instance = ?1 AND connection = ?2",
-      params![line.instance, line.connection as i64, oldest],
+      params![origin.instance, origin.connection as i64, oldest],
     )?;
   }
   Ok(())
@@ -499,7 +515,7 @@ fn history(
 /// Returns its timestamp, or `None` if it couldn't be parsed.
 fn message(
   db: &Transaction,
-  line: &Line,
+  origin: &Origin,
   item: u64,
   payload: &str,
   source: &str,
@@ -519,7 +535,7 @@ fn message(
   let (timestamp, nick, data, features) = match parsed {
     Ok(parsed) => parsed,
     Err(reason) => {
-      unparsed(db, line.path, line.offset, item, reason)?;
+      unparsed(db, origin.path, origin.offset, item, reason)?;
       stats.unparsed += 1;
       return Ok(None);
     }
@@ -531,7 +547,7 @@ fn message(
     &nick,
     &data,
     &features,
-    line.received,
+    origin.received,
     source,
   )?;
   if inserted {
@@ -552,7 +568,7 @@ fn message(
             THEN min(received, ?4) ELSE ?4 END,
           source = 'live'
         WHERE timestamp = ?1 AND nick = ?2 AND data = ?3",
-      params![timestamp, nick, data, line.received],
+      params![timestamp, nick, data, origin.received],
     )?;
   }
   Ok(Some(timestamp))
@@ -563,7 +579,7 @@ fn message(
 /// truncated, so it matches anything from that user within its second.
 fn fetched(
   db: &Transaction,
-  line: &Line,
+  origin: &Origin,
   source: &str,
   timestamp: i64,
   nick: &str,
@@ -619,7 +635,7 @@ fn fetched(
   remove_backfilled(db, timestamp, nick)?;
   let nick = cased.as_deref().unwrap_or(nick);
   let source = format!("backfill:{source}");
-  if insert(db, timestamp, nick, text, "[]", line.received, &source)? {
+  if insert(db, timestamp, nick, text, "[]", origin.received, &source)? {
     stats.messages += 1;
     stats.backfilled += 1;
   }
