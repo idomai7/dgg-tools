@@ -278,7 +278,7 @@ fn pages_rustlesearch_searches() {
 }
 
 #[test]
-fn parses_linkers_responses() {
+fn pages_linkers_answers() {
   let item = |id, timestamp: &str, user: &str, kind: &str| {
     ::serde_json::json!({
       "id": id,
@@ -316,7 +316,9 @@ fn parses_linkers_responses() {
   let at = |seconds: i64| 1_794_168_240_000 + seconds * 1000;
 
   // A short page is the last; nothing is trimmed.
-  let page = linkers::parse(&body(items.clone()), 5).unwrap();
+  let page =
+    linkers::page(::linkers_api::parse(&body(items.clone())).unwrap(), 5)
+      .unwrap();
   assert!(page.exhausted);
   assert_eq!(
     listed(&page),
@@ -330,7 +332,9 @@ fn parses_linkers_responses() {
   assert_eq!(page.messages[0].nick, "Spr1ggs");
 
   // A full page leaves its oldest second for the next.
-  let page = linkers::parse(&body(items.clone()), 4).unwrap();
+  let page =
+    linkers::page(::linkers_api::parse(&body(items.clone())).unwrap(), 4)
+      .unwrap();
   assert!(!page.exhausted);
   assert_eq!(
     listed(&page),
@@ -339,7 +343,8 @@ fn parses_linkers_responses() {
 
   // Unless that second is all there is.
   let same = vec![items[2].clone(), items[3].clone()];
-  let page = linkers::parse(&body(same), 2).unwrap();
+  let page =
+    linkers::page(::linkers_api::parse(&body(same)).unwrap(), 2).unwrap();
   assert_eq!(page.messages.len(), 2);
 
   // Other kinds are dropped, but still count toward a full page.
@@ -347,7 +352,8 @@ fn parses_linkers_responses() {
     items[0].clone(),
     item(9, "2026-11-08T20:04:58.000Z", "Bot", "BAN"),
   ];
-  let page = linkers::parse(&body(mixed), 3).unwrap();
+  let page =
+    linkers::page(::linkers_api::parse(&body(mixed)).unwrap(), 3).unwrap();
   assert!(page.exhausted);
   assert_eq!(listed(&page), [(at(60), "Spr1ggs 4".into())]);
 
@@ -359,7 +365,11 @@ fn parses_linkers_responses() {
   old["source"] = "overrustle".into();
   let mut own = items[0].clone();
   own["source"] = "linkers".into();
-  let page = linkers::parse(&body(vec![own, relayed, old.clone()]), 5).unwrap();
+  let page = linkers::page(
+    ::linkers_api::parse(&body(vec![own, relayed, old.clone()])).unwrap(),
+    5,
+  )
+  .unwrap();
   let origins: Vec<_> = page
     .messages
     .iter()
@@ -374,8 +384,6 @@ fn parses_linkers_responses() {
     ]
   );
   old["source"] = "two words".into();
-  assert!(linkers::parse(&body(vec![old]), 5).is_err());
-
-  assert!(linkers::parse(r#"{"error":"Failed"}"#, 5).is_err());
-  assert!(linkers::parse("<html>", 5).is_err());
+  let answer = ::linkers_api::parse(&body(vec![old])).unwrap();
+  assert!(linkers::page(answer, 5).is_err());
 }

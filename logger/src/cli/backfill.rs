@@ -178,17 +178,18 @@ impl Backfill {
       retries: self.retries.unwrap_or(retries),
       report: self.report.or(report).map(Duration::from_secs_f64),
     };
+    let _ = ::rustls::crypto::ring::default_provider().install_default();
+    let http = ::reqwest::Client::new();
     match self.source {
       SourceName::Rustlesearch => {
-        let _ = ::rustls::crypto::ring::default_provider().install_default();
-        let http = ::reqwest::Client::new();
         let api = ::rustlesearch_api::Api::new(http, crate::USER_AGENT);
         let source = Rustlesearch::new(api, "Destinygg");
         fetch(&source, &ranges, &options, what).await
       }
       SourceName::Linkers => {
-        let base = crate::backfill::linkers::BASE_URL;
-        let source = Linkers::new(base, self.linkers_session);
+        let api = ::linkers_api::Api::new(http, crate::USER_AGENT)
+          .with_session(self.linkers_session);
+        let source = Linkers::new(api);
         fetch(&source, &ranges, &options, what).await
       }
     }
