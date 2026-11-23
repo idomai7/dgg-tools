@@ -1558,7 +1558,6 @@ dependencies = [
  "base64",
  "common",
  "futures-util",
- "getrandom 0.4.3",
  "reqwest",
  "rustls",
  "serde",
