@@ -42,6 +42,12 @@ pub fn numbered_live_file(
   live_dir(root).join(day).join(name)
 }
 
+/// Kick's journal root under dgg's journal `root`: `<root>/kick`, holding a
+/// journal root per channel.
+pub fn kick_root(root: &Path) -> PathBuf {
+  root.join("kick")
+}
+
 /// The journal root for one Kick channel under Kick's journal root
 /// `kick_root`: `<kick_root>/<slug>`, laid out like any other.
 pub fn channel_root(kick_root: &Path, slug: &str) -> PathBuf {
