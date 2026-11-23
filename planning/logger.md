@@ -25,7 +25,8 @@ the [overall rules](README.md), and [deploy](deploy.md) for the mesh it runs on.
       its data holds LFs verbatim and a record may span lines. Text data
       holding an RS is written base64, with the kind suffixed `64`, so an RS
       only ever ends a record, and a record with one inside is bad. Valid JSON
-      can't hold an RS. The header is still a line ending at LF.
+      can't hold an RS. The header ends at RS LF too, so every record, the
+      header included, can be split on it.
     - What dgg's readers (index, status) find of Kick's in a dgg root is
       skipped, or recorded as unparsed.
   - **Header line:** the required fields, then a lone `;`, then informational
@@ -203,14 +204,35 @@ the [overall rules](README.md), and [deploy](deploy.md) for the mesh it runs on.
       3. **C, the migration:** `dgg-logger migrate`, and the supervisor
          running it. Done; not deployed yet.
       4. **D:** the rollout, on the one host: install the new build, as
-         for any upgrade, and watch `migrate.log`.
+         for any upgrade, and watch `migrate.log`. Done on one host, which
+         is at `dgg.0.2`; the other is still at `journal 0.1`.
+    - **Headers end at RS LF too:** so every record, the header included,
+      can be split on RS LF. The header still ends at the first LF, with the
+      RS before it, so a reader finds it before it knows the framing. Each
+      format says from which version its header ends at RS LF; older
+      versions are still read.
+      - New versions: `journal dgg.0.3`, `journal-archive dgg.0.2`,
+        `journal-manifest dgg.0.2` and `synced-archives dgg.0.2`. `kick.0.0`
+        (journal and manifest), never written, is redefined.
+      - `capture-status dgg.0.2` is read, but not yet written: phase 1
+        again, as for `dgg.0.1`, which was never written either.
+      - `migrate` takes archives of `journal 0.1` or `dgg.0.2` to
+        `dgg.0.3`: from 0.2, only the header changes, every offset moving
+        a byte on. The index goes from schema 0.4 or 0.5 to 0.6.
+      - **Rollout:** first the host at `dgg.0.2`, then the other, which
+        goes from `journal 0.1` to `dgg.0.3` at once. Both paths were run
+        with the real builds (the original, the deployed one, and this),
+        each checked against an index rebuilt from scratch.
+      - Found along the way, as every build has done: the index keeps
+        `unparsed` rows for live files compaction has deleted, as
+        `forget_gone` only forgets their `files` rows.
 
 ## Design
 - **Journal layout:**
   - `data/journal/live/YYYY-MM-DD/<instance>.journal`: one file per capture
     instance per day. These are the hot files.
   - `data/journal/archive/YYYY/MM/YYYY-MM-DD.journal.zst` plus a `manifest`
-    per month (`journal-archive dgg.0.1`). These are cold.
+    per month (`journal-archive dgg.0.2`). These are cold.
   - `data/journal/control/<instance>.status`: heartbeats (`capture-status 0.0`;
     see `logger/src/control.rs`).
   - `data/journal/backfill/YYYY-MM-DD/<instance>.journal`: what was fetched from
@@ -223,8 +245,8 @@ the [overall rules](README.md), and [deploy](deploy.md) for the mesh it runs on.
   the `logger-journal` crate: each major version has its own module
   (`logger-journal/src/record/v0.rs`) holding its structure, encoding and
   decoding, so several formats can coexist in the library.
-  - Each file starts with `journal dgg.<major>.<minor>` (currently `0.2`;
-    `journal 0.1` before variants).
+  - Each file starts with `journal dgg.<major>.<minor>` (currently `0.3`;
+    `journal 0.1` before variants), ending at RS LF (at LF up to 0.2).
   - Versioned like every format (see the [overall rules](README.md)).
   - Each record is `<receive-time> <instance> <connection> <kind> <data>`,
     separated by single spaces, with `data` verbatim to the end of the
@@ -282,7 +304,7 @@ the [overall rules](README.md), and [deploy](deploy.md) for the mesh it runs on.
   - `--rebuild` replays the whole journal. An index from another schema version
     must be rebuilt.
 - **serve / sync:** `serve` also lists live files (`GET /manifest`, format
-  `journal-manifest dgg.0.1`) and serves their bytes
+  `journal-manifest dgg.0.2`) and serves their bytes
   (`GET /files/live/<day>/<instance>.journal`, honouring `Range: bytes=N-`).
   - `sync --peer <url>` appends whatever remote bytes are missing locally, then
     fsyncs. Journal files are append-only, so a local copy is always a prefix of
