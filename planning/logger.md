@@ -6,16 +6,24 @@ the [overall rules](README.md), and [deploy](deploy.md) for the mesh it runs on.
 ## Decisions
 - **Storage:** an append-only raw journal is the source of truth. SQLite
   (rusqlite, `bundled`) is an index that can be rebuilt from it.
-- **Kick journals (planned):** the journal format also covers Kick, for
+- **Kick journals:** the journal format also covers Kick, for
   [kick-mod](kick-mod.md) now and a Kick logger later. It stays in
-  `logger-journal`.
+  `logger-journal`. Written by kick-mod; nothing compacts, syncs or indexes
+  Kick's journals yet.
   - **Variants:** each platform is a variant of the format, versioned on its own
     as `<variant>.<major>.<minor>`, so one platform's changes never break the
     other's. Their events have little in common anyway.
     - Each variant's majors get their own modules in `logger-journal`, like
-      `record/v0.rs` today.
+      `record/v0.rs` today: Kick's are under `record/kick/`.
     - Kick starts at `kick.0.0`. dgg's current `journal 0.1` files are dgg's,
       read as they are until dgg's logger moves to `dgg.0.<minor>`.
+    - `kick.0.0` has dgg's line shape (`<receive-time> <instance>
+      <connection> <kind> <data>`, shared code in `record/line.rs`), with only
+      `frame`, `binary`, `open` and `close`. A frame is Centrifugo's raw text,
+      usually several JSON replies separated by LFs, so it's mostly written
+      as `frame64`.
+    - What dgg's readers (index, status) find of Kick's in a dgg root is
+      skipped, or recorded as unparsed.
   - **Header line:** the required fields, then a lone `;`, then informational
     `key=value` fields. For example:
     `journal kick.0.0 ; endpoint=wss://… channel=destiny`.
@@ -23,12 +31,17 @@ the [overall rules](README.md), and [deploy](deploy.md) for the mesh it runs on.
       changes the format.
     - Informational: redundant information and notes, always written but safe to
       ignore. Readers skip keys they don't know, so new keys never change the
-      format.
+      format. Keys are `[a-z0-9_]+`; values can't hold a space.
+    - dgg's header is still written without a variant or fields.
     - `endpoint`: the websocket address for dgg, the socket URL for Kick. It's
       the same URL the `open` lines record: the one connected to, as given. So a
       file only ever holds connections to one endpoint, and connecting to a
       different endpoint starts the next file, `<instance>.<n>.journal`,
       numbered in sequence.
+      - Even going back to an earlier endpoint starts the next file, so a
+        day's files are in order by number. By name they sort out of order
+        (`i.2.journal` before `i.journal`), so readers go by number.
+      - Lines before any `open` go in a file whose header has no endpoint.
     - `channel` (Kick): the channel the file's connection is subscribed to, also
       given by the path.
   - **Layout:** each platform has its own journal root, so sync and compact

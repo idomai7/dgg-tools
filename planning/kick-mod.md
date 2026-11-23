@@ -21,7 +21,9 @@ A chat client and moderation tools for Kick channels. Kick only, built on
   shouldn't be designed out.
 - **Connections:** one Centrifugo connection per channel.
 - **History:** kick-mod journals the chat it receives, locally, in the logger's
-  journal format (see [logger](logger.md)).
+  journal format (see [logger](logger.md)): Kick's variant, under
+  `data/kick-mod/journal/<slug>/` (`--journal` for another root), with an
+  instance per run, `kick-mod-<start unix ms>`.
   - A separate always-on Kick logger, like dgg's, comes later. It and kick-mod
     write compatible journals, so kick-mod's files can be merged into it.
   - Until then, history covers only the times kick-mod was running.
@@ -104,9 +106,15 @@ Each is a pause for review.
    - A refused action doesn't sign the moderator out, even with a 400 or
      401: Kick answers a bad request with 400 too. The page's next check of
      who's signed in does.
+5. **Journal:** each channel's connection is journaled as it arrives, raw:
+   frames, and opens and closes.
+   - A stop, which has no disconnect of its own, closes the open connection.
+   - A channel whose slug can't be a directory's name isn't journaled. A
+     write that fails stops that channel's journal until a restart, said on
+     stderr.
+   - Quitting kick-mod writes no close: the file just ends.
 
 Later, each its own step:
-- The Kick journal variant in `logger-journal`, so chat is kept.
-- User history lookup, which reads it.
+- User history lookup, which reads the journal.
 - Automod rules.
 - The login, and per-moderator config.
