@@ -7,13 +7,15 @@ pub mod cert;
 pub mod compact;
 pub mod gaps;
 pub mod index;
+pub mod kick_ids;
 pub mod migrate;
 pub mod serve;
 pub mod sync;
 
 pub use {
   backfill::Backfill, capture::Capture, cert::Cert, compact::Compact,
-  gaps::Gaps, index::Index, migrate::Migrate, serve::Serve, sync::Sync,
+  gaps::Gaps, index::Index, kick_ids::KickIds, migrate::Migrate, serve::Serve,
+  sync::Sync,
 };
 
 /// The CA certificate at `peer_ca`, if given, checked, for reaching `url`,

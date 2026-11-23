@@ -10,6 +10,7 @@ version-info.workspace = true
 [dependencies]
 common.workspace = true
 dgg-api = { workspace = true, features = ["client"] }
+kick-api = { workspace = true, features = ["lookup"] }
 linkers-api = { workspace = true, features = ["http"] }
 logger-journal.workspace = true
 rustlesearch-api = { workspace = true, features = ["http"] }
