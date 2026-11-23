@@ -9,15 +9,14 @@
 
 use {
   crate::control::{self, Status},
+  ::common::time::{now_ms, utc_timestamp},
   ::dgg_api::chat::{Client, Item, Options},
-  ::logger_journal::{
-    Writer, layout::utc_day, record::v0::Body, writer::SYNC_INTERVAL,
-  },
+  ::logger_journal::{Writer, record::v0::Body, writer::SYNC_INTERVAL},
   ::std::{
     fmt::Display,
     io,
     path::{Path, PathBuf},
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::Duration,
   },
 };
 
@@ -42,25 +41,6 @@ pub fn instance_id(host: &str, start_ms: i64) -> String {
   format!("{host}-{start_ms}")
 }
 
-/// Unix ms now.
-pub fn now_ms() -> i64 {
-  let since = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-  since.as_millis() as i64
-}
-
-/// `YYYY-MM-DD HH:MM:SS.mmmZ` for unix ms `ms`, as log lines start.
-pub fn timestamp(ms: i64) -> String {
-  let of_day = ms.rem_euclid(86_400_000);
-  format!(
-    "{} {:02}:{:02}:{:02}.{:03}Z",
-    utc_day(ms),
-    of_day / 3_600_000,
-    of_day / 60_000 % 60,
-    of_day / 1000 % 60,
-    of_day % 1000
-  )
-}
-
 /// Writes a capture's own lines to stderr, each naming the instance. A
 /// bridge's (a capture an install starts, with no supervisor to timestamp
 /// its lines) are timestamped and marked too.
@@ -75,7 +55,7 @@ impl Say {
     if self.bridge {
       eprintln!(
         "{} {} (bridge): {message}",
-        timestamp(now_ms()),
+        utc_timestamp(now_ms()),
         self.instance
       );
     } else {

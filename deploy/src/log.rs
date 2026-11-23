@@ -3,12 +3,13 @@
 //! `capture.log` grows to `max_size`, then becomes `capture.1.log` (the
 //! previous `.1` becoming `.2`, and so on), keeping `keep` old files.
 
-pub use ::logger::capture::{now_ms, timestamp};
-
-use ::std::{
-  fs::{self, File, OpenOptions},
-  io::{self, Write},
-  path::{Path, PathBuf},
+use {
+  ::common::time::{now_ms, utc_timestamp},
+  ::std::{
+    fs::{self, File, OpenOptions},
+    io::{self, Write},
+    path::{Path, PathBuf},
+  },
 };
 
 /// `<stem>.<n>.<extension>` beside `path`: its `n`th rotated copy.
@@ -59,7 +60,7 @@ impl Log {
   /// Appends `line` with unix ms `ms` in front, rotating first if it would
   /// take the file past its maximum size.
   pub fn line_at(&mut self, ms: i64, line: &str) -> io::Result<()> {
-    let text = format!("{} {line}\n", timestamp(ms));
+    let text = format!("{} {line}\n", utc_timestamp(ms));
     if self.size > 0 && self.size + text.len() as u64 > self.max_size {
       self.rotate()?;
     }

@@ -9,15 +9,12 @@ pub mod format;
 pub mod watch;
 
 use {
-  crate::{
-    log::{now_ms, timestamp},
-    paths::Paths,
-    peer, processes,
-  },
+  crate::{paths::Paths, peer, processes},
+  ::common::time::{now_ms, utc_day, utc_timestamp},
   ::logger::{control, index},
   ::logger_journal::{
     Reader, Record, archive,
-    layout::{backfill_files, backfill_root, live_files, utc_day},
+    layout::{backfill_files, backfill_root, live_files},
     record::v0,
   },
   ::std::{
@@ -452,7 +449,7 @@ pub fn capture_tail(
 
 /// One record, as [`capture_tail`] shows it.
 fn record_line(record: &v0::Record) -> String {
-  let time = timestamp(record.receive_time);
+  let time = utc_timestamp(record.receive_time);
   // Just the time of day: `HH:MM:SS.mmmZ`.
   let time = time.get(11..).unwrap_or(&time);
   let what = match &record.body {

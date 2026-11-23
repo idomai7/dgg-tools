@@ -34,8 +34,9 @@
 //! full page is left for the next one.
 
 use {
-  super::{Message, Page, Source, rustlesearch::parse_timestamp},
-  ::logger_journal::{layout::utc_day, record::v0::valid_instance},
+  super::{Message, Page, Source},
+  ::common::time::{rfc3339, unix_ms},
+  ::logger_journal::record::v0::valid_instance,
   ::serde_json::Value,
 };
 
@@ -80,7 +81,7 @@ impl Source for Linkers {
       .query(&[
         ("messageType", "MSG"),
         ("sources", "all"),
-        ("endTime", &format_timestamp(end)),
+        ("endTime", &rfc3339(end)),
         ("limit", &PAGE_SIZE.to_string()),
       ]);
     if let Some(session) = &self.session {
@@ -128,7 +129,7 @@ pub fn parse(body: &str, limit: usize) -> Result<Page, String> {
       Some(other) => return Err(format!("bad source {other:?}")),
     };
     messages.push(Message {
-      timestamp: parse_timestamp(timestamp)
+      timestamp: unix_ms(timestamp)
         .ok_or(format!("bad timestamp {timestamp:?}"))?,
       nick: field("user")?.into(),
       text: field("message")?.into(),
@@ -151,15 +152,4 @@ pub fn parse(body: &str, limit: usize) -> Result<Page, String> {
     exhausted,
     remaining: None,
   })
-}
-
-/// `YYYY-MM-DDTHH:MM:SS.fffZ` for unix ms.
-pub fn format_timestamp(ms: i64) -> String {
-  let in_day = ms.rem_euclid(86_400_000);
-  let (hours, minutes) = (in_day / 3_600_000, in_day / 60_000 % 60);
-  let (seconds, millis) = (in_day / 1000 % 60, in_day % 1000);
-  format!(
-    "{}T{hours:02}:{minutes:02}:{seconds:02}.{millis:03}Z",
-    utc_day(ms)
-  )
 }

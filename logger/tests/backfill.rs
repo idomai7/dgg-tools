@@ -1,7 +1,7 @@
 use {
   ::logger::backfill::{
     Message, Options, Page, Source, linkers, run,
-    rustlesearch::{parse, parse_timestamp, remaining},
+    rustlesearch::{parse, remaining},
   },
   ::logger_journal::{
     Reader, Record,
@@ -302,24 +302,7 @@ fn parses_rustlesearch_responses() {
 }
 
 #[test]
-fn parses_timestamps_and_rate_limits() {
-  assert_eq!(parse_timestamp("1970-01-01T00:00:00Z"), Some(0));
-  assert_eq!(
-    parse_timestamp("2024-02-29T23:59:59.999Z"),
-    Some(1_709_251_199_999)
-  );
-  assert_eq!(
-    parse_timestamp("2026-11-08T09:01:44.6Z"),
-    Some(1_794_128_504_600)
-  );
-  for bad in [
-    "2026-11-08T09:01:44.611",
-    "2026-13-01T00:00:00Z",
-    "x",
-    "2026-11-08T09:01Z",
-  ] {
-    assert_eq!(parse_timestamp(bad), None, "{bad:?}");
-  }
+fn parses_rate_limits() {
   assert_eq!(
     remaining("limit=200, remaining=191, reset=21864"),
     Some(191)
@@ -428,8 +411,4 @@ fn parses_linkers_responses() {
 
   assert!(linkers::parse(r#"{"error":"Failed"}"#, 5).is_err());
   assert!(linkers::parse("<html>", 5).is_err());
-  assert_eq!(
-    linkers::format_timestamp(at(57) + 5),
-    "2026-11-08T20:04:57.005Z"
-  );
 }

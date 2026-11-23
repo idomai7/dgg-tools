@@ -2,10 +2,8 @@
 //! scheduled task.
 
 use {
-  ::deploy::{
-    install::{BINARIES, build_name, copy_build, prune, wait_healthy},
-    log::now_ms,
-  },
+  ::common::time::now_ms,
+  ::deploy::install::{BINARIES, build_name, copy_build, prune, wait_healthy},
   ::std::{
     env::consts::EXE_SUFFIX,
     fs,

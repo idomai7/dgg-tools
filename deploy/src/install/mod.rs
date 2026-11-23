@@ -39,10 +39,10 @@ pub mod task;
 
 use {
   crate::{
-    log::{now_ms, timestamp},
     paths::{Paths, user_root},
     peer, processes,
   },
+  ::common::time::{now_ms, utc_timestamp},
   ::logger::control,
   ::std::{
     fs, io,
@@ -182,7 +182,7 @@ pub struct Done {
 
 /// `YYYYMMDD-HHMMSS-<build>` for a build made now (see [`crate::BUILD`]).
 pub fn build_name(now: i64) -> String {
-  let stamp: String = timestamp(now)
+  let stamp: String = utc_timestamp(now)
     .chars()
     .take(19)
     .filter(char::is_ascii_digit)

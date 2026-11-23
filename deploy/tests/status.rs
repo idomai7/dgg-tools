@@ -1,14 +1,13 @@
 //! The status report, against a made-up data directory.
 
 use {
+  ::common::time::{now_ms, utc_day},
   ::deploy::{
-    log::now_ms,
     paths::Paths,
     status::{
       Health, Watcher, capture_tail, format, gaps, journal_lines, tail, text,
     },
   },
-  ::logger_journal::layout::utc_day,
   ::std::{fs, path::PathBuf},
 };
 

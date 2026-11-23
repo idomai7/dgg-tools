@@ -11,10 +11,8 @@ use {
     LOGS, Report, Watcher, capture_tail, format, gaps, health, journal_lines,
     tail,
   },
-  crate::{
-    log::{now_ms, timestamp},
-    paths::Paths,
-  },
+  crate::paths::Paths,
+  ::common::time::{now_ms, utc_timestamp},
   ::ratatui::{
     DefaultTerminal, Frame,
     crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
@@ -64,7 +62,7 @@ impl View {
       Err(e) => (None, vec![format!("(can't read the index: {e})")], ""),
     };
     let pane = Pane {
-      title: format!("gaps as of {} (g to look again)", timestamp(now)),
+      title: format!("gaps as of {} (g to look again)", utc_timestamp(now)),
       header,
       lines,
       empty,
@@ -270,7 +268,7 @@ pub fn draw(frame: &mut Frame, report: &Report, pane: &Pane) {
     Span::styled(" dgg-logger ", Style::new().bold().reversed()),
     Span::raw(format!(
       "  {}  data {}{free}",
-      crate::log::timestamp(now),
+      utc_timestamp(now),
       report.paths.data.display()
     )),
   ]);

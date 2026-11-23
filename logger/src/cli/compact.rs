@@ -2,11 +2,9 @@
 //! zstd archives.
 
 use {
-  crate::{
-    capture::now_ms,
-    compact::{closed_days, compact_day},
-  },
+  crate::compact::{closed_days, compact_day},
   ::clap::Args,
+  ::common::time::now_ms,
   ::logger_journal::layout::backfill_root,
   ::std::{path::Path, process::ExitCode, time::Duration},
 };

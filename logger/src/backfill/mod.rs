@@ -16,7 +16,7 @@ pub mod linkers;
 pub mod rustlesearch;
 
 use {
-  crate::capture::{now_ms, timestamp},
+  ::common::time::{now_ms, utc_timestamp},
   ::logger_journal::{
     Writer,
     record::v0::{Body, valid_token},
@@ -128,7 +128,7 @@ pub async fn run(
           "{} requests, {} messages, back to {}",
           stats.requests,
           stats.messages,
-          timestamp(cursor)
+          utc_timestamp(cursor)
         );
       }
       stats.requests += 1;

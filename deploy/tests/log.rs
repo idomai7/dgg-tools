@@ -1,5 +1,6 @@
 use {
-  ::deploy::log::{Log, rotated, timestamp},
+  ::common::time::utc_timestamp,
+  ::deploy::log::{Log, rotated},
   ::std::{
     fs,
     path::{Path, PathBuf},
@@ -25,12 +26,6 @@ impl Drop for TempDir {
 }
 
 #[test]
-fn timestamps_are_utc() {
-  assert_eq!(timestamp(0), "1970-01-01 00:00:00.000Z");
-  assert_eq!(timestamp(1_794_168_240_123), "2026-11-08 20:04:00.123Z");
-}
-
-#[test]
 fn rotated_names_keep_the_extension() {
   let path = PathBuf::from("logs").join("capture.log");
   assert_eq!(
@@ -50,7 +45,7 @@ fn rotates_by_size_keeping_some() {
   }
   drop(log);
   let read = |path: &Path| fs::read_to_string(path).unwrap();
-  let stamp = timestamp(0);
+  let stamp = utc_timestamp(0);
   let lines = |ns: &[u32]| -> String {
     ns.iter().map(|n| format!("{stamp} line{n}\n")).collect()
   };
@@ -73,7 +68,7 @@ fn appends_to_an_existing_log() {
     .unwrap()
     .line_at(0, "second")
     .unwrap();
-  let stamp = timestamp(0);
+  let stamp = utc_timestamp(0);
   assert_eq!(
     fs::read_to_string(&path).unwrap(),
     format!("{stamp} first\n{stamp} second\n")

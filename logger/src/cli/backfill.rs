@@ -7,11 +7,12 @@ use {
     backfill::{
       Options, Source, linkers::Linkers, run, rustlesearch::Rustlesearch,
     },
-    capture::{instance_id, now_ms},
+    capture::instance_id,
     gaps::{coverage, format_duration, unfetched},
     index::{index, open},
   },
   ::clap::{Args, ValueEnum},
+  ::common::time::{now_ms, unix_ms, utc_timestamp},
   ::std::{path::Path, process::ExitCode, time::Duration},
 };
 
@@ -106,8 +107,7 @@ fn parse_time(text: &str) -> Result<i64, String> {
   } else {
     format!("{text}T00:00:00Z")
   };
-  crate::backfill::rustlesearch::parse_timestamp(&full)
-    .ok_or_else(|| format!("not a UTC date or time: {text:?}"))
+  unix_ms(&full).ok_or_else(|| format!("not a UTC date or time: {text:?}"))
 }
 
 impl Backfill {
@@ -151,11 +151,7 @@ impl Backfill {
     let what = if history { "ranges" } else { "gaps" };
     eprintln!("{} {what} not yet fetched", ranges.len());
     for &(from, to) in &ranges {
-      eprintln!(
-        "  {} +{}",
-        crate::capture::timestamp(from),
-        format_duration(to - from)
-      );
+      eprintln!("  {} +{}", utc_timestamp(from), format_duration(to - from));
     }
     if self.dry_run || ranges.is_empty() {
       return ExitCode::SUCCESS;

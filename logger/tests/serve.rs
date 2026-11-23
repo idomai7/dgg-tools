@@ -1,6 +1,6 @@
 use {
+  ::common::time::now_ms,
   ::logger::{
-    capture::now_ms,
     cert,
     control::{self, Status, parse_push, push_body},
     serve::{self, CONCURRENT, Tokens, router},

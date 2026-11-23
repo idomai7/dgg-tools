@@ -13,6 +13,7 @@ name = "dgg-supervisor"
 path = "src/bin/supervisor.rs"
 
 [dependencies]
+common.workspace = true
 logger-journal.workspace = true
 logger.workspace = true
 

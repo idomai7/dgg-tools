@@ -22,7 +22,10 @@
 //! be merged once it's done.
 
 use {
-  ::common::atomic_file,
+  ::common::{
+    atomic_file,
+    time::{DAY_MS, day_start},
+  },
   ::logger_journal::{
     archive::{self, Archive, valid_day},
     layout::{EXTENSION, archive_file, live_day_dir, live_dir},
@@ -38,8 +41,6 @@ use {
     time::Duration,
   },
 };
-
-const DAY_MS: i64 = 86_400_000;
 
 /// What compacting one day did.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -87,20 +88,6 @@ pub fn closed_days(
   }
   days.sort();
   Ok(days)
-}
-
-/// Unix ms at the start of `day` (`YYYY-MM-DD`), UTC.
-fn day_start(day: &str) -> Option<i64> {
-  let year: i64 = day[..4].parse().ok()?;
-  let month: i64 = day[5..7].parse().ok()?;
-  let day: i64 = day[8..].parse().ok()?;
-  // Howard Hinnant's days_from_civil.
-  let year = if month <= 2 { year - 1 } else { year };
-  let era = year.div_euclid(400);
-  let yoe = year - era * 400;
-  let doy = (153 * ((month + 9) % 12) + 2) / 5 + day - 1;
-  let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-  Some((era * 146_097 + doe - 719_468) * DAY_MS)
 }
 
 /// One input's lines, and how much of it was read.

@@ -29,7 +29,6 @@
 
 use {
   crate::{
-    capture::now_ms,
     control::{self, Status},
     manifest::{self, archive_path, valid_live_path},
   },
@@ -43,6 +42,7 @@ use {
     },
     routing::{get, put},
   },
+  ::common::time::now_ms,
   ::futures_util::stream::unfold,
   ::logger_journal::record::v0::valid_instance,
   ::rustls::ServerConfig,

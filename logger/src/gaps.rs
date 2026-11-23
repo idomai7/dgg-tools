@@ -13,7 +13,7 @@
 //! coverage is only as exact as the two clocks agree.
 
 use {
-  crate::capture::timestamp,
+  ::common::time::utc_timestamp,
   ::rusqlite::{Connection, params},
 };
 
@@ -74,8 +74,8 @@ impl Coverage {
       total(&mut self.gaps.iter().filter(|gap| !gap.filled()));
     format!(
       "captured {} to {} ({}), {gaps} gaps, {} in all; {unfilled} not filled, {}",
-      timestamp(self.first),
-      timestamp(self.last),
+      utc_timestamp(self.first),
+      utc_timestamp(self.last),
       format_duration(self.last - self.first),
       format_duration(gap_ms),
       format_duration(unfilled_ms),
@@ -95,14 +95,14 @@ impl Coverage {
       } else {
         match gap.history_from {
           Some(from) => {
-            format!("NOT covered: HISTORY from {}", timestamp(from))
+            format!("NOT covered: HISTORY from {}", utc_timestamp(from))
           }
           None => "NOT covered: no HISTORY".to_owned(),
         }
       };
       out.push(format!(
         "{} +{}  {filled}, {} messages recovered",
-        timestamp(gap.start),
+        utc_timestamp(gap.start),
         format_duration(gap.duration_ms()),
         gap.recovered,
       ));

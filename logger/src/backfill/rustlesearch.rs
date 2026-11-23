@@ -18,6 +18,7 @@
 
 use {
   super::{Message, Page, Source},
+  ::common::time::unix_ms,
   ::serde_json::Value,
 };
 
@@ -89,8 +90,7 @@ pub fn parse(body: &str) -> Result<Page, String> {
       |key| item[key].as_str().ok_or(format!("message without {key}"));
     let timestamp = field("ts")?;
     messages.push(Message {
-      timestamp: parse_timestamp(timestamp)
-        .ok_or(format!("bad ts {timestamp:?}"))?,
+      timestamp: unix_ms(timestamp).ok_or(format!("bad ts {timestamp:?}"))?,
       nick: field("username")?.into(),
       text: field("text")?.into(),
       origin: None,
@@ -109,33 +109,4 @@ pub fn remaining(header: &str) -> Option<u64> {
   header
     .split(',')
     .find_map(|part| part.trim().strip_prefix("remaining=")?.parse().ok())
-}
-
-/// Unix ms of `YYYY-MM-DDTHH:MM:SS[.fff]Z`.
-pub fn parse_timestamp(text: &str) -> Option<i64> {
-  let text = text.strip_suffix('Z')?;
-  let (date, time) = text.split_once('T')?;
-  let mut date = date.split('-').map(str::parse::<i64>);
-  let (year, month, day) =
-    (date.next()?.ok()?, date.next()?.ok()?, date.next()?.ok()?);
-  let (time, fraction) = time.split_once('.').unwrap_or((time, "0"));
-  let mut time = time.split(':').map(str::parse::<i64>);
-  let (hours, minutes, seconds) =
-    (time.next()?.ok()?, time.next()?.ok()?, time.next()?.ok()?);
-  if date.next().is_some() || time.next().is_some() || fraction.len() > 3 {
-    return None;
-  }
-  let millis: i64 = format!("{fraction:0<3}").parse().ok()?;
-  if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
-    return None;
-  }
-  // Howard Hinnant's days_from_civil.
-  let year = if month <= 2 { year - 1 } else { year };
-  let era = year.div_euclid(400);
-  let yoe = year - era * 400;
-  let mp = (month + 9) % 12;
-  let doy = (153 * mp + 2) / 5 + day - 1;
-  let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-  let days = era * 146_097 + doe - 719_468;
-  Some(((days * 24 + hours) * 60 + minutes) * 60_000 + seconds * 1000 + millis)
 }

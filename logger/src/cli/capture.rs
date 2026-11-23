@@ -1,10 +1,9 @@
 //! Capture dgg chat into the journal.
 
 use {
-  crate::capture::{
-    Config, Exit, Handoff, Peer, Say, instance_id, now_ms, run,
-  },
+  crate::capture::{Config, Exit, Handoff, Peer, Say, instance_id, run},
   ::clap::Args,
+  ::common::time::now_ms,
   ::dgg_api::chat::{DEFAULT_URL, Options},
   ::std::{
     path::{Path, PathBuf},

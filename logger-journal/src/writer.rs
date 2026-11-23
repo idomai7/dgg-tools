@@ -2,9 +2,10 @@
 
 use {
   crate::{
-    layout::{backfill_file, backfill_root, live_file, lock_file, utc_day},
+    layout::{backfill_file, backfill_root, live_file, lock_file},
     record::v0::{self, Body},
   },
+  ::common::time::utc_day,
   ::std::{
     fs::{self, File, OpenOptions, TryLockError},
     io::{self, Read, Seek, SeekFrom, Write},
