@@ -217,7 +217,11 @@
 
   function clock(ms) {
     const at = ms == null ? new Date() : new Date(ms);
-    return at.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    return at.toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
   }
 
   /** `content`, with `[emote:<id>:<name>]` as images and the rest as text. */
