@@ -18,8 +18,9 @@ decisions live in its own document here:
 ## Layout
 The layout is flat: each crate is a direct child of the root.
 - `common/`: small tools any crate may share, one module each: `atomic_file`,
-  `format`, `random` and `time`. It depends on little beyond `std`: getrandom,
-  base64 and fastrand, for `random`.
+  `format`, `fs`, `powershell`, `random`, `temp_dir` (for tests) and `time`. It
+  depends on little beyond `std`: getrandom, base64 and fastrand, for
+  `random`.
 - `dgg-api/`: destiny.gg's APIs, kept lightweight for any tool to depend on: the
   chat socket client and event types, and more of dgg's endpoints to come.
 - `kick-api/`: Kick's APIs, kept lightweight for any tool to depend on. So far,
