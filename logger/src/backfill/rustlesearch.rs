@@ -1,9 +1,17 @@
 //! rustlesearch.dev, a public archive of dgg chat.
 //!
-//! `GET <base>/anon/search?channel=Destinygg&search_after=<ms>` returns
-//! `{"data": {"messages": [{"channel", "text", "ts", "username",
-//! "searchAfter"}]}}`: up to 100 messages older than `search_after`, newest
-//! first. `ts` is dgg's timestamp as ISO 8601 UTC, to the millisecond (whole
+//! `GET <base>/anon/search?channel=Destinygg&search_after=<ms>` returns up
+//! to 100 messages older than `search_after`, newest first:
+//!
+//! ```text
+//! {
+//!   "data": {
+//!     "messages": [{"channel", "text", "ts", "username", "searchAfter"}]
+//!   }
+//! }
+//! ```
+//!
+//! `ts` is dgg's timestamp as ISO 8601 UTC, to the millisecond (whole
 //! seconds for old logs). Usernames are lowercased and newlines in text are
 //! spaces. Requests are limited to 200 a day, reported in a `Ratelimit:
 //! limit=200, remaining=191, reset=21864` header.

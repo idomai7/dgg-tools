@@ -1,10 +1,22 @@
 //! linkers.ooo, a public log of dgg chat since 2026-01-06, plus its copy of
 //! the rustle archive before that.
 //!
-//! `GET <base>/api/messages?messageType=MSG&sources=all&endTime=<ISO 8601>
-//! &limit=500` returns `{"messages": [{"id", "timestamp", "user", "message",
-//! "message_type", "source", ...}], "total", "totalCapped", "limit",
-//! "offset"}`: up to `limit` messages at or before `endTime`, newest first.
+//! ```text
+//! GET <base>/api/messages?messageType=MSG&sources=all&endTime=<ISO 8601>
+//!   &limit=500
+//! ```
+//!
+//! returns up to `limit` messages at or before `endTime`, newest first:
+//!
+//! ```text
+//! {
+//!   "messages": [
+//!     {"id", "timestamp", "user", "message", "message_type", "source", ...}
+//!   ],
+//!   "total", "totalCapped", "limit", "offset"
+//! }
+//! ```
+//!
 //! `endTime` is truncated to the second. Nicks keep their case; newlines in
 //! text are spaces. Anonymous requests are limited to 60 a minute per IP
 //! (`X-RateLimit-Remaining`); requests with a logged-in user's `lk_session`
