@@ -14,6 +14,7 @@
 mod common;
 
 use {
+  ::common::time,
   ::kick_api::{
     official::{
       Api,
@@ -21,7 +22,6 @@ use {
       oauth::{App, Token},
     },
     realtime::{Client, Event, Item, Options},
-    time,
   },
   ::std::{env, fs},
   ::tokio::{

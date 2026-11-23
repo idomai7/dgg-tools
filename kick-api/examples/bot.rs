@@ -12,6 +12,7 @@
 mod common;
 
 use {
+  ::common::time,
   ::kick_api::{
     official::{
       Api,
@@ -19,7 +20,6 @@ use {
       oauth::App,
     },
     realtime::{Client, Event, Item, Options},
-    time,
   },
   ::std::{env, fs},
   common::{event, save, show_app, wait},

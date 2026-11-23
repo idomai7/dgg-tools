@@ -37,6 +37,8 @@ official = [
 ]
 
 [dependencies]
+common.workspace = true
+
 serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 
@@ -65,10 +67,6 @@ required-features = ["centrifugo"]
 
 [[test]]
 name = "event"
-required-features = ["protocol"]
-
-[[test]]
-name = "time"
 required-features = ["protocol"]
 
 [[test]]

@@ -7,10 +7,7 @@
 
 use {
   super::{Error, send},
-  crate::{
-    rest::{self, Rest},
-    time,
-  },
+  crate::rest::{self, Rest},
   ::base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD},
   ::reqwest::{Url, header::CONTENT_TYPE},
   ::serde::{Deserialize, Serialize},
@@ -279,7 +276,7 @@ impl App {
     form.extend_from_slice(grant);
     let request = http.post(format!("{}/oauth/token", self.base)).form(&form);
     let raw = send(request).await?;
-    Token::decode(&raw, time::now_ms())
+    Token::decode(&raw, ::common::time::now_ms())
       .map_err(|error| Error::Decode { raw, error })
   }
 }

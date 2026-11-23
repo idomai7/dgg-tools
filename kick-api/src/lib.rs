@@ -8,8 +8,9 @@
 //!   place a channel's chatroom id is found.
 //! - `official` (feature `official`): Kick's official public API and
 //!   signing in to it.
-//! - `rest` and `time`, shared by the decoders: the fields a type doesn't
-//!   name, and Kick's timestamps.
+//! - `rest`, shared by the decoders: the fields a type doesn't name.
+//!
+//! Timestamps are unix milliseconds, from [`common::time`].
 //!
 //! Each feature brings in one part, so a tool pulls in only what it uses.
 
@@ -22,7 +23,7 @@ pub mod realtime;
 #[cfg(any(feature = "centrifugo", feature = "official"))]
 pub mod rest;
 #[cfg(any(feature = "protocol", feature = "official"))]
-pub mod time;
+mod time;
 
 #[cfg(any(feature = "centrifugo", feature = "official"))]
 pub use rest::Rest;

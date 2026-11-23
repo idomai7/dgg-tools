@@ -4,22 +4,15 @@
 mod fake;
 
 use {
+  ::common::time::now_ms,
   ::kick_api::official::{
     Api, Error,
     api::{Ban, Chat, Sender},
     oauth::{App, Token},
   },
   ::serde_json::json,
-  ::std::{
-    sync::{Arc, Mutex},
-    time::{SystemTime, UNIX_EPOCH},
-  },
+  ::std::sync::{Arc, Mutex},
 };
-
-fn now() -> i64 {
-  let since = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-  since.as_millis() as i64
-}
 
 fn token(access: &str, refresh: Option<&str>, expires_at: i64) -> Token {
   Token {
@@ -33,7 +26,7 @@ fn token(access: &str, refresh: Option<&str>, expires_at: i64) -> Token {
 
 /// A fresh token, for an hour.
 fn fresh() -> Token {
-  token("access-0", Some("refresh-0"), now() + 3_600_000)
+  token("access-0", Some("refresh-0"), now_ms() + 3_600_000)
 }
 
 /// Kick's answer to a refresh: `access-1`, for an hour.
@@ -222,7 +215,7 @@ async fn moderates() {
 async fn refreshes_before_it_expires() {
   let server =
     refreshing(|_| (200, r#"{"data":[],"message":"OK"}"#.into())).await;
-  let expiring = token("access-0", Some("refresh-0"), now() + 30_000);
+  let expiring = token("access-0", Some("refresh-0"), now_ms() + 30_000);
   let (api, kept) = user(&server, expiring);
   api.users(&[]).await.unwrap();
   assert_eq!(server.paths(), ["/oauth/token", "/users"]);
@@ -265,7 +258,7 @@ async fn refreshes_when_asked() {
   let (api, kept) = user(&server, fresh());
   let token = api.refresh().await.unwrap();
   assert_eq!(token.refresh_token.as_deref(), Some("refresh-1"));
-  assert!(token.expires_at > now() + 3_500_000);
+  assert!(token.expires_at > now_ms() + 3_500_000);
   assert_eq!(api.token().await, Some(token.clone()));
   assert_eq!(*kept.lock().unwrap(), [token]);
 

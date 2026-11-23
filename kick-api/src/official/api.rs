@@ -221,9 +221,9 @@ impl Api {
   /// expire.
   async fn access(&self) -> Result<String, Error> {
     let mut token = self.token.lock().await;
-    let fresh = token
-      .as_ref()
-      .is_some_and(|token| token.expires_at - time::now_ms() > MARGIN);
+    let fresh = token.as_ref().is_some_and(|token| {
+      token.expires_at - ::common::time::now_ms() > MARGIN
+    });
     if fresh {
       Ok(token.as_ref().unwrap().access_token.clone())
     } else {
