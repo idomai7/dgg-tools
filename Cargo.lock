@@ -1682,6 +1682,7 @@ dependencies = [
  "reqwest",
  "rpassword",
  "rusqlite",
+ "rustlesearch-api",
  "rustls",
  "serde_json",
  "sha2",
@@ -2579,6 +2580,17 @@ dependencies = [
  "libc",
  "linux-raw-sys 0.12.1",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "rustlesearch-api"
+version = "0.1.0"
+dependencies = [
+ "common",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
