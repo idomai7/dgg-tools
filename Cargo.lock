@@ -1555,9 +1555,15 @@ dependencies = [
 name = "kick-mod"
 version = "0.1.0"
 dependencies = [
+ "axum",
  "clap",
- "dotenvy",
  "kick-api",
+ "reqwest",
+ "rustls",
+ "serde",
+ "serde_json",
+ "tokio",
+ "toml",
 ]
 
 [[package]]
