@@ -15,6 +15,14 @@ only, built on [kick-api](kick-api.md). See the [overall rules](README.md).
 - **Mod log:** every action taken through the tool, with its reason.
 
 ## Decisions
+- **Kick, only officially:** kick-mod talks to Kick only through its official
+  API, signed in, and gets everything else (live chat, history, channels'
+  ids) from the logger, which reads Kick's undocumented endpoints
+  anonymously, with no token or login (see [logger](logger.md)). So nothing
+  tied to the account or the app touches an undocumented endpoint.
+  - Until the logger serves Kick, kick-mod's own Centrifugo connection,
+    journal, gap filling and `ids` lookup stay as they are. They go once it
+    does; the steps below that use them are interim.
 - **Interface:** a local web UI: axum serving plain-JS pages with no build step.
 - **Users:** for now one user (me), with one Kick OAuth token, on the local PC.
   It may later be hosted remotely and opened to other moderators, so this
