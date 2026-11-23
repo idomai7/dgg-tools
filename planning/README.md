@@ -1,25 +1,40 @@
 # dgg-tools planning
 
-A Cargo workspace of tools built around destiny.gg chat and its endpoints. Every tool that talks to dgg goes through the shared `dgg-api` crate.
+A Cargo workspace of tools built around destiny.gg chat and its endpoints. Every
+tool that talks to dgg goes through the shared `dgg-api` crate.
 
-This document holds the rules for every tool. Each major tool's scope and decisions live in its own document here:
+This document holds the rules for every tool. Each major tool's scope and
+decisions live in its own document here:
 - [dgg-api](dgg-api.md): destiny.gg's chat protocol and assets.
-- [logger](logger.md): the journal, capture, index, serve, sync, backfill, compact and gaps.
+- [logger](logger.md): the journal, capture, index, serve, sync, backfill,
+  compact and gaps.
 - [deploy](deploy.md): the mesh of nodes running the logger.
 - [viewer](viewer.md): the read-only chat viewer.
-- [archives](archives.md): archives and stats derived from chat and other dgg endpoints.
+- [archives](archives.md): archives and stats derived from chat and other dgg
+  endpoints.
 - [kick-api](kick-api.md): Kick's APIs.
 - [kick-mod](kick-mod.md): the Kick chat client and moderation tools.
 
 ## Layout
 The layout is flat: each crate is a direct child of the root.
-- `dgg-api/`: destiny.gg's APIs, kept lightweight for any tool to depend on: the chat socket client and event types, and more of dgg's endpoints to come.
-- `kick-api/`: Kick's APIs, kept lightweight for any tool to depend on. So far, decoding the unofficial channel lookup, and decoding realtime frames into Centrifugo's client protocol.
-- `kick-mod/`: a chat client and moderation tools for Kick channels. So far, `kick-mod ids`, which looks up channels' ids with curl.
-- `logger-journal/`: the logger's journal file format, with a writer and a reader.
-- `logger/`: the logger as a library: capture, index, serve, sync, backfill, compact and gaps, each with its command-line arguments in `logger::cli`. They run as `dgg-logger` subcommands, so the parts of an install can't be from different builds.
-- `deploy/`: `dgg-logger` (the logger's commands, plus install, uninstall, status and supervise) and `dgg-supervisor`, which keeps the logger running as a logon task or a Windows service. See `deploy/README.md`.
-- `version-info/`: a build helper embedding version information in the Windows binaries.
+- `dgg-api/`: destiny.gg's APIs, kept lightweight for any tool to depend on: the
+  chat socket client and event types, and more of dgg's endpoints to come.
+- `kick-api/`: Kick's APIs, kept lightweight for any tool to depend on. So far,
+  decoding the unofficial channel lookup, and decoding realtime frames into
+  Centrifugo's client protocol.
+- `kick-mod/`: a chat client and moderation tools for Kick channels. So far,
+  `kick-mod ids`, which looks up channels' ids with curl.
+- `logger-journal/`: the logger's journal file format, with a writer and a
+  reader.
+- `logger/`: the logger as a library: capture, index, serve, sync, backfill,
+  compact and gaps, each with its command-line arguments in `logger::cli`. They
+  run as `dgg-logger` subcommands, so the parts of an install can't be from
+  different builds.
+- `deploy/`: `dgg-logger` (the logger's commands, plus install, uninstall,
+  status and supervise) and `dgg-supervisor`, which keeps the logger running as
+  a logon task or a Windows service. See `deploy/README.md`.
+- `version-info/`: a build helper embedding version information in the Windows
+  binaries.
 - `viewer/`: the read-only chat viewer, formerly dggkick.
 
 ## Decisions
@@ -28,17 +43,29 @@ The layout is flat: each crate is a direct child of the root.
   - Pages are plain JS with no build step.
 - **Style:**
   - rustfmt with `max_width = 80` and `tab_spaces = 2` (`rustfmt.toml`).
-  - One `use { … }` block per scope, and a `::` prefix on every external crate, `std` included.
+  - One `use { … }` block per scope, and a `::` prefix on every external crate,
+    `std` included.
   - Tests go in each crate's `tests/` directory, never inline in the source.
-  - Test fixtures made from real data are anonymised before they're committed: users' names and ids, channels, and any other ids or uuids that trace back to a real account or session.
+  - Test fixtures made from real data are anonymised before they're committed:
+    users' names and ids, channels, and any other ids or uuids that trace back
+    to a real account or session.
 - **Deployment:** must stay portable across Windows and Linux.
-  - Auditable, with nothing beyond the hosting itself: no VPN service, DNS provider or alerting service.
+  - Auditable, with nothing beyond the hosting itself: no VPN service, DNS
+    provider or alerting service.
   - See [deploy](deploy.md).
-- **Versioning, for every format** (journal, `capture-status`, `journal-archive`, `journal-manifest` and the index schema): like cargo's semver.
-  - While the major is 0 (pre-release, where we are now), any minor may break. Readers accept only the exact minor they know, and existing files are rewritten rather than read across versions.
-  - Major 1 marks production. From then on, minor bumps may only add things old readers skip (new kinds, keys or entries), and anything else is a major bump, which readers without that major's module refuse.
-  - Everything was re-versioned from 1.x to 0.x on 2026-11-09, and existing files were rewritten to match.
-- **Kick:** its own crates, separate from dgg's: [kick-api](kick-api.md) and [kick-mod](kick-mod.md).
+- **Versioning, for every format** (journal, `capture-status`,
+  `journal-archive`, `journal-manifest` and the index schema): like cargo's
+  semver.
+  - While the major is 0 (pre-release, where we are now), any minor may break.
+    Readers accept only the exact minor they know, and existing files are
+    rewritten rather than read across versions.
+  - Major 1 marks production. From then on, minor bumps may only add things old
+    readers skip (new kinds, keys or entries), and anything else is a major
+    bump, which readers without that major's module refuse.
+  - Everything was re-versioned from 1.x to 0.x on 2026-11-09, and existing
+    files were rewritten to match.
+- **Kick:** its own crates, separate from dgg's: [kick-api](kick-api.md) and
+  [kick-mod](kick-mod.md).
 
 ## Roadmap
 1. **Logger** (current focus): see [logger](logger.md).
@@ -50,8 +77,12 @@ The layout is flat: each crate is a direct child of the root.
    - archival;
    - clipping tools;
    - links/attachments viewer (like linkers.ooo);
-   - embed stats viewer: when embeds are live, how many viewers, and perhaps which viewers;
-   - services dashboard: the status of running services, such as capture instances and their health, `index --follow` and `sync --follow` progress, gaps, and the backfill budget. It could build on `serve`'s `/control` and `/manifest`.
+   - embed stats viewer: when embeds are live, how many viewers, and perhaps
+     which viewers;
+   - services dashboard: the status of running services, such as capture
+     instances and their health, `index --follow` and `sync --follow` progress,
+     gaps, and the backfill budget. It could build on `serve`'s `/control` and
+     `/manifest`.
 4. **Archives and stats, not yet ordered:** see [archives](archives.md).
 5. **Kick moderation tools** (in planning): see [kick-mod](kick-mod.md).
 
@@ -60,4 +91,5 @@ The layout is flat: each crate is a direct child of the root.
   - The dgg probe is at `dgg-api/examples/probe.rs`.
   - `viewer` is a placeholder stub.
 - Each tool's status is in its own document.
-- **Next:** pick from the roadmap: the read-only viewer, the archives and stats tools, or the services dashboard.
+- **Next:** pick from the roadmap: the read-only viewer, the archives and stats
+  tools, or the services dashboard.
