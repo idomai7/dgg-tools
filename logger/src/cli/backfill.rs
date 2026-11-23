@@ -180,8 +180,10 @@ impl Backfill {
     };
     match self.source {
       SourceName::Rustlesearch => {
-        let base = crate::backfill::rustlesearch::BASE_URL;
-        let source = Rustlesearch::new(base, "Destinygg");
+        let _ = ::rustls::crypto::ring::default_provider().install_default();
+        let http = ::reqwest::Client::new();
+        let api = ::rustlesearch_api::Api::new(http, crate::USER_AGENT);
+        let source = Rustlesearch::new(api, "Destinygg");
         fetch(&source, &ranges, &options, what).await
       }
       SourceName::Linkers => {

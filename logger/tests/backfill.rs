@@ -1,8 +1,7 @@
 use {
   ::common::temp_dir::TempDir,
   ::logger::backfill::{
-    Message, Options, Page, Source, linkers, run,
-    rustlesearch::{parse, remaining},
+    Message, Options, Page, Source, linkers, run, rustlesearch,
   },
   ::logger_journal::{
     Reader, Record,
@@ -250,22 +249,19 @@ async fn an_exhausted_source_covers_back_to_the_start() {
 }
 
 #[test]
-fn parses_rustlesearch_responses() {
-  let body = r#"{"type":"success","error":null,"data":{"count":2,
-    "countLimit":10000,"messages":[
-    {"channel":"Destinygg","text":"TINYING","ts":"2026-11-08T16:54:48.711Z",
-     "username":"superblanks","searchAfter":1794156888711},
-    {"channel":"Destinygg","text":"hi  there","ts":"2016-01-01T23:58:03.000Z",
-     "username":"old","searchAfter":1451692683000}]}}"#;
-  let page = parse(body).unwrap();
+fn pages_rustlesearch_searches() {
+  let body = r#"{"data":{"messages":[
+    {"text":"hello","ts":"2026-11-08T16:54:48.711Z","username":"someone"},
+    {"text":"hi  there","ts":"2016-01-01T23:58:03.000Z","username":"old"}]}}"#;
+  let page = rustlesearch::page(::rustlesearch_api::parse(body).unwrap());
   assert!(!page.exhausted);
   assert_eq!(
     page.messages,
     [
       Message {
         timestamp: 1_794_156_888_711,
-        nick: "superblanks".into(),
-        text: "TINYING".into(),
+        nick: "someone".into(),
+        text: "hello".into(),
         origin: None,
       },
       Message {
@@ -276,19 +272,9 @@ fn parses_rustlesearch_responses() {
       },
     ]
   );
-  let empty = r#"{"type":"success","data":{"messages":[]}}"#;
-  assert!(parse(empty).unwrap().exhausted);
-  assert!(parse(r#"{"type":"error"}"#).is_err());
-  assert!(parse("<html>").is_err());
-}
-
-#[test]
-fn parses_rate_limits() {
-  assert_eq!(
-    remaining("limit=200, remaining=191, reset=21864"),
-    Some(191)
-  );
-  assert_eq!(remaining("limit=200"), None);
+  let empty = r#"{"data":{"messages":[]}}"#;
+  let page = rustlesearch::page(::rustlesearch_api::parse(empty).unwrap());
+  assert!(page.exhausted);
 }
 
 #[test]

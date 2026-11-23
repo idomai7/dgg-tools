@@ -11,6 +11,7 @@ version-info.workspace = true
 common.workspace = true
 dgg-api = { workspace = true, features = ["client"] }
 logger-journal.workspace = true
+rustlesearch-api = { workspace = true, features = ["http"] }
 
 axum.workspace = true
 axum-server.workspace = true

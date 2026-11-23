@@ -1,45 +1,21 @@
-//! rustlesearch.dev, a public archive of dgg chat.
-//!
-//! `GET <base>/anon/search?channel=Destinygg&search_after=<ms>` returns up
-//! to 100 messages older than `search_after`, newest first:
-//!
-//! ```js
-//! {
-//!   "data": {
-//!     "messages": [{"channel", "text", "ts", "username", "searchAfter"}]
-//!   }
-//! }
-//! ```
-//!
-//! `ts` is dgg's timestamp as ISO 8601 UTC, to the millisecond (whole
-//! seconds for old logs). Usernames are lowercased and newlines in text are
-//! spaces. Requests are limited to 200 a day, reported in a `Ratelimit:
-//! limit=200, remaining=191, reset=21864` header.
+//! rustlesearch.dev, a public archive of dgg chat, through
+//! `rustlesearch_api`: pages of up to 100 messages, newest first, with
+//! nicks lowercased. Requests are limited to 200 a day.
 
 use {
   super::{Message, Page, Source},
-  ::common::time::unix_ms,
-  ::serde_json::Value,
+  ::rustlesearch_api::{Api, Search},
 };
 
-pub const BASE_URL: &str = "https://api-v2.rustlesearch.dev";
-
 pub struct Rustlesearch {
-  client: ::reqwest::Client,
-  base_url: String,
+  api: Api,
   channel: String,
 }
 
 impl Rustlesearch {
-  pub fn new(base_url: impl Into<String>, channel: impl Into<String>) -> Self {
-    let _ = ::rustls::crypto::ring::default_provider().install_default();
-    let client = ::reqwest::Client::builder()
-      .user_agent(format!("dgg-tools-logger/{}", crate::BUILD))
-      .build()
-      .expect("http client");
+  pub fn new(api: Api, channel: impl Into<String>) -> Self {
     Self {
-      client,
-      base_url: base_url.into(),
+      api,
       channel: channel.into(),
     }
   }
@@ -51,62 +27,32 @@ impl Source for Rustlesearch {
   }
 
   async fn page(&self, before: i64) -> Result<Page, String> {
-    let response = self
-      .client
-      .get(format!("{}/anon/search", self.base_url))
-      .query(&[
-        ("channel", self.channel.as_str()),
-        ("search_after", &before.to_string()),
-      ])
-      .send()
+    let answer = self
+      .api
+      .search(&self.channel, before)
       .await
       .map_err(|e| e.to_string())?;
-    let remaining = response
-      .headers()
-      .get("ratelimit")
-      .and_then(|value| value.to_str().ok())
-      .and_then(remaining);
-    let status = response.status();
-    let body = response.text().await.map_err(|e| e.to_string())?;
-    if !status.is_success() {
-      return Err(format!("HTTP {status}: {body:.200}"));
-    }
-    let mut page = parse(&body)?;
-    page.remaining = remaining;
+    let mut page = page(answer.search);
+    page.remaining = answer.rate_limit.and_then(|limit| limit.remaining);
     Ok(page)
   }
 }
 
-/// Parses a search response body.
-pub fn parse(body: &str) -> Result<Page, String> {
-  let value: Value =
-    ::serde_json::from_str(body).map_err(|e| format!("not JSON: {e}"))?;
-  let Some(items) = value["data"]["messages"].as_array() else {
-    return Err(format!("no data.messages: {body:.200}"));
-  };
-  let mut messages = Vec::with_capacity(items.len());
-  for item in items {
-    let field =
-      |key| item[key].as_str().ok_or(format!("message without {key}"));
-    let timestamp = field("ts")?;
-    messages.push(Message {
-      timestamp: unix_ms(timestamp).ok_or(format!("bad ts {timestamp:?}"))?,
-      nick: field("username")?.into(),
-      text: field("text")?.into(),
+/// A search's messages, as a page; with none, the archive is exhausted.
+pub fn page(search: Search) -> Page {
+  let messages: Vec<_> = search
+    .messages
+    .into_iter()
+    .map(|message| Message {
+      timestamp: message.ts,
+      nick: message.username,
+      text: message.text,
       origin: None,
-    });
-  }
-  Ok(Page {
+    })
+    .collect();
+  Page {
     exhausted: messages.is_empty(),
     messages,
     remaining: None,
-  })
-}
-
-/// `remaining` from a `Ratelimit: limit=200, remaining=191, reset=21864`
-/// header.
-pub fn remaining(header: &str) -> Option<u64> {
-  header
-    .split(',')
-    .find_map(|part| part.trim().strip_prefix("remaining=")?.parse().ok())
+  }
 }
