@@ -27,11 +27,12 @@
 //! Versions of dgg's:
 //!
 //! - `0.0`: `journal-archive 0.0`, naming no variant, its third count called
-//!   `lines`: an archive's records were its lines then. Still read, and
-//!   written again as 0.1 when its month's manifest is next recorded.
+//!   `lines`: an archive's records were its lines then.
 //! - `0.1`: names the variant; counts records; entries end at RS LF, not
-//!   LF, but the header at LF. Still read.
+//!   LF, but the header at LF.
 //! - `0.2`: the header ends at RS LF too.
+//!
+//! Only 0.2 is read: every host's manifests were migrated to it.
 
 use {
   crate::{
@@ -61,12 +62,6 @@ pub fn version(variant: Variant) -> Version {
     Variant::Dgg => Version { major: 0, minor: 2 },
     Variant::Kick => Version { major: 0, minor: 0 },
   }
-}
-
-/// Whether this crate reads `variant`'s manifest at `version`.
-fn readable(variant: Variant, version: Version) -> bool {
-  version == self::version(variant)
-    || (variant == Variant::Dgg && version.major == 0 && version.minor < 2)
 }
 
 /// The manifest's file name in each month directory.
@@ -130,7 +125,7 @@ pub fn encode(variant: Variant, archives: &[Archive]) -> String {
 pub fn decode(text: &str) -> Option<(Variant, Vec<Archive>)> {
   let (first, body) = text.split_once('\n')?;
   let header = Header::parse_as(FORMAT, first.as_bytes())?;
-  if !readable(header.variant, header.version) {
+  if header.version != version(header.variant) {
     return None;
   }
   let (entries, tail) = header.framing_as(FORMAT).split(body.as_bytes());

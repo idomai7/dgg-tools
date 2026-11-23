@@ -50,20 +50,16 @@ fn manifest_format() {
   // An entry this version doesn't know is skipped, as are informational
   // fields.
   let extra = format!(
-    "journal-archive dgg.0.1 ; note=x\nsomething new\u{1e}\n\
+    "journal-archive dgg.0.2 ; note=x\u{1e}\nsomething new\u{1e}\n\
      2026-11-08 10 20 1 {sha}\u{1e}\n"
   );
   let first = vec![entry("2026-11-08", 1)];
-  assert_eq!(
-    archive::decode(&extra).unwrap(),
-    (Variant::Dgg, first.clone())
-  );
-  // The version before variants, counting lines, which were records then,
-  // each entry a line.
-  let legacy = format!("journal-archive 0.0\n2026-11-08 10 20 1 {sha}\n");
-  assert_eq!(archive::decode(&legacy).unwrap(), (Variant::Dgg, first));
+  assert_eq!(archive::decode(&extra).unwrap(), (Variant::Dgg, first));
   for bad in [
-    // Within major 0, only the exact versions are read.
+    // Within major 0, only the exact versions are read: older ones no
+    // longer, every host's manifests having been migrated.
+    format!("journal-archive 0.0\n2026-11-08 10 20 1 {sha}\n"),
+    format!("journal-archive dgg.0.1\n2026-11-08 10 20 1 {sha}\u{1e}\n"),
     "journal-archive dgg.0.2\n".to_owned(),
     "journal-archive kick.0.1\n".to_owned(),
     "journal-archive dgg.1.0\n".to_owned(),

@@ -57,7 +57,8 @@ fn reports_captures_and_the_journal() {
   dir.write(
     "data/journal/archive/2026/01/manifest",
     format!(
-      "journal-archive 0.0\n2026-01-01 100 1000 10 {0}\n2026-01-03 50 500 5 {0}\n",
+      "journal-archive dgg.0.2\u{1e}\n2026-01-01 100 1000 10 {0}\u{1e}\n\
+       2026-01-03 50 500 5 {0}\u{1e}\n",
       "0".repeat(64)
     ),
   );
