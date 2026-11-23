@@ -9,7 +9,7 @@ decisions live in its own document here:
 - [logger](logger.md) (codename ledgerline): the journal, capture, index,
   serve, sync, backfill, compact and gaps.
 - [deploy](deploy.md): the mesh of nodes running the logger.
-- [viewer](viewer.md): the read-only chat viewer.
+- [viewer](viewer.md) (codename watcherweave): the read-only chat viewer.
 - [archives](archives.md): archives and stats derived from chat and other dgg
   endpoints.
 - [kick-api](kick-api.md): Kick's APIs.
@@ -17,9 +17,9 @@ decisions live in its own document here:
   moderation tools.
 
 Major components get codenames, by which they name themselves to others, as
-in a `User-Agent`: so far the logger's, ledgerline, and kick-mod's, gavelgab.
-Codenames are always lowercase. The workspace's and the other components' are
-still to be chosen.
+in a `User-Agent`: so far the logger's, ledgerline, kick-mod's, gavelgab, and
+the viewer's, watcherweave. Codenames are always lowercase. The workspace's and
+the other components' are still to be chosen.
 
 ## Layout
 The layout is flat: each crate is a direct child of the root.
