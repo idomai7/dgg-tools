@@ -98,7 +98,8 @@ The layout is flat: each crate is a direct child of the root.
      gaps, and the backfill budget. It could build on `serve`'s `/control` and
      `/manifest`.
 4. **Archives and stats, not yet ordered:** see [archives](archives.md).
-5. **Kick moderation tools** (in planning): see [kick-mod](kick-mod.md).
+5. **Kick moderation tools** (in planning): see [kick-mod](kick-mod.md), and
+   the logger's Kick capture, which it builds on (see [logger](logger.md#kick)).
 
 ## Status
 - **Workspace restructure:** done.

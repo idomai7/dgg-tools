@@ -8,9 +8,9 @@ The logger, codenamed ledgerline: `logger-journal` and `logger`, run as
 - **Storage:** an append-only raw journal is the source of truth. SQLite
   (rusqlite, `bundled`) is an index that can be rebuilt from it.
 - **Kick journals:** the journal format also covers Kick, for
-  [kick-mod](kick-mod.md) now and a Kick logger later. It stays in
-  `logger-journal`. Written by kick-mod; nothing compacts, syncs or indexes
-  Kick's journals yet.
+  [kick-mod](kick-mod.md) now and the logger's Kick capture next (see
+  [Kick](#kick)). It stays in `logger-journal`. Written by kick-mod; nothing
+  compacts, syncs or indexes Kick's journals yet.
   - **Variants:** each platform is a variant of the format, versioned on its own
     as `<variant>.<major>.<minor>`, so one platform's changes never break the
     other's. Their events have little in common anyway.
@@ -278,6 +278,57 @@ The logger, codenamed ledgerline: `logger-journal` and `logger`, run as
     and recorded in the monthly manifest. Only after that are the live files
     deleted, and only those that haven't grown since they were read.
   - Real data: 5 overlapping instances, 1.67 MB, compressed 32x at level 19.
+
+## Kick
+The logger captures Kick too, so kick-mod needs nothing but Kick's official
+API and the logger (see [kick-mod](kick-mod.md)). The logger reads Kick's
+undocumented endpoints anonymously: no token, no login, no app. Planned
+2026-11-24.
+- **Process:** `dgg-logger kick-capture`, a program of its own beside dgg's
+  `capture`, so that stays small and untouched. The supervisor runs it when
+  there are Kick channels to capture.
+- **Layout:** `data/journal/kick/<slug>/`, one journal root per channel (as
+  kick-mod's are), each with its own `live/`, `archive/` and `control/`.
+- **Channels:** a `kick-channels` file in the install, like `nodes`: a line
+  per channel, its slug, channel id and chatroom id.
+  - `dgg-logger kick-ids <slug>...` looks the ids up with the unofficial
+    channel lookup, anonymously, and writes them there. It moves here from
+    kick-mod's `ids`.
+- **Capture:** a Centrifugo connection per channel, each journaled as kick-mod
+  does now.
+  - **Handoff:** as dgg's capture: heartbeats in `control/`, and an older
+    instance retires once a newer one has been healthy for the grace period.
+    Healthy means subscribed on every channel.
+  - **Gaps:** a blip's messages are filled from Kick's chat history, as
+    kick-mod does now (its code moves to a shared place), with
+    `User-Agent: ledgerline/<version>`.
+- **Compact and sync:** both cover Kick's roots too. Compaction's merge works
+  for Kick's records as they are. `serve`'s manifest and files gain
+  `kick/<slug>/...` paths, so the mesh copies Kick's journals as it does
+  dgg's.
+- **Index:** `index-kick.sqlite`, separate from dgg's, with schema versions of
+  its own.
+  - Rows are keyed by Kick's own ids (the uuids of messages, bans and
+    deletions), so captures from several hosts and gap fills merge simply.
+  - Tables: messages; bans, timeouts and unbans; deletions; and per-file
+    checkpoints, as dgg's.
+- **Serving kick-mod:**
+  - `GET /kick/<slug>/users/<id>`: a user's history in the channel, from the
+    Kick index.
+  - `GET /kick/<slug>/events`: live chat as server-sent events, by tailing the
+    channel's live files, apart from the capture process; about a quarter of
+    a second behind.
+  - A third token, a query token, reads only Kick's history and live chat.
+    kick-mod holds only that, and the mesh CA's certificate for TLS.
+  - kick-mod is pointed at one node's `serve`, with others to fall back on.
+- **Steps,** each a pause for review:
+  1. The channel list and `kick-ids`.
+  2. `kick-capture`, with gap filling.
+  3. The supervisor and `status`.
+  4. Compact and sync.
+  5. The Kick index.
+  6. The query and live endpoints.
+  7. kick-mod switches over (see [kick-mod](kick-mod.md)).
 
 ## Status
 - **`logger-journal`:** live files, plus a writer and a reader. The `.zst`

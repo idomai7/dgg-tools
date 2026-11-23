@@ -169,6 +169,15 @@ Each is a pause for review.
      chatroom id. A channel without one isn't filled.
    - Requests name kick-mod in their `User-Agent` (`gavelgab/<version>`).
 
+8. **Switching to the logger,** once it serves Kick (see
+   [logger](logger.md#kick)):
+   - Live chat from the logger's live endpoint, and user history from its
+     query endpoint, with a query token and the mesh CA's certificate.
+   - kick-mod's own Centrifugo connection, journal, gap filling and `ids` go,
+     and with them every undocumented endpoint.
+   - `channels.json` keeps each channel's slug and `broadcaster_user_id`,
+     both from the official API.
+
 Later, each its own step:
 - Automod rules.
 - The login, and per-moderator config.
