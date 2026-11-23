@@ -91,7 +91,7 @@ the [overall rules](README.md), and [deploy](deploy.md) for the mesh it runs on.
          data. A file that fails is reported, and nothing of it is removed.
       3. Only once the validation has passed are the old files removed.
 
-      In detail (step C, proposed):
+      In detail (step C):
       - **What it covers:** the archives, both the journal's and the
         backfill journal's, and their monthly manifests. Live files aren't
         rewritten: compaction converts them into archives anyway, within a
@@ -186,8 +186,10 @@ the [overall rules](README.md), and [deploy](deploy.md) for the mesh it runs on.
       2. **B, logger:** compaction and sync following the framing, and the new
          archive and sync manifests.
          Both done; not deployed yet.
-      3. **C, the migration:** `dgg-logger migrate`, planned in detail first.
-      4. **D:** rollout notes.
+      3. **C, the migration:** `dgg-logger migrate`, and the supervisor
+         running it. Done; not deployed yet.
+      4. **D:** the rollout, on the one host: install the new build, as
+         for any upgrade, and watch `migrate.log`.
 
 ## Design
 - **Journal layout:**
