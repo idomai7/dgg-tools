@@ -78,9 +78,12 @@ the [overall rules](README.md), and [deploy](deploy.md) for the mesh it runs on.
       rewrites it.
     - **Sync** counts an archive's records by its framing, to check them
       against its manifest.
+    - **Sync's manifest** (`GET /manifest`) gets the same header, for the
+      journal root it lists: `journal-manifest dgg.0.1`, and
+      `journal-manifest kick.0.0` once Kick's journals are synced. Its lines
+      are unchanged: live files by size, archives by size and SHA-256.
     - **Rollout:** a logger without this can't read `dgg.0.2` journals or the
-      new manifests, so sync between it and upgraded ones fails until every
-      host is upgraded.
+      new manifests, so every host is upgraded together. There are two.
     - **Migration:** existing `journal 0.1` journals are rewritten in the new
       format by a migration.
       1. It writes each file's new version alongside the old.
@@ -98,7 +101,7 @@ the [overall rules](README.md), and [deploy](deploy.md) for the mesh it runs on.
          reader, the writers' crash repair and next-file rule, Kick's variant
          on the same framing.
       2. **B, logger:** compaction and sync following the framing, and the new
-         archive manifests.
+         archive and sync manifests.
       3. **C, the migration:** `dgg-logger migrate`, planned in detail first.
       4. **D:** rollout notes.
 
