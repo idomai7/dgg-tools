@@ -223,7 +223,7 @@ impl Api {
     let mut token = self.token.lock().await;
     let fresh = token
       .as_ref()
-      .is_some_and(|token| token.expires_at - super::now() > MARGIN);
+      .is_some_and(|token| token.expires_at - time::now_ms() > MARGIN);
     if fresh {
       Ok(token.as_ref().unwrap().access_token.clone())
     } else {

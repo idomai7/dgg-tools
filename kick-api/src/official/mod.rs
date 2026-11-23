@@ -11,10 +11,7 @@ pub mod oauth;
 
 pub use api::Api;
 
-use ::std::{
-  error, fmt,
-  time::{SystemTime, UNIX_EPOCH},
-};
+use ::std::{error, fmt};
 
 /// Why a request failed.
 #[derive(Debug)]
@@ -99,12 +96,4 @@ async fn send(request: ::reqwest::RequestBuilder) -> Result<String, Error> {
       body,
     })
   }
-}
-
-/// Now, in unix milliseconds.
-fn now() -> i64 {
-  let since = SystemTime::now()
-    .duration_since(UNIX_EPOCH)
-    .unwrap_or_default();
-  i64::try_from(since.as_millis()).unwrap_or(i64::MAX)
 }

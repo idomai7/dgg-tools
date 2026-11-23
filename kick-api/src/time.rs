@@ -1,7 +1,18 @@
 //! Kick's timestamps, RFC 3339 strings (`2026-11-19T12:01:56+00:00`, or
-//! with `Z`), as unix milliseconds, as `dgg-api` has its own.
+//! with `Z`), as unix milliseconds, as `dgg-api` has its own; and now.
 
-use ::serde_json::{Map, Value};
+use {
+  ::serde_json::{Map, Value},
+  ::std::time::{SystemTime, UNIX_EPOCH},
+};
+
+/// Now, in unix milliseconds.
+pub fn now_ms() -> i64 {
+  let since = SystemTime::now()
+    .duration_since(UNIX_EPOCH)
+    .unwrap_or_default();
+  i64::try_from(since.as_millis()).unwrap_or(i64::MAX)
+}
 
 /// `rfc3339` in unix milliseconds: `YYYY-MM-DDTHH:MM:SS`, an optional
 /// fraction (cut to milliseconds), and `Z` or a `±HH:MM` offset. `None`

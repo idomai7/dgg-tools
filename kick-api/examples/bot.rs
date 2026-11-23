@@ -19,11 +19,9 @@ use {
       oauth::App,
     },
     realtime::{Client, Event, Item, Options},
+    time,
   },
-  ::std::{
-    env, fs,
-    time::{SystemTime, UNIX_EPOCH},
-  },
+  ::std::{env, fs},
   common::{event, save, show_app, wait},
 };
 
@@ -69,9 +67,8 @@ async fn main() {
   println!("subscribed: {subscribed}");
 
   for (whose, api) in [("user's", &user), ("app's", &as_app)] {
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
     let chat = Chat {
-      content: format!("kick-api bot check {}", now.as_millis()),
+      content: format!("kick-api bot check {}", time::now_ms()),
       r#type: Sender::Bot,
       broadcaster_user_id: Some(channel.broadcaster_user_id),
       reply_to_message_id: None,

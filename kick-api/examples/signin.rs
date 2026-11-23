@@ -21,11 +21,9 @@ use {
       oauth::{App, Token},
     },
     realtime::{Client, Event, Item, Options},
+    time,
   },
-  ::std::{
-    env, fs,
-    time::{SystemTime, UNIX_EPOCH},
-  },
+  ::std::{env, fs},
   ::tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpListener,
@@ -132,9 +130,8 @@ async fn check(api: &Api, user_id: u64, broadcaster_user_id: u64, room: u64) {
   .expect("subscribed");
   println!("subscribed: {subscribed}");
 
-  let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
   let chat = Chat {
-    content: format!("kick-api check {}", now.as_millis()),
+    content: format!("kick-api check {}", time::now_ms()),
     r#type: Sender::User,
     broadcaster_user_id: Some(broadcaster_user_id),
     reply_to_message_id: None,

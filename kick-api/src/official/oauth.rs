@@ -6,8 +6,11 @@
 //! query it's called with to [`SignIn::code`].
 
 use {
-  super::{Error, now, send},
-  crate::rest::{self, Rest},
+  super::{Error, send},
+  crate::{
+    rest::{self, Rest},
+    time,
+  },
   ::base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD},
   ::reqwest::{Url, header::CONTENT_TYPE},
   ::serde::{Deserialize, Serialize},
@@ -276,7 +279,8 @@ impl App {
     form.extend_from_slice(grant);
     let request = http.post(format!("{}/oauth/token", self.base)).form(&form);
     let raw = send(request).await?;
-    Token::decode(&raw, now()).map_err(|error| Error::Decode { raw, error })
+    Token::decode(&raw, time::now_ms())
+      .map_err(|error| Error::Decode { raw, error })
   }
 }
 
