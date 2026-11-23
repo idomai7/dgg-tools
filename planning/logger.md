@@ -134,12 +134,15 @@ the [overall rules](README.md), and [deploy](deploy.md) for the mesh it runs on.
   (default) or linkers.ooo. overrustlelogs.net is gone: the domain no longer
   resolves (checked 2026-11-08).
   - **API:**
-    `GET https://api-v2.rustlesearch.dev/anon/search?channel=Destinygg&search_after=<ms>`,
+    ```
+    GET https://api-v2.rustlesearch.dev/anon/search?channel=Destinygg&search_after=<ms>
+    ```
     with optional `start_date`/`end_date` (YYYY-MM-DD), `username` and `text`.
-    - It returns
-      `{data: {messages: [{channel, text, ts, username, searchAfter}]}}`: 100
-      per page, newest first. `searchAfter` is the ms cursor for the next, older
-      page.
+    - It returns 100 per page, newest first:
+      ```
+      {data: {messages: [{channel, text, ts, username, searchAfter}]}}
+      ```
+      `searchAfter` is the ms cursor for the next, older page.
     - Found via github.com/Fritz-02/rustlesearch-exporter.
   - **Matches dgg:**
     - `ts` equals dgg's timestamp to the millisecond. 2016-era logs have whole
@@ -149,11 +152,23 @@ the [overall rules](README.md), and [deploy](deploy.md) for the mesh it runs on.
   - **Freshness and depth:** it runs about 5 s behind live, and goes back to at
     least 2016.
   - **Rate limit:** 200 requests per day (`Ratelimit-Policy: 200;w=86400`).
-  - **Second source, `--source linkers`:** linkers.ooo
-    (`GET https://linkers.ooo/api/messages?messageType=MSG&endTime=<ISO>&limit=500`).
-    - It returns
-      `{messages: [{id, timestamp, user, message, message_type, user_flairs, subscription_tier, ...}], total, totalCapped, limit, offset}`,
-      newest first, up to 500 a page. `endTime` is inclusive.
+  - **Second source, `--source linkers`:** linkers.ooo:
+    ```
+    GET https://linkers.ooo/api/messages?messageType=MSG&endTime=<ISO>&limit=500
+    ```
+    - It returns up to 500 a page, newest first:
+      ```
+      {
+        messages: [
+          {
+            id, timestamp, user, message, message_type, user_flairs,
+            subscription_tier, ...
+          }
+        ],
+        total, totalCapped, limit, offset
+      }
+      ```
+      `endTime` is inclusive.
     - Timestamps and `endTime` are truncated to the second. Nicks keep their
       case, and newlines become spaces. A full page leaves its oldest second for
       the next page, so no second is ever split.

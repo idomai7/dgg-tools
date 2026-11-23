@@ -211,10 +211,23 @@ broadcaster sent messages, deleted, pinned, timed out, banned, unbanned, toggled
 each chat setting and cleared chat.
 - **Connecting:** no login, and no `Origin` header is needed anywhere. reqwest
   is accepted on `web.kick.com`.
-  1. `POST https://web.kick.com/api/v1/realtime/connection` with
-     `{"client": {"id": <uuid>, "type": "web"}, "capabilities": {"accepted_providers": [{"provider": "centrifugo"}]}}`.
-     It answers
-     `{data: {connections: [{provider: "centrifugo", credentials: {url}}], mode: "websocket"}, message: "success"}`.
+  1. `POST https://web.kick.com/api/v1/realtime/connection` with:
+     ```
+     {
+       "client": {"id": <uuid>, "type": "web"},
+       "capabilities": {"accepted_providers": [{"provider": "centrifugo"}]}
+     }
+     ```
+     It answers:
+     ```
+     {
+       data: {
+         connections: [{provider: "centrifugo", credentials: {url}}],
+         mode: "websocket"
+       },
+       message: "success"
+     }
+     ```
      The `url` was
      `wss://realtime.us-west-2.platform.kick.com/connection/websocket` on the
      first run and `us-east-1` on the second, so it changes between connections
@@ -222,9 +235,21 @@ each chat setting and cleared chat.
   2. `POST https://web.kick.com/api/v1/realtime/auth/connection` with
      `{"client_id": <the same uuid>}`. It answers `{data: {token}}`, an HS256
      JWT for `sub: guest:<uuid>` that lasts 45 minutes.
-  3. Open the socket and send
-     `{"id": 1, "connect": {"token": <token>, "name": "js"}}`. The reply was
-     `{client, version: "6.9.7 PRO", expires: true, ttl: 2699, ping: 25, pong: true}`.
+  3. Open the socket and send:
+     ```
+     {"id": 1, "connect": {"token": <token>, "name": "js"}}
+     ```
+     The reply was:
+     ```
+     {
+       client,
+       version: "6.9.7 PRO",
+       expires: true,
+       ttl: 2699,
+       ping: 25,
+       pong: true
+     }
+     ```
 - **Server:** Centrifugo PRO, the commercial build. It speaks the open-source
   JSON protocol.
 - **Keepalive:** the server sends `{}` every 25 s, and the client answers each
@@ -242,7 +267,17 @@ each chat setting and cleared chat.
   or `epoch`, and `history` answers `108 not available`. Whatever arrives while
   disconnected is lost.
 - **Frames:** one push per frame:
-  `{"push": {"channel", "pub": {"data": {"event", "data": "<JSON as a string>"}, "tags": {"event"}}}}`.
+  ```
+  {
+    "push": {
+      "channel",
+      "pub": {
+        "data": {"event", "data": "<JSON as a string>"},
+        "tags": {"event"}
+      }
+    }
+  }
+  ```
 - **Events seen:**
   - `App\Events\ChatMessageEvent`:
     - `id` (uuid), `chatroom_id`, `content`, `type` (`message` or `reply`),
