@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
 members = [
+  "common",
   "deploy",
   "dgg-api",
   "kick-api",
@@ -15,6 +16,7 @@ members = [
 edition = "2024"
 
 [workspace.dependencies]
+common = { path = "common" }
 dgg-api = { path = "dgg-api" }
 kick-api = { path = "kick-api" }
 logger = { path = "logger" }
