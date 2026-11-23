@@ -305,8 +305,12 @@ undocumented endpoints anonymously: no token, no login, no app. Planned
 - **Channels:** a `kick-channels` file in the install, like `nodes`: a line
   per channel, its slug, channel id and chatroom id.
   - `dgg-logger kick-ids <slug>...` looks the ids up with the unofficial
-    channel lookup, anonymously, and writes them there. It moves here from
-    kick-mod's `ids`.
+    channel lookup, anonymously, and writes them there. Asking the lookup
+    (with curl, which Cloudflare lets through) moved into `kick-api`'s
+    `lookup` feature, which kick-mod's `ids` uses until it switches over.
+  - Slugs are lowercase letters, digits, `-` and `_`, so each is also a
+    directory's name. Hand edits survive `kick-ids`: it changes only the
+    channel's own line.
 - **Capture:** a Centrifugo connection per channel, each journaled as kick-mod
   does now.
   - **Handoff:** as dgg's capture: heartbeats in `control/`, and an older
@@ -369,6 +373,8 @@ undocumented endpoints anonymously: no token, no login, no app. Planned
   - Live test: after backfill, the index holds exactly a reference capture's 583
     messages over the same span. 16 nicks stay lowercase because those users
     were never seen natively.
+- **Kick:** step 1 done: `kick-channels` and `kick-ids`. Nothing reads the
+  list yet.
 - **Cross-host handoff:** done. Tested live: the old instance retired about 38 s
   after the new one started.
 - **`serve` / `sync`:** done. The supervisor's side is in [deploy](deploy.md).
