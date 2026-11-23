@@ -1626,6 +1626,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "linkers-api"
+version = "0.1.0"
+dependencies = [
+ "common",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "linux-raw-sys"
 version = "0.4.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1676,6 +1687,7 @@ dependencies = [
  "dgg-api",
  "futures-util",
  "gethostname",
+ "linkers-api",
  "logger-journal",
  "pkcs8",
  "rcgen",
