@@ -1,6 +1,6 @@
 //! What the logger is doing: its programs, each capture's health, the
-//! journal and index, the peers it syncs from, free disk space and the ends
-//! of the logs.
+//! journal and index, the peers it syncs from, Kick's captures and
+//! channels, free disk space and the ends of the logs.
 //!
 //! [`Watcher::gather`] takes a snapshot ([`Report`]); [`text`] prints one,
 //! and [`watch`] redraws one every few seconds.
@@ -9,14 +9,17 @@ pub mod watch;
 
 use {
   crate::{paths::Paths, peer, processes},
+  ::common::fs::MissingOk,
   ::common::{
     format,
     time::{now_ms, utc_day, utc_timestamp},
   },
-  ::logger::{control, index},
+  ::logger::{control, index, kick::channels},
   ::logger_journal::{
-    Reader, Record, archive,
-    layout::{backfill_files, backfill_root, live_files},
+    Reader, Record, Variant, archive,
+    layout::{
+      backfill_files, backfill_root, channel_root, kick_root, live_files,
+    },
     record::v0,
   },
   ::std::{
@@ -36,13 +39,14 @@ use {
 pub const STALE_MS: i64 = 5000;
 
 /// The logs a supervisor writes, in the order they're offered.
-pub const LOGS: [&str; 6] = [
+pub const LOGS: [&str; 7] = [
   "capture",
   "index",
   "compact",
   "supervisor",
   "sync",
   "migrate",
+  "kick-capture",
 ];
 
 /// One of the logger's processes.
@@ -134,6 +138,29 @@ pub struct Report {
   /// Free space on the data directory's disk.
   pub free: Option<u64>,
   pub sync: Option<Sync>,
+  pub kick: Kick,
+}
+
+/// Kick's capture: its instances, and the channels listed or journaled.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Kick {
+  /// Each instance once, as its freshest status has it. Its frames aren't
+  /// counted.
+  pub captures: Vec<Capture>,
+  pub channels: Vec<KickChannel>,
+  /// Why the channel list couldn't be read, if it couldn't.
+  pub problem: Option<String>,
+}
+
+/// One Kick channel's journal today.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct KickChannel {
+  pub slug: String,
+  /// Whether it's in the channel list (or only journaled before).
+  pub listed: bool,
+  pub today_files: Files,
+  /// Unix ms of the newest write today.
+  pub last_write: Option<i64>,
 }
 
 /// The peers the install syncs from.
@@ -217,6 +244,7 @@ impl Watcher {
         .and_then(|metadata| Some((metadata.len(), modified_ms(&metadata)?))),
       free: free_space(&paths.data),
       sync: sync(paths),
+      kick: kick(paths, &journal_root, now)?,
     })
   }
 
@@ -375,22 +403,83 @@ fn captures(journal_root: &Path, now: i64) -> io::Result<Vec<Capture>> {
   let mut captures: Vec<Capture> =
     control::read_all(&control::dir(journal_root))?
       .into_iter()
-      .map(|status| Capture {
-        health: if now - status.heartbeat > STALE_MS {
-          Health::Stale(status.heartbeat)
-        } else if let Some(since) = status.healthy_since {
-          Health::Healthy(since)
-        } else {
-          Health::Connecting
-        },
-        instance: status.instance,
-        started: status.started,
-        build: status.build,
-        frames: 0,
-      })
+      .map(|status| capture(status, now))
       .collect();
   captures.sort_by_key(|capture| capture.started);
   Ok(captures)
+}
+
+/// A capture, as `status` has it at `now`.
+fn capture(status: control::Status, now: i64) -> Capture {
+  Capture {
+    health: if now - status.heartbeat > STALE_MS {
+      Health::Stale(status.heartbeat)
+    } else if let Some(since) = status.healthy_since {
+      Health::Healthy(since)
+    } else {
+      Health::Connecting
+    },
+    instance: status.instance,
+    started: status.started,
+    build: status.build,
+    frames: 0,
+  }
+}
+
+/// Kick's captures and channels: those in the install's list, and those
+/// with a journal root.
+fn kick(paths: &Paths, journal_root: &Path, now: i64) -> io::Result<Kick> {
+  let mut report = Kick::default();
+  let listed = match channels::load(&paths.root.join(channels::FILE)) {
+    Ok(listed) => listed.into_iter().map(|c| c.slug).collect(),
+    Err(e) => {
+      report.problem = Some(e);
+      Vec::new()
+    }
+  };
+  let kick_root = kick_root(journal_root);
+  let mut slugs: BTreeSet<String> = listed.iter().cloned().collect();
+  if let Some(entries) = fs::read_dir(&kick_root).missing_ok()? {
+    for entry in entries {
+      let entry = entry?;
+      if entry.file_type()?.is_dir() {
+        slugs.insert(entry.file_name().to_string_lossy().into_owned());
+      }
+    }
+  }
+  let today = utc_day(now);
+  let mut statuses: Vec<control::Status> = Vec::new();
+  for slug in slugs {
+    let root = channel_root(&kick_root, &slug);
+    for status in control::read_all_as(&control::dir(&root), Variant::Kick)? {
+      match statuses.iter_mut().find(|s| s.instance == status.instance) {
+        Some(known) if known.heartbeat >= status.heartbeat => {}
+        Some(known) => *known = status,
+        None => statuses.push(status),
+      }
+    }
+    let mut channel = KickChannel {
+      listed: listed.contains(&slug),
+      slug,
+      today_files: Files::default(),
+      last_write: None,
+    };
+    for file in live_files(&root)? {
+      if day_of(&file) == today
+        && let Ok(metadata) = fs::metadata(&file)
+      {
+        channel.today_files.add(metadata.len());
+        channel.last_write = channel.last_write.max(modified_ms(&metadata));
+      }
+    }
+    report.channels.push(channel);
+  }
+  report.captures = statuses
+    .into_iter()
+    .map(|status| capture(status, now))
+    .collect();
+  report.captures.sort_by_key(|capture| capture.started);
+  Ok(report)
 }
 
 /// Free space on the disk holding `path`: the one with the longest mount
@@ -563,6 +652,52 @@ pub fn text(report: &Report) -> Vec<String> {
       .into_iter()
       .map(|line| format!("  {line}")),
   );
+  let kick = kick_lines(report);
+  if !kick.is_empty() {
+    out.push(String::new());
+    out.push("KICK".into());
+    out.extend(kick.into_iter().map(|line| format!("  {line}")));
+  }
+  out
+}
+
+/// Kick's captures, then its channels, one line each: none if Kick isn't
+/// captured.
+pub fn kick_lines(report: &Report) -> Vec<String> {
+  let kick = &report.kick;
+  let now = report.now;
+  let mut out = Vec::new();
+  if kick.channels.is_empty() && kick.problem.is_none() {
+    return out;
+  }
+  if kick.captures.is_empty() {
+    out.push("no capture".into());
+  }
+  for capture in &kick.captures {
+    out.push(format!(
+      "{:<30} up {:<8} {:<24} {}",
+      capture.instance,
+      format::duration(now - capture.started),
+      health(capture, now),
+      capture.build.as_deref().unwrap_or("")
+    ));
+  }
+  for channel in &kick.channels {
+    let last = match channel.last_write {
+      Some(at) => format!("last write {} ago", format::duration(now - at)),
+      None => "nothing today".into(),
+    };
+    let listed = if channel.listed { "" } else { "  (not listed)" };
+    out.push(format!(
+      "{:<20} today {} files  {}  {last}{listed}",
+      channel.slug,
+      channel.today_files.count,
+      format::size(channel.today_files.bytes as f64)
+    ));
+  }
+  if let Some(problem) = &kick.problem {
+    out.push(format!("channel list  {problem}"));
+  }
   out
 }
 

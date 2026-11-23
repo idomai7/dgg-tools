@@ -1,14 +1,16 @@
 //! `status --watch`: the report redrawn every few seconds, with a log
 //! filling the rest of the screen.
 //!
-//! Keys: `1`-`6` show the capture, index, compact, supervisor, sync or
-//! migrate log, `f` the newest frames a capture wrote (again for the next
-//! capture), `g` the gaps in capture (again to look again), `r` redraws
-//! now, `e` opens the data folder, `q` (or Esc, or Ctrl-C) quits.
+//! Keys: `1`-`7` show the capture, index, compact, supervisor, sync,
+//! migrate or kick-capture log, `f` the newest frames a capture wrote
+//! (again for the next capture), `g` the gaps in capture (again to look
+//! again), `r` redraws now, `e` opens the data folder, `q` (or Esc, or
+//! Ctrl-C) quits.
 
 use {
   super::{
-    LOGS, Report, Watcher, capture_tail, gaps, health, journal_lines, tail,
+    LOGS, Report, Watcher, capture_tail, gaps, health, journal_lines,
+    kick_lines, tail,
   },
   crate::paths::Paths,
   ::common::{
@@ -30,7 +32,7 @@ use {
   },
 };
 
-const KEYS: &str = " 1 capture  2 index  3 compact  4 supervisor  5 sync  6 migrate  f frames  g gaps   r redraw  e open data  q quit";
+const KEYS: &str = " 1 capture  2 index  3 compact  4 supervisor  5 sync  6 migrate  7 kick  f frames  g gaps   r redraw  e open data  q quit";
 
 /// What fills the bottom of the screen.
 enum View {
@@ -155,7 +157,7 @@ fn event_loop(
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
           return Ok(());
         }
-        KeyCode::Char(digit @ '1'..='6') => {
+        KeyCode::Char(digit @ '1'..='7') => {
           view = View::Log(digit as usize - '1' as usize);
           break;
         }
@@ -261,6 +263,8 @@ pub fn draw(frame: &mut Frame, report: &Report, pane: &Pane) {
   };
   let journal: Vec<Line> =
     journal_lines(report).into_iter().map(Line::from).collect();
+  let kick: Vec<Line> =
+    kick_lines(report).into_iter().map(Line::from).collect();
 
   let free = report
     .free
@@ -275,11 +279,17 @@ pub fn draw(frame: &mut Frame, report: &Report, pane: &Pane) {
     )),
   ]);
 
+  // Kick's block only when Kick is captured.
+  let kick_height = match kick.len() {
+    0 => 0,
+    lines => lines as u16 + 2,
+  };
   let [
     top,
     programs_area,
     captures_area,
     journal_area,
+    kick_area,
     log_area,
     keys,
   ] = Layout::vertical([
@@ -287,6 +297,7 @@ pub fn draw(frame: &mut Frame, report: &Report, pane: &Pane) {
     Constraint::Length(programs.len() as u16 + 2),
     Constraint::Length(captures.len() as u16 + 2),
     Constraint::Length(journal.len() as u16 + 2),
+    Constraint::Length(kick_height),
     Constraint::Min(3),
     Constraint::Length(1),
   ])
@@ -304,6 +315,9 @@ pub fn draw(frame: &mut Frame, report: &Report, pane: &Pane) {
     Paragraph::new(journal).block(heading("journal")),
     journal_area,
   );
+  if !kick.is_empty() {
+    frame.render_widget(Paragraph::new(kick).block(heading("kick")), kick_area);
+  }
   let mut body: Vec<Line> = Vec::new();
   if let Some(header) = &pane.header {
     body.push(Line::from(header.as_str()).bold());
