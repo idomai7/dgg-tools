@@ -42,7 +42,10 @@ use {
     paths::{Paths, user_root},
     peer, processes,
   },
-  ::common::time::{now_ms, utc_timestamp},
+  ::common::{
+    fs::same,
+    time::{now_ms, utc_timestamp},
+  },
   ::logger::control,
   ::std::{
     fs, io,
@@ -316,7 +319,7 @@ pub fn install(options: &Options) -> io::Result<Done> {
   let old = current.as_ref().map(Installed::paths);
   let moving = old
     .as_ref()
-    .is_some_and(|old| !moving::same(&old.data, &paths.data));
+    .is_some_and(|old| !same(&old.data, &paths.data));
   if moving && let Some(old) = &old {
     let collisions = moving::collisions(&old.data, &paths.data)?;
     if !collisions.is_empty() {
@@ -387,7 +390,7 @@ pub fn install(options: &Options) -> io::Result<Done> {
       moving::merge(&old.data, &paths.data)?;
     }
     moving::merge_logs(&old.logs, &paths.logs)?;
-    if !moving::same(&old.root, &paths.root) {
+    if !same(&old.root, &paths.root) {
       peer::move_all(&old.root, &paths.root)?;
       if options.scope == Scope::Machine {
         allow_service(&paths)?;

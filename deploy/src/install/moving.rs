@@ -5,34 +5,13 @@
 //! one exception refused up front is a file both have (the same archived
 //! day, say), which is left for a person to sort out.
 
-use ::std::{
-  fs, io,
-  path::{Path, PathBuf},
+use {
+  ::common::fs::{files, move_file, remove_empty_dirs, same},
+  ::std::{
+    fs, io,
+    path::{Path, PathBuf},
+  },
 };
-
-/// Every file under `dir`, relative to it.
-fn files(dir: &Path) -> io::Result<Vec<PathBuf>> {
-  let mut found = Vec::new();
-  let mut pending = vec![PathBuf::new()];
-  while let Some(relative) = pending.pop() {
-    let entries = match fs::read_dir(dir.join(&relative)) {
-      Ok(entries) => entries,
-      Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
-      Err(e) => return Err(e),
-    };
-    for entry in entries {
-      let entry = entry?;
-      let path = relative.join(entry.file_name());
-      if entry.file_type()?.is_dir() {
-        pending.push(path);
-      } else {
-        found.push(path);
-      }
-    }
-  }
-  found.sort();
-  Ok(found)
-}
 
 /// Files under both `from` and `to`, which a merge would have to overwrite.
 pub fn collisions(from: &Path, to: &Path) -> io::Result<Vec<PathBuf>> {
@@ -42,30 +21,6 @@ pub fn collisions(from: &Path, to: &Path) -> io::Result<Vec<PathBuf>> {
       .filter(|relative| to.join(relative).exists())
       .collect(),
   )
-}
-
-/// Moves one file, copying across disks.
-fn move_file(from: &Path, to: &Path) -> io::Result<()> {
-  if let Some(parent) = to.parent() {
-    fs::create_dir_all(parent)?;
-  }
-  if fs::rename(from, to).is_ok() {
-    return Ok(());
-  }
-  fs::copy(from, to)?;
-  fs::remove_file(from)
-}
-
-/// Removes `dir`'s empty directories, and `dir` if it ends up empty.
-fn remove_empty(dir: &Path) {
-  if let Ok(entries) = fs::read_dir(dir) {
-    for entry in entries.flatten() {
-      if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
-        remove_empty(&entry.path());
-      }
-    }
-  }
-  let _ = fs::remove_dir(dir);
 }
 
 /// Moves everything under `from` into `to`, refusing (before moving
@@ -90,7 +45,7 @@ pub fn merge(from: &Path, to: &Path) -> io::Result<()> {
   for relative in files(from)? {
     move_file(&from.join(&relative), &to.join(&relative))?;
   }
-  remove_empty(from);
+  remove_empty_dirs(from);
   Ok(())
 }
 
@@ -112,14 +67,6 @@ pub fn merge_logs(from: &Path, to: &Path) -> io::Result<()> {
       move_file(&old, &new)?;
     }
   }
-  remove_empty(from);
+  remove_empty_dirs(from);
   Ok(())
-}
-
-/// Whether `a` and `b` are the same directory.
-pub fn same(a: &Path, b: &Path) -> bool {
-  match (fs::canonicalize(a), fs::canonicalize(b)) {
-    (Ok(a), Ok(b)) => a == b,
-    _ => a == b,
-  }
 }

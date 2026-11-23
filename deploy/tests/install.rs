@@ -331,7 +331,8 @@ mod planning {
 mod moving {
   use {
     super::TempDir,
-    ::deploy::install::moving::{collisions, merge, merge_logs, same},
+    ::common::fs::same,
+    ::deploy::install::moving::{collisions, merge, merge_logs},
     ::std::{fs, path::PathBuf},
   };
 
