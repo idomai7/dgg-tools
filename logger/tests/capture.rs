@@ -105,7 +105,9 @@ async fn journals_connections_and_shutdown() {
   let bodies: Vec<_> = Reader::open(&files[0], 0)
     .unwrap()
     .map(|entry| {
-      let Record::V0(record) = entry.unwrap().record;
+      let Record::V0(record) = entry.unwrap().record else {
+        panic!("not dgg's")
+      };
       assert_eq!(record.instance, "t");
       (record.connection, record.body)
     })
@@ -139,7 +141,9 @@ fn bodies(root: &TempDir, instance: &str) -> Vec<Body> {
     .filter(|file| file.file_stem().unwrap() == instance)
     .flat_map(|file| Reader::open(file, 0).unwrap())
     .map(|entry| {
-      let Record::V0(record) = entry.unwrap().record;
+      let Record::V0(record) = entry.unwrap().record else {
+        panic!("not dgg's")
+      };
       record.body
     })
     .collect()

@@ -1,4 +1,7 @@
-//! Appends records to live or backfill files, always in the [`v0`] format.
+//! Appends records to live or backfill files, always in the [`v0`] format;
+//! [`kick`] writes Kick's.
+
+pub mod kick;
 
 use {
   crate::{
@@ -153,33 +156,39 @@ impl Writer {
     Ok(())
   }
 
-  /// Opens (creating if needed) this instance's file for `day`. A new file
-  /// gets the v0 header; an existing one with a torn tail gets a newline.
+  /// Opens (creating if needed) this instance's file for `day`.
   fn open_day(&self, day: &str) -> io::Result<File> {
     let path = if self.backfill {
       backfill_file(&self.root, day, &self.instance)
     } else {
       live_file(&self.root, day, &self.instance)
     };
-    fs::create_dir_all(path.parent().unwrap())?;
-    let mut file = OpenOptions::new()
-      .create(true)
-      .read(true)
-      .append(true)
-      .open(path)?;
-    if file.metadata()?.len() == 0 {
-      file.write_all(format!("{}\n", v0::VERSION.header()).as_bytes())?;
-    } else {
-      // Isolate a torn line left by a crash, so the next record starts clean.
-      let mut last = [0];
-      file.seek(SeekFrom::End(-1))?;
-      file.read_exact(&mut last)?;
-      if last[0] != b'\n' {
-        file.write_all(b"\n")?;
-      }
-    }
-    Ok(file)
+    open_append(&path, &v0::VERSION.header())
   }
+}
+
+/// Opens `path` to append to, creating it and its directory if needed. A
+/// new file gets `header`, in one write; an existing one with a torn tail
+/// gets a newline.
+fn open_append(path: &Path, header: &str) -> io::Result<File> {
+  fs::create_dir_all(path.parent().unwrap())?;
+  let mut file = OpenOptions::new()
+    .create(true)
+    .read(true)
+    .append(true)
+    .open(path)?;
+  if file.metadata()?.len() == 0 {
+    file.write_all(format!("{header}\n").as_bytes())?;
+  } else {
+    // Isolate a torn line left by a crash, so the next record starts clean.
+    let mut last = [0];
+    file.seek(SeekFrom::End(-1))?;
+    file.read_exact(&mut last)?;
+    if last[0] != b'\n' {
+      file.write_all(b"\n")?;
+    }
+  }
+  Ok(file)
 }
 
 impl Drop for Writer {

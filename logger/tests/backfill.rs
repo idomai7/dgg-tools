@@ -107,7 +107,9 @@ fn bodies(root: &TempDir) -> Vec<v0::Body> {
     .iter()
     .flat_map(|file| Reader::open(file, 0).unwrap())
     .map(|entry| {
-      let Record::V0(record) = entry.unwrap().record;
+      let Record::V0(record) = entry.unwrap().record else {
+        panic!("not dgg's")
+      };
       assert_eq!(
         (record.instance.as_str(), record.connection),
         ("backfill-t", 1)

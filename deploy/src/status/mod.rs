@@ -276,7 +276,9 @@ impl Watcher {
       if let Ok(mut reader) = Reader::open(&file, counted.offset) {
         for entry in reader.by_ref() {
           let Ok(entry) = entry else { continue };
-          let Record::V0(record) = entry.record;
+          let Record::V0(record) = entry.record else {
+            continue;
+          };
           if matches!(record.body, v0::Body::Frame(_) | v0::Body::Binary(_)) {
             counted.frames += 1;
           }
@@ -441,8 +443,9 @@ pub fn capture_tail(
   // Starting mid-file, the first line may be cut: it doesn't decode.
   let records: Vec<v0::Record> = reader
     .filter_map(Result::ok)
-    .map(|entry| match entry.record {
-      Record::V0(record) => record,
+    .filter_map(|entry| match entry.record {
+      Record::V0(record) => Some(record),
+      Record::Kick0(_) => None,
     })
     .collect();
   let skip = records.len().saturating_sub(lines);

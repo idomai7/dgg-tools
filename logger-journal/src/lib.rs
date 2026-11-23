@@ -1,6 +1,9 @@
 //! The logger's journal: append-only line files that are the source of truth
 //! for everything captured from dgg chat.
 //!
+//! Its first variant is dgg's; Kick's is [`record::kick`], written by
+//! [`writer::kick`] with a journal root per channel.
+//!
 //! Live files live at `<root>/live/YYYY-MM-DD/<instance>.journal`, one per
 //! capture instance per UTC day, so overlapping instances never share a file
 //! (see [`layout`]). Closed days are compacted into one zstd-compressed
@@ -17,12 +20,15 @@
 //!
 //! # Versions
 //!
-//! The first line of every file is `journal <major>.<minor>` (see
-//! [`record::Version`]); the rest of the file is in that version's line
-//! format. Each major version has its own module under [`record`] describing
-//! its structure, encoding and decoding, so old and new formats coexist:
+//! The first line of every file is its [`record::Header`]: `journal
+//! <major>.<minor>` for dgg, `journal kick.<major>.<minor>` for Kick, each
+//! variant versioned on its own. The rest of the file is in that version's
+//! line format. Each major version has its own module under [`record`]
+//! describing its structure, encoding and decoding, so old and new formats
+//! coexist:
 //!
-//! - [`record::v0`]: the current format.
+//! - [`record::v0`]: dgg's current format.
+//! - [`record::kick::v0`]: Kick's current format.
 //!
 //! Versions work like cargo's semver. While the major is 0 (pre-release),
 //! any minor may break, so a reader accepts only the exact minor it has; files
@@ -40,6 +46,6 @@ pub mod writer;
 
 pub use {
   reader::{Entry, ReadError, Reader},
-  record::{DecodeError, Record, Version},
+  record::{DecodeError, Header, Record, Variant, Version},
   writer::Writer,
 };

@@ -22,9 +22,30 @@ pub fn live_dir(root: &Path) -> PathBuf {
 
 /// The live file one instance writes for one day.
 pub fn live_file(root: &Path, day: &str, instance: &str) -> PathBuf {
-  live_dir(root)
-    .join(day)
-    .join(format!("{instance}.{EXTENSION}"))
+  numbered_live_file(root, day, instance, 1)
+}
+
+/// The `n`th live file one instance writes for one day, counting from 1:
+/// `<instance>.journal`, then `<instance>.<n>.journal`. Kick's writer starts
+/// the next one when the endpoint changes.
+pub fn numbered_live_file(
+  root: &Path,
+  day: &str,
+  instance: &str,
+  n: u32,
+) -> PathBuf {
+  let name = if n == 1 {
+    format!("{instance}.{EXTENSION}")
+  } else {
+    format!("{instance}.{n}.{EXTENSION}")
+  };
+  live_dir(root).join(day).join(name)
+}
+
+/// The journal root for one Kick channel under Kick's journal root
+/// `kick_root`: `<kick_root>/<slug>`, laid out like any other.
+pub fn channel_root(kick_root: &Path, slug: &str) -> PathBuf {
+  kick_root.join(slug)
 }
 
 /// Every live journal file, sorted by day then instance.

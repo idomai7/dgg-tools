@@ -3,7 +3,7 @@
 use {
   ::common::temp_dir::TempDir,
   ::logger_journal::{
-    DecodeError, Entry, ReadError, Reader, Record, Version, Writer,
+    DecodeError, Entry, ReadError, Reader, Record, Variant, Version, Writer,
     layout::{backfill_files, live_dir, live_files},
     record::v0::{self, Body},
   },
@@ -30,7 +30,9 @@ fn write(writer: &mut Writer, record: &v0::Record) {
 }
 
 fn record(entry: Result<Entry, ReadError>) -> v0::Record {
-  let Record::V0(record) = entry.unwrap().record;
+  let Record::V0(record) = entry.unwrap().record else {
+    panic!("not dgg's")
+  };
   record
 }
 
@@ -136,11 +138,14 @@ fn header_is_checked() {
   // Within major 0 another minor may have broken anything: refused.
   let v07 = Version { major: 0, minor: 7 };
   assert!(
-    matches!(with("journal 0.7"), Err(ReadError::Version(v)) if v == v07)
+    matches!(with("journal 0.7"), Err(ReadError::Version(Variant::Dgg, v)) if v == v07)
   );
   // As is a major without a decoder.
   let v2 = Version { major: 2, minor: 0 };
-  assert!(matches!(with("journal 2.0"), Err(ReadError::Version(v)) if v == v2));
+  assert!(matches!(
+    with("journal 2.0"),
+    Err(ReadError::Version(Variant::Dgg, v)) if v == v2
+  ));
   assert!(matches!(
     with("dgg-journal 1.0"),
     Err(ReadError::Header { found }) if found == "dgg-journal 1.0"

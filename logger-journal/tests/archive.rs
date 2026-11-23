@@ -104,7 +104,9 @@ fn reader_reads_archives_and_resumes() {
       .unwrap()
       .map(|entry| {
         let entry = entry.unwrap();
-        let Record::V0(record) = entry.record;
+        let Record::V0(record) = entry.record else {
+          panic!("not dgg's")
+        };
         let Body::Frame(frame) = record.body else {
           panic!("not a frame")
         };

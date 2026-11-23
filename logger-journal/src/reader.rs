@@ -3,7 +3,7 @@
 use {
   crate::{
     layout::ARCHIVE_SUFFIX,
-    record::{DecodeError, Record, Version},
+    record::{DecodeError, Header, Record, Variant, Version},
   },
   ::std::{
     fs::File,
@@ -27,8 +27,8 @@ pub enum ReadError {
   Io(io::Error),
   /// The file doesn't start with a header line.
   Header { found: String },
-  /// The file's major version has no decoder in this crate.
-  Version(Version),
+  /// The file's variant and major version have no decoder in this crate.
+  Version(Variant, Version),
   /// A complete line that couldn't be decoded. Reading continues past it.
   Line { offset: u64, error: DecodeError },
 }
@@ -40,7 +40,7 @@ impl From<io::Error> for ReadError {
 }
 
 /// Reads complete lines from an offset on, decoding them with the decoder
-/// for the file's header version.
+/// for the file's header variant and version.
 ///
 /// A trailing line without its newline is still being written (or was torn
 /// by a crash), so iteration stops before it; read again from the last
@@ -50,7 +50,7 @@ impl From<io::Error> for ReadError {
 /// go; their offsets are into the decompressed journal.
 pub struct Reader {
   inner: Box<dyn BufRead + Send>,
-  version: Option<Version>,
+  header: Option<Header>,
   offset: u64,
   line: Vec<u8>,
   done: bool,
@@ -76,18 +76,18 @@ impl Reader {
     let Some(text) = header.strip_suffix(b"\n") else {
       return Ok(Self {
         inner,
-        version: None,
+        header: None,
         offset: 0,
         line: Vec::new(),
         done: true,
       });
     };
-    let Some(version) = Version::parse_header(text) else {
+    let Some(header) = Header::parse(text) else {
       let found = String::from_utf8_lossy(text).into_owned();
       return Err(ReadError::Header { found });
     };
-    if !version.readable() {
-      return Err(ReadError::Version(version));
+    if !header.readable() {
+      return Err(ReadError::Version(header.variant, header.version));
     }
     let offset = offset.max(n);
     if archived {
@@ -100,16 +100,21 @@ impl Reader {
     }
     Ok(Self {
       inner,
-      version: Some(version),
+      header: Some(header),
       offset,
       line: Vec::new(),
       done: false,
     })
   }
 
+  /// The file's header, or `None` if it isn't complete yet.
+  pub fn header(&self) -> Option<&Header> {
+    self.header.as_ref()
+  }
+
   /// The file's version, or `None` if its header isn't complete yet.
   pub fn version(&self) -> Option<Version> {
-    self.version
+    Some(self.header.as_ref()?.version)
   }
 
   /// Offset just past the last complete line read so far.
@@ -122,7 +127,9 @@ impl Iterator for Reader {
   type Item = Result<Entry, ReadError>;
 
   fn next(&mut self) -> Option<Self::Item> {
-    let version = self.version?;
+    let Header {
+      variant, version, ..
+    } = *self.header.as_ref()?;
     while !self.done {
       self.line.clear();
       let n = match self.inner.read_until(b'\n', &mut self.line) {
@@ -142,7 +149,7 @@ impl Iterator for Reader {
       if text.is_empty() {
         continue;
       }
-      return Some(match Record::decode(version, text) {
+      return Some(match Record::decode(variant, version, text) {
         Ok(record) => Ok(Entry {
           offset,
           next: self.offset,

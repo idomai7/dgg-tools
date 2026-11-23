@@ -32,9 +32,9 @@
 //! - `0.0`: `frame`, `binary`, `open` and `close`.
 //! - `0.1`: adds `fetched` and `fetchrange`.
 
+pub use super::line::{valid_instance, valid_token};
 use {
-  super::{DecodeError, Version, digits},
-  ::base64::{Engine, engine::general_purpose::STANDARD as BASE64},
+  super::{DecodeError, Version, digits, line},
   ::std::borrow::Cow,
 };
 
@@ -76,31 +76,6 @@ pub enum Body {
   FetchRange { source: String, from: i64, to: i64 },
 }
 
-/// Whether `token` can be a space-separated field: non-empty, with no space
-/// or LF.
-pub fn valid_token(token: &str) -> bool {
-  !token.is_empty() && !token.contains([' ', '\n'])
-}
-
-/// Whether `instance` is a valid instance id: one or more of `[A-Za-z0-9._-]`,
-/// so it can't contain the field separator and is safe as a file name.
-pub fn valid_instance(instance: &str) -> bool {
-  !instance.is_empty()
-    && instance
-      .bytes()
-      .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
-}
-
-/// Whether `kind` is well-formed: one or more of `[a-z0-9]`. A well-formed
-/// kind this version doesn't recognise is [`DecodeError::Unknown`], not
-/// [`DecodeError::Bad`].
-fn valid_kind(kind: &str) -> bool {
-  !kind.is_empty()
-    && kind
-      .bytes()
-      .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
-}
-
 impl Record {
   /// Appends this record's line, newline included, to `out`.
   ///
@@ -135,69 +110,38 @@ impl Record {
         ("fetchrange", Cow::Owned(data.into_bytes()))
       }
     };
-    let data = &*data;
     let binary = matches!(self.body, Body::Binary(_));
-    let text64 = !binary && data.contains(&b'\n');
-    let suffix = if text64 { "64" } else { "" };
-    let header = format!(
-      "{} {} {} {kind}{suffix}",
-      self.receive_time, self.instance, self.connection
+    line::encode(
+      out,
+      self.receive_time,
+      &self.instance,
+      self.connection,
+      kind,
+      &data,
+      binary,
     );
-    out.extend_from_slice(header.as_bytes());
-    if !data.is_empty() {
-      out.push(b' ');
-      if binary || text64 {
-        out.extend_from_slice(BASE64.encode(data).as_bytes());
-      } else {
-        out.extend_from_slice(data);
-      }
-    }
-    out.push(b'\n');
   }
 
   /// Decodes one line, without its newline.
   pub fn decode(line: &[u8]) -> Result<Self, DecodeError> {
-    use DecodeError::Bad;
-    let line = ::std::str::from_utf8(line).map_err(|_| Bad("not utf-8"))?;
-    let mut parts = line.splitn(5, ' ');
-    let mut field = || parts.next().ok_or(Bad("too few fields"));
-    let (receive_time, instance, connection, kind) =
-      (field()?, field()?, field()?, field()?);
-    let data = parts.next().unwrap_or("");
-    if !digits(receive_time) || !digits(connection) {
-      return Err(Bad("receive_time/connection not decimal"));
-    }
-    if !valid_instance(instance) {
-      return Err(Bad("bad instance"));
-    }
-    if !valid_kind(kind) {
-      return Err(Bad("bad kind"));
-    }
-    let receive_time = receive_time
-      .parse()
-      .map_err(|_| Bad("receive_time out of range"))?;
-    let connection = connection
-      .parse()
-      .map_err(|_| Bad("connection out of range"))?;
-    let unbase64 = || BASE64.decode(data).map_err(|_| Bad("bad base64"));
-    let text64 =
-      || String::from_utf8(unbase64()?).map_err(|_| Bad("base64 not utf-8"));
-    let body = match kind {
+    let line = line::decode(line)?;
+    let data = line.data;
+    let body = match line.kind {
       "frame" => Body::Frame(data.into()),
       "open" => Body::Open(data.into()),
       "close" => Body::Close(data.into()),
-      "frame64" => Body::Frame(text64()?),
-      "open64" => Body::Open(text64()?),
-      "close64" => Body::Close(text64()?),
-      "binary" => Body::Binary(unbase64()?),
+      "frame64" => Body::Frame(line.text64()?),
+      "open64" => Body::Open(line.text64()?),
+      "close64" => Body::Close(line.text64()?),
+      "binary" => Body::Binary(line.unbase64()?),
       "fetched" => fetched(data)?,
-      "fetched64" => fetched(&text64()?)?,
+      "fetched64" => fetched(&line.text64()?)?,
       "fetchrange" => {
         let mut parts = data.split(' ');
         let (Some(source), Some(from), Some(to), None) =
           (parts.next(), parts.next(), parts.next(), parts.next())
         else {
-          return Err(Bad("fetchrange needs source, from and to"));
+          return Err(DecodeError::Bad("fetchrange needs source, from and to"));
         };
         Body::FetchRange {
           source: token(source)?,
@@ -205,12 +149,12 @@ impl Record {
           to: number(to)?,
         }
       }
-      _ => return Err(DecodeError::Unknown(kind.into())),
+      kind => return Err(DecodeError::Unknown(kind.into())),
     };
     Ok(Self {
-      receive_time,
-      instance: instance.into(),
-      connection,
+      receive_time: line.receive_time,
+      instance: line.instance.into(),
+      connection: line.connection,
       body,
     })
   }

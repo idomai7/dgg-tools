@@ -28,7 +28,7 @@
 use {
   ::common::fs::MissingOk,
   ::logger_journal::{
-    ReadError, Reader, Record, Version, archive,
+    Entry, ReadError, Reader, Record, Version, archive,
     layout::{backfill_files, backfill_root, live_files},
     record::v0::Body,
   },
@@ -334,14 +334,25 @@ fn index_file(
     for entry in reader.by_ref().take(BATCH) {
       lines += 1;
       match entry {
-        Ok(entry) => {
-          let Record::V0(record) = entry.record;
+        Ok(Entry {
+          offset,
+          record: Record::Kick0(_),
+          ..
+        }) => {
+          unparsed(&transaction, path, offset, 0, "a Kick line, in dgg's")?;
+          stats.unparsed += 1;
+        }
+        Ok(Entry {
+          offset,
+          record: Record::V0(record),
+          ..
+        }) => {
           let key = (record.instance.clone(), record.connection);
           let seen = last_seen.entry(key).or_insert(record.receive_time);
           *seen = record.receive_time.max(*seen);
           let line = Line {
             path,
-            offset: entry.offset,
+            offset,
             instance: &record.instance,
             connection: record.connection,
             received: record.receive_time,
