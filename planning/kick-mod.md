@@ -44,13 +44,17 @@ A chat client and moderation tools for Kick channels. Kick only, built on
     written by kick-mod and editable by hand:
     ```json
     {
-      "<slug>": { "broadcaster_user_id": 456, "chatroom_id": 123 }
+      "<slug>": {
+        "broadcaster_user_id": 456,
+        "channel_id": 789,
+        "chatroom_id": 123
+      }
     }
     ```
     - kick-mod adds a channel when asked, by `kick-mod ids <slug>` now and from
-      the page later. The unofficial lookup (curl) has both ids. If it fails,
-      `broadcaster_user_id` comes from the official API, with the app's token,
-      and the chatroom id is left for entering by hand.
+      the page later. The unofficial lookup (curl) has all three ids. If it
+      fails, `broadcaster_user_id` comes from the official API, with the app's
+      token, and the channel and chatroom ids are left for entering by hand.
     - Written whole, pretty-printed and sorted by slug. It's re-read just before
       each write, so hand edits made while kick-mod runs survive, and fields
       kick-mod doesn't know are kept.
