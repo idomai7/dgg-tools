@@ -9,6 +9,7 @@ use {
   super::{Error, send},
   crate::rest::{self, Rest},
   ::base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD},
+  ::common::random::token,
   ::reqwest::{Url, header::CONTENT_TYPE},
   ::serde::{Deserialize, Serialize},
   ::sha2::{Digest, Sha256},
@@ -157,7 +158,7 @@ impl App {
   /// Starts a user's sign-in: Kick asks them to grant `scopes`, then sends
   /// them to `redirect_uri`, which has to be one the app registered.
   pub fn sign_in(&self, redirect_uri: &str, scopes: &[&str]) -> SignIn {
-    let (state, verifier) = (random(16), random(32));
+    let (state, verifier) = (token(16), token(32));
     let url = Url::parse_with_params(
       &format!("{}/oauth/authorize", self.base),
       [
@@ -312,11 +313,4 @@ impl SignIn {
 /// PKCE's `S256` challenge for `verifier`.
 pub fn challenge(verifier: &str) -> String {
   URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()))
-}
-
-/// `bytes` random bytes, in base64url.
-fn random(bytes: usize) -> String {
-  let mut random = vec![0; bytes];
-  ::getrandom::fill(&mut random).expect("the OS has randomness");
-  URL_SAFE_NO_PAD.encode(random)
 }

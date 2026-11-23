@@ -33,6 +33,7 @@ use {
     },
     connection,
   },
+  ::common::random::backoff,
   ::futures_util::{SinkExt, StreamExt},
   ::std::{
     collections::{BTreeMap, BTreeSet, HashMap},
@@ -391,16 +392,6 @@ async fn run(options: Options, tx: Tx, mut controls: Controls) {
 /// When to refresh the token, if it expires: a little before it does.
 fn refresh_in(expires: bool, ttl: u32) -> Option<Duration> {
   expires.then(|| Duration::from_secs(ttl.into()) * 9 / 10)
-}
-
-/// The `step`th backoff between `min` and `max`, with full jitter, as
-/// centrifuge-js does.
-fn backoff(step: u32, min: Duration, max: Duration) -> Duration {
-  let ceiling = min.saturating_mul(1 << step.min(31)).min(max);
-  let mut bytes = [0; 8];
-  ::getrandom::fill(&mut bytes).expect("the OS has randomness");
-  let fraction = u64::from_le_bytes(bytes) as f64 / u64::MAX as f64;
-  (min + ceiling.mul_f64(fraction)).min(max)
 }
 
 /// Asks for a socket and a token, and opens the socket.

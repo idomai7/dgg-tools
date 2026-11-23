@@ -118,19 +118,7 @@ pub fn decode_token(json: &str) -> Result<String, String> {
 
 /// A new client id: a random (version 4) uuid.
 pub fn client_id() -> String {
-  let mut bytes = [0; 16];
-  ::getrandom::fill(&mut bytes).expect("the OS has randomness");
-  bytes[6] = (bytes[6] & 0x0f) | 0x40;
-  bytes[8] = (bytes[8] & 0x3f) | 0x80;
-  let hex: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
-  format!(
-    "{}-{}-{}-{}-{}",
-    &hex[..8],
-    &hex[8..12],
-    &hex[12..16],
-    &hex[16..20],
-    &hex[20..]
-  )
+  ::common::random::uuid()
 }
 
 async fn post(

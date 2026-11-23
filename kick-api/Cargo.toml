@@ -18,7 +18,6 @@ protocol = ["centrifugo"]
 client = [
   "centrifugo",
   "dep:futures-util",
-  "dep:getrandom",
   "dep:reqwest",
   "dep:rustls",
   "dep:tokio",
@@ -28,7 +27,6 @@ client = [
 # official::oauth.
 official = [
   "dep:base64",
-  "dep:getrandom",
   "dep:reqwest",
   "dep:serde",
   "dep:serde_json",
@@ -46,7 +44,6 @@ base64 = { workspace = true, optional = true }
 sha2 = { workspace = true, optional = true }
 
 futures-util = { workspace = true, optional = true }
-getrandom = { workspace = true, optional = true }
 reqwest = { workspace = true, optional = true }
 rustls = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true }
