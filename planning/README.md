@@ -32,6 +32,9 @@ The layout is flat: each crate is a direct child of the root.
 - `kick-api/`: Kick's APIs, kept lightweight for any tool to depend on. So far,
   decoding the unofficial channel lookup, and decoding realtime frames into
   Centrifugo's client protocol.
+- `rustlesearch-api/` and `linkers-api/` (planned): rustlesearch.dev's and
+  linkers.ooo's APIs, which backfill reads; they're in `logger/src/backfill/`
+  until then.
 - `kick-mod/`: a chat client and moderation tools for Kick channels. So far,
   `kick-mod ids`, which looks up channels' ids with curl.
 - `logger-journal/`: the logger's journal file format, with a writer and a
@@ -80,6 +83,17 @@ The layout is flat: each crate is a direct child of the root.
     files were rewritten to match.
 - **Kick:** its own crates, separate from dgg's: [kick-api](kick-api.md) and
   [kick-mod](kick-mod.md).
+- **Every outside service has its own API crate,** `<service>-api`, as dgg's and
+  Kick's do, kept lightweight for any tool to depend on. Tools don't talk to a
+  service directly.
+  - A crate holds where the service is, the requests, the answers as types
+    (fields they don't name kept, as kick-api does) and the service's limits,
+    such as reading its rate-limit headers. Fetching is behind a feature, and
+    decoding needs none.
+  - The `reqwest` client and its `User-Agent` are the caller's: each tool
+    names itself by its codename, as `ledgerline/<version>`.
+  - What a tool makes of the answers stays in the tool: backfill's matching
+    and journaling, say.
 
 ## Roadmap
 1. **Logger** (current focus): see [logger](logger.md).
