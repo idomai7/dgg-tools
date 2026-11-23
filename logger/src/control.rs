@@ -31,6 +31,9 @@
 //! Only 0.2 is read: an instance hands off only to one whose status it can
 //! read, and every host's instances write it.
 //!
+//! Kick's captures write the same entries as `capture-status kick.0.0`, in
+//! each channel's journal root ([`Status::encode_as`]).
+//!
 //! While the major is 0 (pre-release) any minor may break, so readers accept
 //! only the version they know. From 1.0 on, readers will ignore keys
 //! they don't recognise, so a minor bump may add keys; anything else will be
@@ -60,8 +63,19 @@ pub const FORMAT: Format = Format {
   magic: "capture-status",
 };
 
-/// The version this crate writes and reads.
+/// The version of dgg's this crate writes and reads.
 pub const VERSION: Version = Version { major: 0, minor: 2 };
+
+/// The version of Kick's this crate writes and reads.
+pub const KICK_VERSION: Version = Version { major: 0, minor: 0 };
+
+/// `variant`'s version.
+fn version(variant: Variant) -> Version {
+  match variant {
+    Variant::Dgg => VERSION,
+    Variant::Kick => KICK_VERSION,
+  }
+}
 
 /// File extension of status files.
 pub const EXTENSION: &str = "status";
@@ -81,9 +95,14 @@ pub struct Status {
 }
 
 impl Status {
-  /// The file contents.
+  /// The file contents, as dgg's capture writes them.
   pub fn encode(&self) -> String {
-    let header = Header::new(Variant::Dgg, VERSION).text_as(FORMAT);
+    self.encode_as(Variant::Dgg)
+  }
+
+  /// The file contents, as `variant`'s capture writes them.
+  pub fn encode_as(&self, variant: Variant) -> String {
+    let header = Header::new(variant, version(variant)).text_as(FORMAT);
     let end = "\u{1e}\n";
     let mut text = format!(
       "{header}instance {}{end}started {}{end}heartbeat {}{end}",
@@ -98,11 +117,18 @@ impl Status {
     text
   }
 
-  /// Parses file contents, or `None` if they aren't a readable status.
+  /// Parses dgg's file contents, or `None` if they aren't a readable
+  /// status.
   pub fn decode(text: &str) -> Option<Self> {
+    Self::decode_as(text, Variant::Dgg)
+  }
+
+  /// Parses `variant`'s file contents, or `None` if they aren't a readable
+  /// status of its.
+  pub fn decode_as(text: &str, variant: Variant) -> Option<Self> {
     let (first, body) = text.split_once('\n')?;
     let header = Header::parse_as(FORMAT, first.as_bytes())?;
-    if header.variant != Variant::Dgg || header.version != VERSION {
+    if header.variant != variant || header.version != version(variant) {
       return None;
     }
     let (entries, tail) = split(body.as_bytes());
@@ -200,7 +226,17 @@ pub fn path(dir: &Path, instance: &str) -> PathBuf {
 /// Writes `status` to its file, atomically: to a temporary file first, then
 /// renamed over the old one, so readers never see a partial status.
 pub fn write(dir: &Path, status: &Status) -> io::Result<()> {
-  atomic_file::replace(&path(dir, &status.instance), status.encode())
+  write_as(dir, status, Variant::Dgg)
+}
+
+/// [`write`], as `variant`'s capture.
+pub fn write_as(
+  dir: &Path,
+  status: &Status,
+  variant: Variant,
+) -> io::Result<()> {
+  let text = status.encode_as(variant);
+  atomic_file::replace(&path(dir, &status.instance), text)
 }
 
 /// Deletes an instance's status file, if it exists. Windows refuses while
@@ -223,6 +259,11 @@ pub fn remove(dir: &Path, instance: &str) -> io::Result<()> {
 /// Every readable status in `dir`. Files that can't be read or decoded (one
 /// mid-rename, say) are skipped; they'll be read on a later round.
 pub fn read_all(dir: &Path) -> io::Result<Vec<Status>> {
+  read_all_as(dir, Variant::Dgg)
+}
+
+/// [`read_all`], of `variant`'s statuses.
+pub fn read_all_as(dir: &Path, variant: Variant) -> io::Result<Vec<Status>> {
   let Some(entries) = fs::read_dir(dir).missing_ok()? else {
     return Ok(Vec::new());
   };
@@ -233,7 +274,7 @@ pub fn read_all(dir: &Path) -> io::Result<Vec<Status>> {
       .extension()
       .is_some_and(|extension| extension == EXTENSION)
       && let Ok(text) = fs::read_to_string(&path)
-      && let Some(status) = Status::decode(&text)
+      && let Some(status) = Status::decode_as(&text, variant)
     {
       statuses.push(status);
     }

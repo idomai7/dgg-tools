@@ -1,5 +1,7 @@
 use {
-  ::logger::control::{Status, successor},
+  ::common::temp_dir::TempDir,
+  ::logger::control::{self, Status, successor},
+  ::logger_journal::Variant,
   ::std::time::Duration,
 };
 
@@ -25,6 +27,28 @@ fn format() {
   assert_eq!(Status::decode(&text), Some(healthy));
   let unhealthy = status("a", 5, None);
   assert_eq!(Status::decode(&unhealthy.encode()), Some(unhealthy));
+}
+
+#[test]
+fn kicks_are_kept_apart() {
+  let healthy = status("a", 5, Some(7));
+  let text = healthy.encode_as(Variant::Kick);
+  assert!(
+    text.starts_with("capture-status kick.0.0\u{1e}\ninstance a\u{1e}\n")
+  );
+  assert_eq!(
+    Status::decode_as(&text, Variant::Kick),
+    Some(healthy.clone())
+  );
+  // Each reads only its own.
+  assert_eq!(Status::decode(&text), None);
+  assert_eq!(Status::decode_as(&healthy.encode(), Variant::Kick), None);
+
+  let dir = TempDir::new("logger-control-kick");
+  control::write_as(dir.path(), &healthy, Variant::Kick).unwrap();
+  assert_eq!(control::read_all(dir.path()).unwrap(), []);
+  let read = control::read_all_as(dir.path(), Variant::Kick).unwrap();
+  assert_eq!(read, [healthy]);
 }
 
 #[test]
