@@ -5,7 +5,13 @@ edition.workspace = true
 description = "A chat client and moderation tools for Kick channels"
 
 [dependencies]
-kick-api = { workspace = true, features = ["channel"] }
+kick-api = { workspace = true, features = ["channel", "official"] }
 
+axum.workspace = true
 clap.workspace = true
-dotenvy.workspace = true
+reqwest.workspace = true
+rustls.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+toml.workspace = true

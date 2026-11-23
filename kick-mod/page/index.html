@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>kick-mod</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --ground: #fafafa;
+    --ink: #1a1a1a;
+    --faint: #6b6b6b;
+    --line: #dddddd;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ground: #161616;
+      --ink: #e8e8e8;
+      --faint: #9a9a9a;
+      --line: #333333;
+    }
+  }
+  body {
+    margin: 0;
+    padding: 1rem;
+    background: var(--ground);
+    color: var(--ink);
+    font: 14px/1.4 system-ui, sans-serif;
+  }
+  h1 { font-size: 1.1rem; margin: 0 0 1rem; }
+  table { border-collapse: collapse; }
+  th, td {
+    padding: 0.3rem 0.8rem 0.3rem 0;
+    border-bottom: 1px solid var(--line);
+    text-align: left;
+  }
+  th { color: var(--faint); font-weight: normal; }
+  .faint { color: var(--faint); }
+</style>
+</head>
+<body>
+<h1>kick-mod</h1>
+<div id="channels" class="faint">Loading the channels…</div>
+<script>
+  const shown = document.getElementById("channels");
+
+  async function show() {
+    const answer = await fetch("/api/channels");
+    if (!answer.ok) {
+      shown.textContent = `The channels didn't load: ${await answer.text()}`;
+      return;
+    }
+    const channels = Object.entries(await answer.json());
+    if (channels.length === 0) {
+      shown.textContent = "No channels yet: add one with kick-mod ids <slug>.";
+      return;
+    }
+    const table = document.createElement("table");
+    const head = table.insertRow();
+    for (const name of ["Channel", "Broadcaster", "Chatroom"]) {
+      const cell = document.createElement("th");
+      cell.textContent = name;
+      head.append(cell);
+    }
+    for (const [slug, channel] of channels) {
+      const row = table.insertRow();
+      row.insertCell().textContent = slug;
+      row.insertCell().textContent = channel.broadcaster_user_id;
+      row.insertCell().textContent =
+        channel.chatroom_id ?? "unknown: enter it in channels.json";
+    }
+    shown.className = "";
+    shown.replaceChildren(table);
+  }
+
+  show().catch((error) => {
+    shown.textContent = `The channels didn't load: ${error}`;
+  });
+</script>
+</body>
+</html>

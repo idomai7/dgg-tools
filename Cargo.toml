@@ -47,6 +47,7 @@ win32job = "2.0.3"
 windows-service = "0.8.1"
 sysinfo = { version = "0.40.1", default-features = false, features = ["disk", "system"] }
 time = "0.3.55"
+toml = "1.2.1"
 tokio = { version = "1.54.1", features = ["full"] }
 tokio-tungstenite = { version = "0.30.0", features = ["rustls-tls-native-roots"] }
 zeroize = "1.9.1"

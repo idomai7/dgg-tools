@@ -2,65 +2,137 @@
 
 use {
   ::clap::{Parser, Subcommand},
-  ::kick_api::channel::{self, Channel},
-  ::std::process::{Command as Process, ExitCode},
+  ::kick_api::{channel, official::Api},
+  ::kick_mod::{
+    channels::{self, Channels},
+    config::{self, Config},
+    serve,
+  },
+  ::std::{
+    path::{Path, PathBuf},
+    process::ExitCode,
+  },
+  ::tokio::{net::TcpListener, process::Command as Process},
 };
 
 #[derive(Parser)]
 #[command(name = "kick-mod")]
 struct Args {
+  /// The settings.
+  #[arg(long, global = true, default_value = config::DEFAULT_PATH)]
+  config: PathBuf,
+  /// The channels kick-mod knows.
+  #[arg(long, global = true, default_value = channels::DEFAULT_PATH)]
+  channels: PathBuf,
   #[command(subcommand)]
   command: Command,
 }
 
 #[derive(Subcommand)]
 enum Command {
-  /// Look up channels' ids: the channel, its chatroom and its broadcaster.
-  /// Kick's official API has no chatroom ids, and Cloudflare refuses this
-  /// program's own HTTP client on the lookup that has them, so it's asked
-  /// with curl.
+  /// Serve the page.
+  Serve,
+  /// Look up channels' ids, the broadcaster's and the chatroom's, and
+  /// record them in the channels file. Kick's official API has no chatroom
+  /// ids, and Cloudflare refuses this program's own HTTP client on the
+  /// lookup that has them, so it's asked with curl. If that fails, the
+  /// broadcaster's id comes from the official API, and the chatroom id is
+  /// left to enter by hand.
   Ids {
     /// Channel slugs, as in their URLs.
-    #[arg(
-      env = "KICK_CHANNELS",
-      value_delimiter = ',',
-      required = true,
-      hide_env_values = true
-    )]
+    #[arg(required = true)]
     slugs: Vec<String>,
   },
 }
 
-fn main() -> ExitCode {
-  let _ = ::dotenvy::dotenv();
-  match Args::parse().command {
-    Command::Ids { slugs } => ids(&slugs),
-  }
-}
-
-fn ids(slugs: &[String]) -> ExitCode {
-  let mut code = ExitCode::SUCCESS;
-  for slug in slugs.iter().map(|slug| slug.trim()) {
-    match look_up(slug) {
-      Ok(channel) => println!(
-        "{} channel={} chatroom={} user={}",
-        channel.slug, channel.id, channel.chatroom.id, channel.user_id
-      ),
-      Err(e) => {
-        eprintln!("{slug}: {e}");
-        code = ExitCode::FAILURE;
-      }
+#[::tokio::main]
+async fn main() -> ExitCode {
+  let _ = ::rustls::crypto::ring::default_provider().install_default();
+  let args = Args::parse();
+  let done = match args.command {
+    Command::Serve => run(&args.config, args.channels).await,
+    Command::Ids { slugs } => ids(&args.config, &args.channels, &slugs).await,
+  };
+  match done {
+    Ok(()) => ExitCode::SUCCESS,
+    Err(e) => {
+      eprintln!("{e}");
+      ExitCode::FAILURE
     }
   }
-  code
 }
 
-/// Asks the lookup for `slug` with curl.
-fn look_up(slug: &str) -> Result<Channel, String> {
+async fn run(config: &Path, channels: PathBuf) -> Result<(), String> {
+  let config = Config::load(config)?;
+  let known = channels::load(&channels)?;
+  let listen = config.server.listen;
+  let listener = TcpListener::bind(listen)
+    .await
+    .map_err(|e| format!("listening on {listen}: {e}"))?;
+  println!(
+    "{} channels; serving at http://localhost:{}",
+    known.len(),
+    listen.port()
+  );
+  serve::run(listener, channels)
+    .await
+    .map_err(|e| format!("serving: {e}"))
+}
+
+async fn ids(
+  config: &Path,
+  path: &Path,
+  slugs: &[String],
+) -> Result<(), String> {
+  let mut api = None;
+  let mut failed = false;
+  for slug in slugs.iter().map(|slug| slug.trim()) {
+    let (broadcaster, chatroom) = match look_up(slug).await {
+      Ok(channel) => (channel.user_id, Some(channel.chatroom.id)),
+      Err(e) => {
+        eprintln!("{slug}: the lookup failed: {e}");
+        if api.is_none() {
+          let config = Config::load(config)?;
+          api = Some(Api::app(::reqwest::Client::new(), config.app()));
+        }
+        match broadcaster(api.as_ref().unwrap(), slug).await {
+          Ok(id) => (id, None),
+          Err(e) => {
+            eprintln!("{slug}: {e}");
+            failed = true;
+            continue;
+          }
+        }
+      }
+    };
+    let recorded = channels::update(path, |channels: &mut Channels| {
+      channels::record(channels, slug, broadcaster, chatroom)
+    })?;
+    let channel = &recorded[slug];
+    match channel.chatroom_id {
+      Some(chatroom) => {
+        println!("{slug}: broadcaster={broadcaster} chatroom={chatroom}")
+      }
+      None => println!(
+        "{slug}: broadcaster={broadcaster} chatroom unknown: enter it in {}",
+        path.display()
+      ),
+    }
+  }
+  if failed {
+    Err("some channels weren't recorded".into())
+  } else {
+    Ok(())
+  }
+}
+
+/// Asks the unofficial lookup for `slug` with curl.
+async fn look_up(slug: &str) -> Result<channel::Channel, String> {
   let output = Process::new("curl")
     .args(["-sS", "-m", "20", "-H", "Accept: application/json"])
     .arg(channel::url(slug))
     .output()
+    .await
     .map_err(|e| format!("running curl: {e}"))?;
   if !output.status.success() {
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -68,4 +140,16 @@ fn look_up(slug: &str) -> Result<Channel, String> {
   }
   let body = String::from_utf8_lossy(&output.stdout);
   channel::parse(&body).map_err(|e| format!("{e}: {}", body.trim()))
+}
+
+/// The broadcaster's id for `slug`, from the official API.
+async fn broadcaster(api: &Api, slug: &str) -> Result<u64, String> {
+  let found = api
+    .channels_by_slug(&[slug])
+    .await
+    .map_err(|e| format!("the official API: {e}"))?;
+  match &found[..] {
+    [channel] => Ok(channel.broadcaster_user_id),
+    _ => Err("the official API has no such channel".into()),
+  }
 }
