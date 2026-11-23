@@ -9,8 +9,9 @@ The logger, codenamed ledgerline: `logger-journal` and `logger`, run as
   (rusqlite, `bundled`) is an index that can be rebuilt from it.
 - **Kick journals:** the journal format also covers Kick, for
   [kick-mod](kick-mod.md) now and the logger's Kick capture next (see
-  [Kick](#kick)). It stays in `logger-journal`. Written by kick-mod; nothing
-  compacts, syncs or indexes Kick's journals yet.
+  [Kick](#kick)). It stays in `logger-journal`. Written by kick-mod and the
+  logger's `kick-capture`; nothing compacts, syncs or indexes Kick's journals
+  yet.
   - **Variants:** each platform is a variant of the format, versioned on its own
     as `<variant>.<major>.<minor>`, so one platform's changes never break the
     other's. Their events have little in common anyway.
@@ -312,13 +313,20 @@ undocumented endpoints anonymously: no token, no login, no app. Planned
     directory's name. Hand edits survive `kick-ids`: it changes only the
     channel's own line.
 - **Capture:** a Centrifugo connection per channel, each journaled as kick-mod
-  does now.
+  does now. `kick-capture --channels <list>` takes the list's path. A session
+  Kick stops for good is started again after a minute, its connections
+  numbered on from the last, so an instance never reuses a number.
   - **Handoff:** as dgg's capture: heartbeats in `control/`, and an older
     instance retires once a newer one has been healthy for the grace period.
     Healthy means subscribed on every channel.
-  - **Gaps:** a blip's messages are filled from Kick's chat history, as
-    kick-mod does now (its code moves to a shared place), with
-    `User-Agent: ledgerline/<version>`.
+    - The status is written in every channel's `control/`, as
+      `capture-status kick.0.0` (dgg's entries, Kick's variant).
+    - An instance retires on a successor seen in any of its channels, so a
+      new instance's list wins, even one that dropped a channel.
+    - Not yet across hosts: `kick-capture` has no `--peer`.
+  - **Gaps:** a blip's messages are filled from Kick's chat history, at most
+    10 pages, with `User-Agent: ledgerline/<version>`. The paging is
+    `kick-api`'s `Web::back_to`, shared with kick-mod.
 - **Compact and sync:** both cover Kick's roots too. Compaction's merge works
   for Kick's records as they are. `serve`'s manifest and files gain
   `kick/<slug>/...` paths, so the mesh copies Kick's journals as it does
@@ -373,8 +381,8 @@ undocumented endpoints anonymously: no token, no login, no app. Planned
   - Live test: after backfill, the index holds exactly a reference capture's 583
     messages over the same span. 16 nicks stay lowercase because those users
     were never seen natively.
-- **Kick:** step 1 done: `kick-channels` and `kick-ids`. Nothing reads the
-  list yet.
+- **Kick:** steps 1 and 2 done: `kick-channels`, `kick-ids` and
+  `kick-capture`, which the supervisor doesn't run yet.
 - **Cross-host handoff:** done. Tested live: the old instance retired about 38 s
   after the new one started.
 - **`serve` / `sync`:** done. The supervisor's side is in [deploy](deploy.md).
