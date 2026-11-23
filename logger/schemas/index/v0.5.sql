@@ -6,7 +6,7 @@
 
 CREATE TABLE files (
   path TEXT PRIMARY KEY,   -- relative to the journal root, '/'-separated
-  offset INTEGER NOT NULL, -- just past the last indexed line
+  offset INTEGER NOT NULL, -- just past the last indexed record
   digest TEXT              -- an archive's SHA-256 when read; NULL if live
 );
 CREATE TABLE connections (
@@ -16,7 +16,7 @@ CREATE TABLE connections (
   opened INTEGER NOT NULL,
   closed INTEGER,
   close_reason TEXT,
-  last_seen INTEGER NOT NULL,  -- receive time of its latest line
+  last_seen INTEGER NOT NULL,  -- receive time of its latest record
   history_from INTEGER,        -- oldest MSG timestamp in its HISTORY
   PRIMARY KEY (instance, connection)
 );
