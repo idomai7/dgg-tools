@@ -1687,6 +1687,7 @@ dependencies = [
  "dgg-api",
  "futures-util",
  "gethostname",
+ "kick-api",
  "linkers-api",
  "logger-journal",
  "pkcs8",
