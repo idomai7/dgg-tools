@@ -4,7 +4,10 @@
 //! previous `.1` becoming `.2`, and so on), keeping `keep` old files.
 
 use {
-  ::common::time::{now_ms, utc_timestamp},
+  ::common::{
+    fs::MissingOk,
+    time::{now_ms, utc_timestamp},
+  },
   ::std::{
     fs::{self, File, OpenOptions},
     io::{self, Write},
@@ -70,17 +73,13 @@ impl Log {
   }
 
   fn rotate(&mut self) -> io::Result<()> {
-    let ignore_missing = |result: io::Result<()>| match result {
-      Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
-      _ => Ok(()),
-    };
     if self.keep == 0 {
-      ignore_missing(fs::remove_file(&self.path))?;
+      fs::remove_file(&self.path).missing_ok()?;
     } else {
-      ignore_missing(fs::remove_file(rotated(&self.path, self.keep)))?;
+      fs::remove_file(rotated(&self.path, self.keep)).missing_ok()?;
       for n in (1..self.keep).rev() {
         let from = rotated(&self.path, n);
-        ignore_missing(fs::rename(from, rotated(&self.path, n + 1)))?;
+        fs::rename(from, rotated(&self.path, n + 1)).missing_ok()?;
       }
       fs::rename(&self.path, rotated(&self.path, 1))?;
     }

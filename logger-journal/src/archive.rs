@@ -21,7 +21,7 @@
 
 use {
   crate::layout::{archive_dir, archive_file, archive_month_dir},
-  ::common::atomic_file,
+  ::common::{atomic_file, fs::MissingOk},
   ::std::{
     fs, io,
     path::{Path, PathBuf},
@@ -132,16 +132,15 @@ pub fn read_month(root: &Path, day: &str) -> io::Result<Vec<Archive>> {
 }
 
 fn read_manifest(path: &Path) -> io::Result<Vec<Archive>> {
-  match fs::read_to_string(path) {
-    Ok(text) => decode(&text).ok_or_else(|| {
-      io::Error::new(
-        io::ErrorKind::InvalidData,
-        format!("{}: not a readable archive manifest", path.display()),
-      )
-    }),
-    Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Vec::new()),
-    Err(e) => Err(e),
-  }
+  let Some(text) = fs::read_to_string(path).missing_ok()? else {
+    return Ok(Vec::new());
+  };
+  decode(&text).ok_or_else(|| {
+    io::Error::new(
+      io::ErrorKind::InvalidData,
+      format!("{}: not a readable archive manifest", path.display()),
+    )
+  })
 }
 
 /// Records `archive` in its month's manifest, replacing any entry for the
@@ -168,10 +167,8 @@ pub fn all(root: &Path) -> io::Result<Vec<Archive>> {
 }
 
 fn sorted_dirs(path: &Path) -> io::Result<Vec<PathBuf>> {
-  let entries = match fs::read_dir(path) {
-    Ok(entries) => entries,
-    Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
-    Err(e) => return Err(e),
+  let Some(entries) = fs::read_dir(path).missing_ok()? else {
+    return Ok(Vec::new());
   };
   let mut dirs = Vec::new();
   for entry in entries {

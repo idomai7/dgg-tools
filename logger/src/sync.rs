@@ -28,7 +28,7 @@ use {
     capture::Peer,
     manifest::{self, archive_path},
   },
-  ::common::atomic_file,
+  ::common::{atomic_file, fs::MissingOk},
   ::logger_journal::{
     archive::{self, Archive},
     layout::{EXTENSION, archive_file, backfill_root, live_day_dir},
@@ -179,11 +179,10 @@ pub async fn sync(peer: &Peer, journal_root: &Path) -> Result<Stats, String> {
       continue;
     }
     let local = journal_root.join(&file.path);
-    let have = match fs::metadata(&local) {
-      Ok(metadata) => metadata.len(),
-      Err(e) if e.kind() == io::ErrorKind::NotFound => 0,
-      Err(e) => return Err(format!("{}: {e}", file.path)),
-    };
+    let have = fs::metadata(&local)
+      .missing_ok()
+      .map_err(|e| format!("{}: {e}", file.path))?
+      .map_or(0, |metadata| metadata.len());
     if file.size < have {
       stats.mismatched.push(file.path);
       continue;
@@ -270,10 +269,8 @@ fn invalid(why: &str) -> io::Error {
 
 /// The archives listed in `root`'s [`TAKEN`], as `(day, sha-256)`.
 fn taken(root: &Path) -> io::Result<Vec<(String, String)>> {
-  let text = match fs::read_to_string(root.join(TAKEN)) {
-    Ok(text) => text,
-    Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
-    Err(e) => return Err(e),
+  let Some(text) = fs::read_to_string(root.join(TAKEN)).missing_ok()? else {
+    return Ok(Vec::new());
   };
   Ok(
     text
@@ -300,10 +297,9 @@ fn wanted(root: &Path, day: &str, sha256: &str) -> io::Result<bool> {
 
 /// Whether journal `root` has live files for `day`.
 fn has_live(root: &Path, day: &str) -> io::Result<bool> {
-  let entries = match fs::read_dir(live_day_dir(root, day)) {
-    Ok(entries) => entries,
-    Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
-    Err(e) => return Err(e),
+  let Some(entries) = fs::read_dir(live_day_dir(root, day)).missing_ok()?
+  else {
+    return Ok(false);
   };
   for entry in entries {
     if entry?

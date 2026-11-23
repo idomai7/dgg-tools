@@ -30,7 +30,7 @@
 //! any other.
 
 use {
-  ::common::atomic_file,
+  ::common::{atomic_file, fs::MissingOk},
   ::logger_journal::record::v0::valid_instance,
   ::std::{
     fs, io,
@@ -191,10 +191,8 @@ pub fn remove(dir: &Path, instance: &str) -> io::Result<()> {
 /// Every readable status in `dir`. Files that can't be read or decoded (one
 /// mid-rename, say) are skipped; they'll be read on a later round.
 pub fn read_all(dir: &Path) -> io::Result<Vec<Status>> {
-  let entries = match fs::read_dir(dir) {
-    Ok(entries) => entries,
-    Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
-    Err(e) => return Err(e),
+  let Some(entries) = fs::read_dir(dir).missing_ok()? else {
+    return Ok(Vec::new());
   };
   let mut statuses = Vec::new();
   for entry in entries {

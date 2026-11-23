@@ -43,7 +43,7 @@ use {
     peer, processes,
   },
   ::common::{
-    fs::same,
+    fs::{MissingOk, same},
     time::{now_ms, utc_timestamp},
   },
   ::logger::control,
@@ -253,15 +253,14 @@ pub fn wait_healthy(
 /// Deletes all but the newest `keep` builds in `bin`, and any not in use:
 /// the ones in use, which are left.
 pub fn prune(bin: &Path, keep: usize) -> io::Result<Vec<PathBuf>> {
-  let mut builds: Vec<PathBuf> = match fs::read_dir(bin) {
-    Ok(entries) => entries
-      .filter_map(Result::ok)
-      .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
-      .map(|entry| entry.path())
-      .collect(),
-    Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
-    Err(e) => return Err(e),
+  let Some(entries) = fs::read_dir(bin).missing_ok()? else {
+    return Ok(Vec::new());
   };
+  let mut builds: Vec<PathBuf> = entries
+    .filter_map(Result::ok)
+    .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+    .map(|entry| entry.path())
+    .collect();
   builds.sort();
   let old = builds.len().saturating_sub(keep);
   let mut left = Vec::new();

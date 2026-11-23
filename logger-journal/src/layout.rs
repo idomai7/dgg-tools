@@ -1,8 +1,11 @@
 //! Where journal files live, independent of the line format inside them.
 
-use ::std::{
-  fs, io,
-  path::{Path, PathBuf},
+use {
+  ::common::fs::MissingOk,
+  ::std::{
+    fs, io,
+    path::{Path, PathBuf},
+  },
 };
 
 /// File extension of live journal files.
@@ -28,10 +31,8 @@ pub fn live_file(root: &Path, day: &str, instance: &str) -> PathBuf {
 pub fn live_files(root: &Path) -> io::Result<Vec<PathBuf>> {
   let dir = live_dir(root);
   let mut files = Vec::new();
-  let days = match fs::read_dir(&dir) {
-    Ok(days) => days,
-    Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(files),
-    Err(e) => return Err(e),
+  let Some(days) = fs::read_dir(&dir).missing_ok()? else {
+    return Ok(files);
   };
   for day in days {
     let day = day?;

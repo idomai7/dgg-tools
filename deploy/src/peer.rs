@@ -18,10 +18,13 @@
 //! The `.env` files hold `KEY=VALUE` lines; blank lines and `#` comments
 //! are skipped, and a value may be quoted.
 
-use ::std::{
-  collections::HashMap,
-  fs, io,
-  path::{Path, PathBuf},
+use {
+  ::common::fs::MissingOk,
+  ::std::{
+    collections::HashMap,
+    fs, io,
+    path::{Path, PathBuf},
+  },
 };
 
 /// A peer's `serve`, e.g. `https://203.0.113.5:8788`.
@@ -137,10 +140,8 @@ pub fn parse_nodes(text: &str) -> Result<Vec<Node>, String> {
 
 /// The `KEY=VALUE` pairs in `path`; `None` if there's no file.
 fn read_env(path: &Path) -> io::Result<Option<HashMap<String, String>>> {
-  let text = match fs::read_to_string(path) {
-    Ok(text) => text,
-    Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
-    Err(e) => return Err(e),
+  let Some(text) = fs::read_to_string(path).missing_ok()? else {
+    return Ok(None);
   };
   let mut pairs = HashMap::new();
   for line in text.lines().map(str::trim) {
@@ -230,10 +231,8 @@ pub fn read_mesh(path: &Path) -> io::Result<Option<Mesh>> {
 
 /// The one-off peer files in `root`'s `peers` directory, by name.
 pub fn files(root: &Path) -> io::Result<Vec<(String, PathBuf)>> {
-  let entries = match fs::read_dir(root.join(PEERS)) {
-    Ok(entries) => entries,
-    Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
-    Err(e) => return Err(e),
+  let Some(entries) = fs::read_dir(root.join(PEERS)).missing_ok()? else {
+    return Ok(Vec::new());
   };
   let mut files = Vec::new();
   for entry in entries {
@@ -366,17 +365,13 @@ pub fn remove_all(root: &Path) -> io::Result<()> {
   for path in [NODES, MESH, LEGACY, CA] {
     remove(&root.join(path))?;
   }
-  match fs::remove_dir_all(root.join(PEERS)) {
-    Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
-    _ => Ok(()),
-  }
+  fs::remove_dir_all(root.join(PEERS)).missing_ok()?;
+  Ok(())
 }
 
 fn remove(path: &Path) -> io::Result<()> {
-  match fs::remove_file(path) {
-    Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
-    _ => Ok(()),
-  }
+  fs::remove_file(path).missing_ok()?;
+  Ok(())
 }
 
 /// The mesh CA's certificate under `root`, if there is one.
@@ -429,8 +424,9 @@ pub fn gather(root: &Path) -> Peers {
     }
   };
   let nodes_path = root.join(NODES);
-  let nodes = match fs::read_to_string(&nodes_path) {
-    Ok(text) => match parse_nodes(&text) {
+  let nodes = match fs::read_to_string(&nodes_path).missing_ok() {
+    Ok(None) => None,
+    Ok(Some(text)) => match parse_nodes(&text) {
       Ok(nodes) => Some(nodes),
       Err(e) => {
         peers
@@ -439,7 +435,6 @@ pub fn gather(root: &Path) -> Peers {
         None
       }
     },
-    Err(e) if e.kind() == io::ErrorKind::NotFound => None,
     Err(e) => {
       peers
         .problems

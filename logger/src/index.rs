@@ -26,6 +26,7 @@
 //! native messages, whenever those are indexed.
 
 use {
+  ::common::fs::MissingOk,
   ::logger_journal::{
     ReadError, Reader, Record, Version, archive,
     layout::{backfill_files, backfill_root, live_files},
@@ -193,10 +194,7 @@ pub fn rebuild(path: &Path) -> Result<Connection, Error> {
   for suffix in ["", "-wal", "-shm"] {
     let mut file = path.as_os_str().to_owned();
     file.push(suffix);
-    match fs::remove_file(file) {
-      Err(e) if e.kind() != io::ErrorKind::NotFound => return Err(e.into()),
-      _ => {}
-    }
+    fs::remove_file(file).missing_ok()?;
   }
   open(path)
 }

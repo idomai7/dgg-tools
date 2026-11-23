@@ -22,6 +22,7 @@
 //! be merged once it's done.
 
 use {
+  ::common::fs::MissingOk,
   ::common::{
     atomic_file,
     time::{DAY_MS, day_start},
@@ -69,10 +70,8 @@ pub fn closed_days(
   now: i64,
   grace: Duration,
 ) -> io::Result<Vec<String>> {
-  let entries = match fs::read_dir(live_dir(journal_root)) {
-    Ok(entries) => entries,
-    Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
-    Err(e) => return Err(e),
+  let Some(entries) = fs::read_dir(live_dir(journal_root)).missing_ok()? else {
+    return Ok(Vec::new());
   };
   let mut days = Vec::new();
   for entry in entries {
@@ -163,10 +162,10 @@ pub fn compact_day(
     });
   }
   let (mut live, mut busy) = (Vec::new(), 0);
-  let entries = match fs::read_dir(live_day_dir(journal_root, day)) {
-    Ok(entries) => entries,
-    Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
-    Err(e) => return Err(e),
+  let Some(entries) =
+    fs::read_dir(live_day_dir(journal_root, day)).missing_ok()?
+  else {
+    return Ok(None);
   };
   for entry in entries {
     let path = entry?.path();

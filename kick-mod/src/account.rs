@@ -9,7 +9,7 @@
 //! again.
 
 use {
-  ::common::atomic_file,
+  ::common::{atomic_file, fs::MissingOk},
   ::kick_api::official::{
     Api, Error,
     api::User,
@@ -18,6 +18,7 @@ use {
   ::reqwest::Url,
   ::std::{
     collections::VecDeque,
+    fmt::Display,
     fs, io,
     path::{Path, PathBuf},
     sync::{Arc, Mutex, RwLock},
@@ -70,15 +71,12 @@ impl Account {
       api: RwLock::new(None),
     };
     let path = &account.token_path;
-    let token = match fs::read_to_string(path) {
-      Ok(saved) => Some(
-        ::serde_json::from_str(&saved)
-          .map_err(|e| format!("{}: {e}", path.display()))?,
-      ),
-      Err(e) if e.kind() == io::ErrorKind::NotFound => None,
-      Err(e) => return Err(format!("{}: {e}", path.display())),
-    };
-    if let Some(token) = token {
+    let in_path = |e: &dyn Display| format!("{}: {e}", path.display());
+    let saved = fs::read_to_string(path)
+      .missing_ok()
+      .map_err(|e| in_path(&e))?;
+    if let Some(saved) = saved {
+      let token = ::serde_json::from_str(&saved).map_err(|e| in_path(&e))?;
       *account.api.write().unwrap() = Some(account.user_api(token));
     }
     Ok(account)

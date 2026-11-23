@@ -5,7 +5,7 @@ use {
     layout::{backfill_file, backfill_root, live_file, lock_file},
     record::v0::{self, Body},
   },
-  ::common::time::utc_day,
+  ::common::{fs::MissingOk, time::utc_day},
   ::std::{
     fs::{self, File, OpenOptions, TryLockError},
     io::{self, Read, Seek, SeekFrom, Write},
@@ -196,10 +196,8 @@ impl Drop for Writer {
 /// [`lock_file`] under journal `root` (a backfill root), so may still write
 /// that instance's files.
 pub fn writing(root: &Path, instance: &str) -> io::Result<bool> {
-  let file = match File::open(lock_file(root, instance)) {
-    Ok(file) => file,
-    Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
-    Err(e) => return Err(e),
+  let Some(file) = File::open(lock_file(root, instance)).missing_ok()? else {
+    return Ok(false);
   };
   match file.try_lock_shared() {
     Ok(()) => Ok(false),

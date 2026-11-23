@@ -14,7 +14,7 @@
 //! saved between the read and the write is still lost.
 
 use {
-  ::common::atomic_file,
+  ::common::{atomic_file, fs::MissingOk},
   ::serde::{Deserialize, Serialize},
   ::serde_json::{Map, Value},
   ::std::{collections::BTreeMap, fs, io, path::Path},
@@ -41,11 +41,11 @@ pub fn parse(text: &str) -> Result<Channels, String> {
 
 /// The channels in `path`: none if there's no file yet.
 pub fn load(path: &Path) -> Result<Channels, String> {
-  match fs::read_to_string(path) {
-    Ok(text) => parse(&text).map_err(|e| format!("{}: {e}", path.display())),
-    Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Channels::new()),
-    Err(e) => Err(format!("{}: {e}", path.display())),
-  }
+  let in_path = |e: String| format!("{}: {e}", path.display());
+  let text = fs::read_to_string(path)
+    .missing_ok()
+    .map_err(|e| in_path(e.to_string()))?;
+  text.map_or(Ok(Channels::new()), |text| parse(&text).map_err(in_path))
 }
 
 /// Re-reads `path`, applies `change`, and writes it back: the channels as
