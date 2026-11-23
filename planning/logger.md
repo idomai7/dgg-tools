@@ -17,11 +17,15 @@ the [overall rules](README.md), and [deploy](deploy.md) for the mesh it runs on.
       `record/v0.rs` today: Kick's are under `record/kick/`.
     - Kick starts at `kick.0.0`. dgg's current `journal 0.1` files are dgg's,
       read as they are until dgg's logger moves to `dgg.0.<minor>`.
-    - `kick.0.0` has dgg's line shape (`<receive-time> <instance>
+    - `kick.0.0` has dgg's record shape (`<receive-time> <instance>
       <connection> <kind> <data>`, shared code in `record/line.rs`), with only
-      `frame`, `binary`, `open` and `close`. A frame is Centrifugo's raw text,
-      usually several JSON replies separated by LFs, so it's mostly written
-      as `frame64`.
+      `frame`, `binary`, `open` and `close`. A frame is Centrifugo's raw text:
+      one or more JSON replies separated by LFs.
+    - **Framing:** each of `kick.0.0`'s records ends at RS LF (RS is 0x1E), so
+      its data holds LFs verbatim and a record may span lines. Text data
+      holding an RS is written base64, with the kind suffixed `64`, so an RS
+      only ever ends a record, and a record with one inside is bad. Valid JSON
+      can't hold an RS. The header is still a line ending at LF.
     - What dgg's readers (index, status) find of Kick's in a dgg root is
       skipped, or recorded as unparsed.
   - **Header line:** the required fields, then a lone `;`, then informational
@@ -49,6 +53,13 @@ the [overall rules](README.md), and [deploy](deploy.md) for the mesh it runs on.
     laid out like dgg's: `<channel>/live/<day>/<instance>.journal`, and so on.
   - **Versions:** dgg's logger isn't changed for now and keeps writing
     `journal 0.1`. `logger-journal` reads that alongside `kick.0.0`.
+  - **dgg moves to RS LF (planned):** dgg's journals move to Kick's framing,
+    with records ending at RS LF, as a new version of dgg's variant
+    (`dgg.0.<minor>`). Existing `journal 0.1` files stay readable. Still to
+    decide:
+    - Whether compaction rewrites old days in the new format.
+    - What has to follow the framing rather than split on LF: compaction,
+      sync's checks, the index, and deploy's status page.
 
 ## Design
 - **Journal layout:**
