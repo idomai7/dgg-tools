@@ -1,38 +1,45 @@
 //! Kick format version 0, pre-release: any minor may break, so readers
 //! accept only the minor they know.
 //!
-//! After the `journal kick.0.<minor>` header, each line has the shared
-//! line shape:
+//! After the `journal kick.0.<minor>` header, a line ending at LF, each
+//! record is
 //!
 //! ```text
-//! <receive-time> <instance> <connection> <kind> <data>
+//! <receive-time> <instance> <connection> <kind> <data><RS><LF>
 //! ```
 //!
-//! `receive-time` is the local receive time, unix ms, and `connection` the
-//! connection number within the instance, counting from 1. Kinds:
+//! with `RS` the record separator, 0x1E, as in dgg's (see
+//! [`record::v0`](super::super::v0)). `receive-time` is the local receive
+//! time, unix ms, and `connection` the connection number within the
+//! instance, counting from 1. `data` is verbatim, LFs included, so a record
+//! may span lines. Kinds:
 //!
 //! - `frame`: a Centrifugo text frame exactly as received: one or more JSON
-//!   replies, separated by LFs, so usually written as `frame64`.
+//!   replies, separated by LFs.
 //! - `binary`: a binary frame, base64.
 //! - `open`: a connection opened (Centrifugo accepted the connect); data is
 //!   the socket's URL.
 //! - `close`: a connection dropped or stopped; data is why.
 //!
-//! Text data containing an LF is written with the kind suffixed `64` and
-//! the data base64 (`frame64`, `open64`, `close64`).
+//! An RS only ever ends a record: text data containing one is written with
+//! the kind suffixed `64` and the data base64 (`frame64`, `open64`,
+//! `close64`). Valid JSON can't hold an RS, so frames almost never are.
 //!
 //! Minor versions:
 //!
 //! - `0.0`: `frame`, `binary`, `open` and `close`.
 
 use {
-  super::super::{DecodeError, Version, line},
+  super::super::{
+    DecodeError, Version,
+    line::{self, Framing},
+  },
   ::std::borrow::Cow,
 };
 
 pub const VERSION: Version = Version { major: 0, minor: 0 };
 
-/// One line.
+/// One record.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Record {
   /// Local receive time, unix ms.
@@ -58,7 +65,7 @@ pub enum Body {
 }
 
 impl Record {
-  /// Appends this record's line, newline included, to `out`.
+  /// Appends this record, with its RS LF, to `out`.
   pub fn encode(&self, out: &mut Vec<u8>) {
     let (kind, data) = match &self.body {
       Body::Frame(text) => ("frame", Cow::Borrowed(text.as_bytes())),
@@ -69,6 +76,7 @@ impl Record {
     let binary = matches!(self.body, Body::Binary(_));
     line::encode(
       out,
+      Framing::RsLf,
       self.receive_time,
       &self.instance,
       self.connection,
@@ -78,9 +86,9 @@ impl Record {
     );
   }
 
-  /// Decodes one line, without its newline.
+  /// Decodes one record, without its RS LF.
   pub fn decode(line: &[u8]) -> Result<Self, DecodeError> {
-    let line = line::decode(line)?;
+    let line = line::decode(Framing::RsLf, line)?;
     let body = match line.kind {
       "frame" => Body::Frame(line.data.into()),
       "open" => Body::Open(line.data.into()),

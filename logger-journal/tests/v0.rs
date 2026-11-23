@@ -1,6 +1,9 @@
 use ::logger_journal::{
   DecodeError,
-  record::v0::{Body, Record},
+  record::{
+    Framing,
+    v0::{Body, Record},
+  },
 };
 
 #[test]
@@ -15,7 +18,7 @@ fn line_format() {
     let mut out = Vec::new();
     record.encode(&mut out);
     let encoded = String::from_utf8(out).unwrap();
-    let encoded = encoded.strip_suffix('\n').unwrap().to_owned();
+    let encoded = encoded.strip_suffix("\u{1e}\n").unwrap().to_owned();
     assert_eq!(Record::decode(encoded.as_bytes()), Ok(record));
     encoded
   };
@@ -23,7 +26,9 @@ fn line_format() {
     line(Body::Frame(r#"MSG {"data":"hi \"x\""}"#.into())),
     r#"5 a 2 frame MSG {"data":"hi \"x\""}"#
   );
-  assert_eq!(line(Body::Frame("A\nB".into())), "5 a 2 frame64 QQpC");
+  // LFs are kept as they are; only an RS goes base64.
+  assert_eq!(line(Body::Frame("A\nB".into())), "5 a 2 frame A\nB");
+  assert_eq!(line(Body::Frame("A\u{1e}B".into())), "5 a 2 frame64 QR5C");
   assert_eq!(line(Body::Binary(vec![0, 255])), "5 a 2 binary AP8=");
   assert_eq!(line(Body::Binary(vec![])), "5 a 2 binary");
   assert_eq!(line(Body::Open("wss://x".into())), "5 a 2 open wss://x");
@@ -33,7 +38,32 @@ fn line_format() {
   );
   assert_eq!(line(Body::Close("".into())), "5 a 2 close");
   assert_eq!(line(Body::Close("a\r".into())), "5 a 2 close a\r");
-  assert_eq!(line(Body::Frame("\r\n".into())), "5 a 2 frame64 DQo=");
+  assert_eq!(line(Body::Frame("\r\n".into())), "5 a 2 frame \r\n");
+  assert_eq!(line(Body::Frame("A\n".into())), "5 a 2 frame A\n");
+}
+
+#[test]
+fn legacy_lines() {
+  // Up to 0.1, a record per line: an LF went base64, an RS didn't.
+  let decode = |s: &str| Record::decode_framed(Framing::Lf, s.as_bytes());
+  let record = |body| Record {
+    receive_time: 5,
+    instance: "a".into(),
+    connection: 2,
+    body,
+  };
+  assert_eq!(
+    decode("5 a 2 frame64 QQpC"),
+    Ok(record(Body::Frame("A\nB".into())))
+  );
+  assert_eq!(
+    decode("5 a 2 frame A\u{1e}B"),
+    Ok(record(Body::Frame("A\u{1e}B".into())))
+  );
+  assert!(matches!(
+    decode("5 a 2 frame A\nB"),
+    Err(DecodeError::Bad(_))
+  ));
 }
 
 #[test]
@@ -52,6 +82,7 @@ fn decode_errors() {
     "5 a 2 Frame x",
     "5 a 2 binary !!",
     "5  a 2 frame x",
+    "5 a 2 frame A\u{1e}B",
   ] {
     assert!(matches!(decode(bad), Err(DecodeError::Bad(_))), "{bad:?}");
   }
@@ -69,7 +100,7 @@ fn fetched_lines() {
     let mut out = Vec::new();
     record.encode(&mut out);
     let encoded = String::from_utf8(out).unwrap();
-    let encoded = encoded.strip_suffix('\n').unwrap().to_owned();
+    let encoded = encoded.strip_suffix("\u{1e}\n").unwrap().to_owned();
     assert_eq!(Record::decode(encoded.as_bytes()), Ok(record));
     encoded
   };
@@ -87,7 +118,8 @@ fn fetched_lines() {
     line(fetched("")),
     "5 b 1 fetched rustlesearch 1794146765482 feustang "
   );
-  assert!(line(fetched("a\nb")).starts_with("5 b 1 fetched64 "));
+  assert!(line(fetched("a\nb")).ends_with(" feustang a\nb"));
+  assert!(line(fetched("a\u{1e}b")).starts_with("5 b 1 fetched64 "));
   let range = Body::FetchRange {
     source: "rustlesearch".into(),
     from: 10,

@@ -1,17 +1,25 @@
-//! Appends records to live or backfill files, always in the [`v0`] format;
-//! [`kick`] writes Kick's.
+//! Appends records to live or backfill files, always in the newest
+//! [`v0`] format; [`kick`] writes Kick's.
+//!
+//! A writer appends to a day's file only if its header is the one the writer
+//! would write. Otherwise, as for a file of an older version, it starts the
+//! day's next file, `<instance>.<n>.journal` (see [`numbered_live_file`]),
+//! so new records never land in a file of another format.
 
 pub mod kick;
 
 use {
   crate::{
-    layout::{backfill_file, backfill_root, live_file, lock_file},
-    record::v0::{self, Body},
+    layout::{backfill_root, lock_file, numbered_live_file},
+    record::{
+      Framing, Header, Variant,
+      v0::{self, Body},
+    },
   },
   ::common::{fs::MissingOk, time::utc_day},
   ::std::{
     fs::{self, File, OpenOptions, TryLockError},
-    io::{self, Read, Seek, SeekFrom, Write},
+    io::{self, BufRead, BufReader, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     time::{Duration, Instant},
   },
@@ -158,35 +166,77 @@ impl Writer {
 
   /// Opens (creating if needed) this instance's file for `day`.
   fn open_day(&self, day: &str) -> io::Result<File> {
-    let path = if self.backfill {
-      backfill_file(&self.root, day, &self.instance)
+    let root = if self.backfill {
+      backfill_root(&self.root)
     } else {
-      live_file(&self.root, day, &self.instance)
+      self.root.clone()
     };
-    open_append(&path, &v0::VERSION.header())
+    let header = Header::new(Variant::Dgg, v0::VERSION);
+    open_day(&root, day, &self.instance, &header)
   }
 }
 
-/// Opens `path` to append to, creating it and its directory if needed. A
-/// new file gets `header`, in one write; an existing one with a torn tail
-/// gets a newline.
-fn open_append(path: &Path, header: &str) -> io::Result<File> {
+/// Opens `instance`'s last file for `day` under journal `root` to append to,
+/// if its header is `header`'s line; otherwise, or if it has none, starts
+/// the next, creating it and its directory as needed.
+fn open_day(
+  root: &Path,
+  day: &str,
+  instance: &str,
+  header: &Header,
+) -> io::Result<File> {
+  let path = |n| numbered_live_file(root, day, instance, n);
+  let mut n = 1;
+  while path(n + 1).exists() {
+    n += 1;
+  }
+  let line = header.line();
+  if let Some(file) = File::open(path(n)).missing_ok()?
+    && first_line(&file)? != Some(line.clone())
+  {
+    n += 1;
+  }
+  open_append(&path(n), &line, header.framing())
+}
+
+/// `file`'s first line, without its LF, if it's complete.
+fn first_line(file: &File) -> io::Result<Option<String>> {
+  let mut line = Vec::new();
+  BufReader::new(file).read_until(b'\n', &mut line)?;
+  let Some(line) = line.strip_suffix(b"\n") else {
+    return Ok(None);
+  };
+  Ok(Some(String::from_utf8_lossy(line).into_owned()))
+}
+
+/// Opens `path` to append to, creating it if needed. A new file gets
+/// `header`, ending at LF, in one write. An existing one with a torn tail
+/// after its header gets the end of a record (`framing`'s), so the next
+/// record starts clean.
+fn open_append(
+  path: &Path,
+  header: &str,
+  framing: Framing,
+) -> io::Result<File> {
   fs::create_dir_all(path.parent().unwrap())?;
   let mut file = OpenOptions::new()
     .create(true)
     .read(true)
     .append(true)
     .open(path)?;
-  if file.metadata()?.len() == 0 {
+  let len = file.metadata()?.len();
+  if len == 0 {
     file.write_all(format!("{header}\n").as_bytes())?;
-  } else {
-    // Isolate a torn line left by a crash, so the next record starts clean.
-    let mut last = [0];
-    file.seek(SeekFrom::End(-1))?;
-    file.read_exact(&mut last)?;
-    if last[0] != b'\n' {
-      file.write_all(b"\n")?;
-    }
+    return Ok(file);
+  }
+  let end = framing.end();
+  let mut tail = vec![0; end.len().min(len as usize)];
+  file.seek(SeekFrom::End(-(tail.len() as i64)))?;
+  file.read_exact(&mut tail)?;
+  // Just the header, ending at LF, needs nothing.
+  let header_only = len == header.len() as u64 + 1;
+  if tail != end && !header_only {
+    file.write_all(end)?;
   }
   Ok(file)
 }

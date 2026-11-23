@@ -6,7 +6,10 @@ use {
   ::logger_journal::{
     DecodeError, Header, Reader, Record, Variant, Version,
     layout::{channel_root, live_files},
-    record::kick::v0::{self, Body},
+    record::{
+      Framing,
+      kick::v0::{self, Body},
+    },
     writer::kick::Writer,
   },
   ::std::{fs, path::Path},
@@ -28,13 +31,18 @@ fn header() {
   assert_eq!(header.get("other"), None);
   assert!(header.readable());
 
-  // dgg's is written as it always was, and keys a reader doesn't know are
+  // dgg's names its variant from 0.2 on, and keys a reader doesn't know are
   // kept for it to skip.
-  let dgg = Header::new(Variant::Dgg, Version { major: 0, minor: 1 });
-  assert_eq!(dgg.line(), "journal 0.1");
-  assert_eq!(Header::parse(b"journal 0.1"), Some(dgg.clone()));
-  let noted = Header::parse(b"journal 0.1 ; new_key=1").unwrap();
+  let dgg = Header::new(Variant::Dgg, Version { major: 0, minor: 2 });
+  assert_eq!(dgg.line(), "journal dgg.0.2");
+  assert_eq!(Header::parse(b"journal dgg.0.2"), Some(dgg.clone()));
+  let noted = Header::parse(b"journal dgg.0.2 ; new_key=1").unwrap();
   assert_eq!(noted, dgg.with("new_key", "1"));
+  let legacy = Header::new(Variant::Dgg, Version { major: 0, minor: 1 });
+  assert_eq!(legacy.line(), "journal 0.1");
+  assert_eq!(Header::parse(b"journal 0.1"), Some(legacy.clone()));
+  assert_eq!(legacy.framing(), Framing::Lf);
+  assert_eq!(header.framing(), Framing::RsLf);
 
   let kick =
     |major, minor| Header::new(Variant::Kick, Version { major, minor });
@@ -49,6 +57,8 @@ fn header() {
     "journal kick.0.0 ; Channel=one",
     "journal kick.0.0 ; channel=one  endpoint=x",
     "journal kick.0.0 channel=one",
+    "journal 0.2",
+    "journal dgg.0.1",
   ] {
     assert_eq!(Header::parse(bad.as_bytes()), None, "{bad:?}");
   }
@@ -57,15 +67,23 @@ fn header() {
 #[test]
 fn lines_round_trip() {
   let frame = "{\"connect\":{}}\n{\"push\":{}}";
+  let rs = "{}\u{1e}";
   for (body, encoded) in [
-    (Body::Frame("{}".into()), "5 i 2 frame {}\n".to_owned()),
+    (
+      Body::Frame("{}".into()),
+      "5 i 2 frame {}\u{1e}\n".to_owned(),
+    ),
     (
       Body::Frame(frame.into()),
-      format!("5 i 2 frame64 {}\n", base64(frame)),
+      format!("5 i 2 frame {frame}\u{1e}\n"),
     ),
-    (Body::Binary(vec![0, 1]), "5 i 2 binary AAE=\n".into()),
-    (Body::Open(A.into()), format!("5 i 2 open {A}\n")),
-    (Body::Close(String::new()), "5 i 2 close\n".into()),
+    (
+      Body::Frame(rs.into()),
+      format!("5 i 2 frame64 {}\u{1e}\n", base64(rs)),
+    ),
+    (Body::Binary(vec![0, 1]), "5 i 2 binary AAE=\u{1e}\n".into()),
+    (Body::Open(A.into()), format!("5 i 2 open {A}\u{1e}\n")),
+    (Body::Close(String::new()), "5 i 2 close\u{1e}\n".into()),
   ] {
     let record = v0::Record {
       receive_time: 5,
@@ -76,7 +94,7 @@ fn lines_round_trip() {
     let mut out = Vec::new();
     record.encode(&mut out);
     assert_eq!(String::from_utf8(out).unwrap(), encoded);
-    let line = encoded.trim_end_matches('\n').as_bytes();
+    let line = encoded.strip_suffix("\u{1e}\n").unwrap().as_bytes();
     assert_eq!(v0::Record::decode(line), Ok(record));
   }
   // dgg's kinds aren't Kick's.
@@ -84,6 +102,10 @@ fn lines_round_trip() {
     v0::Record::decode(b"5 i 2 fetchrange s 1 2"),
     Err(DecodeError::Unknown("fetchrange".into()))
   );
+  assert!(matches!(
+    v0::Record::decode(b"5 i 2 frame {}\x1e{}"),
+    Err(DecodeError::Bad(_))
+  ));
 }
 
 fn base64(text: &str) -> String {
@@ -184,11 +206,11 @@ fn rolls_over_at_midnight_and_carries_on_after_a_restart() {
     .map(|f| fs::read_to_string(f).unwrap())
     .collect();
   let header = format!("journal kick.0.0 ; endpoint={A} channel=one\n");
-  assert_eq!(texts[0], format!("{header}{DAY} i 1 open {A}\n"));
+  assert_eq!(texts[0], format!("{header}{DAY} i 1 open {A}\u{1e}\n"));
   let next = DAY + day;
   assert_eq!(
     texts[1],
-    format!("{header}{next} i 1 frame {{}}\n{next} i 1 open {A}\n")
+    format!("{header}{next} i 1 frame {{}}\u{1e}\n{next} i 1 open {A}\u{1e}\n")
   );
 }
 
@@ -203,6 +225,6 @@ fn lines_before_any_open_go_in_a_file_with_no_endpoint() {
   let text = fs::read_to_string(&files[0]).unwrap();
   assert_eq!(
     text,
-    format!("journal kick.0.0 ; channel=one\n{DAY} i 1 close why\n")
+    format!("journal kick.0.0 ; channel=one\n{DAY} i 1 close why\u{1e}\n")
   );
 }

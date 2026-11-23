@@ -6,7 +6,7 @@ fn version(major: u32, minor: u32) -> Version {
 
 #[test]
 fn header() {
-  assert_eq!(v0::VERSION.header(), "journal 0.1");
+  assert_eq!(v0::LEGACY.header(), "journal 0.1");
   let parse = |s: &str| Version::parse_header(s.as_bytes());
   assert_eq!(parse("journal 1.7"), Some(version(1, 7)));
   assert_eq!(parse("journal 12.0"), Some(version(12, 0)));
@@ -25,9 +25,11 @@ fn header() {
 
 #[test]
 fn readable() {
-  // Within major 0, only the exact minor.
+  // Within major 0, only the exact minors: 0.1, with a record per line, and
+  // 0.2.
   assert!(version(0, 1).readable());
+  assert!(version(0, 2).readable());
   assert!(!version(0, 0).readable());
-  assert!(!version(0, 2).readable());
+  assert!(!version(0, 3).readable());
   assert!(!version(1, 0).readable());
 }

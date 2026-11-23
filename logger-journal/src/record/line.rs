@@ -1,4 +1,4 @@
-//! The line shape every format so far shares:
+//! The record shape every format so far shares:
 //!
 //! ```text
 //! <receive-time> <instance> <connection> <kind> <data>
@@ -6,9 +6,9 @@
 //!
 //! separated by single spaces. `receive-time` (local receive time, unix ms)
 //! and `connection` are decimal digits, `instance` is `[A-Za-z0-9._-]+`, and
-//! `kind` is `[a-z0-9]+`. `data` is the rest of the line, verbatim; the space
-//! before it is omitted when it's empty. Lines end at LF only; a CR is
-//! ordinary data. Text data containing an LF can't sit on one line, so it's
+//! `kind` is `[a-z0-9]+`. `data` is the rest of the record, verbatim; the
+//! space before it is omitted when it's empty. How a record ends is its
+//! file's [`Framing`]. Text data holding the byte that framing reserves is
 //! written with the kind suffixed `64` and the data base64; binary data is
 //! always base64.
 
@@ -16,6 +16,53 @@ use {
   super::{DecodeError, digits},
   ::base64::{Engine, engine::general_purpose::STANDARD as BASE64},
 };
+
+/// The record separator, ASCII 0x1E.
+pub const RS: u8 = 0x1e;
+
+/// How a file's records end.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Framing {
+  /// Each record is one line, ending at LF; a CR is ordinary data. Text
+  /// data holding an LF goes base64. dgg's, up to `journal 0.1`.
+  Lf,
+  /// Each record ends at RS LF, and its data holds LFs (and CRs) verbatim,
+  /// so a record may span lines. Text data holding an RS goes base64, so an
+  /// RS in a file only ever ends a record.
+  RsLf,
+}
+
+impl Framing {
+  /// What ends each record.
+  pub fn end(self) -> &'static [u8] {
+    match self {
+      Self::Lf => b"\n",
+      Self::RsLf => &[RS, b'\n'],
+    }
+  }
+
+  /// The byte text data can't hold verbatim.
+  fn reserved(self) -> u8 {
+    match self {
+      Self::Lf => b'\n',
+      Self::RsLf => RS,
+    }
+  }
+
+  /// Splits `bytes`, the records after a file's header, into its complete
+  /// records, without their ends, and what follows the last: empty, or a
+  /// torn record.
+  pub fn split(self, bytes: &[u8]) -> (Vec<&[u8]>, &[u8]) {
+    let end = self.end();
+    let mut records = Vec::new();
+    let mut rest = bytes;
+    while let Some(at) = rest.windows(end.len()).position(|w| w == end) {
+      records.push(&rest[..at]);
+      rest = &rest[at + end.len()..];
+    }
+    (records, rest)
+  }
+}
 
 /// Whether `token` can be a space-separated field: non-empty, with no space
 /// or LF.
@@ -42,7 +89,7 @@ pub(crate) fn valid_kind(kind: &str) -> bool {
       .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
 }
 
-/// A line's fields, its data still encoded.
+/// A record's fields, its data still encoded.
 pub(crate) struct Line<'a> {
   pub receive_time: i64,
   pub instance: &'a str,
@@ -51,10 +98,13 @@ pub(crate) struct Line<'a> {
   pub data: &'a str,
 }
 
-/// Appends a line, newline included, to `out`. `binary` data is always
-/// base64; text data only when it holds an LF, with `kind` suffixed `64`.
+/// Appends a record, with its end, to `out`. `binary` data is always
+/// base64; text data only when it holds the byte `framing` reserves, with
+/// `kind` suffixed `64`.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn encode(
   out: &mut Vec<u8>,
+  framing: Framing,
   receive_time: i64,
   instance: &str,
   connection: u64,
@@ -62,7 +112,7 @@ pub(crate) fn encode(
   data: &[u8],
   binary: bool,
 ) {
-  let text64 = !binary && data.contains(&b'\n');
+  let text64 = !binary && data.contains(&framing.reserved());
   let suffix = if text64 { "64" } else { "" };
   let header = format!("{receive_time} {instance} {connection} {kind}{suffix}");
   out.extend_from_slice(header.as_bytes());
@@ -74,12 +124,18 @@ pub(crate) fn encode(
       out.extend_from_slice(data);
     }
   }
-  out.push(b'\n');
+  out.extend_from_slice(framing.end());
 }
 
-/// Splits one line, without its newline, into its fields.
-pub(crate) fn decode(line: &[u8]) -> Result<Line<'_>, DecodeError> {
+/// Splits one record, without its end, into its fields.
+pub(crate) fn decode(
+  framing: Framing,
+  line: &[u8],
+) -> Result<Line<'_>, DecodeError> {
   use DecodeError::Bad;
+  if line.contains(&framing.reserved()) {
+    return Err(Bad("the record's end inside it"));
+  }
   let line = ::std::str::from_utf8(line).map_err(|_| Bad("not utf-8"))?;
   let mut parts = line.splitn(5, ' ');
   let mut field = || parts.next().ok_or(Bad("too few fields"));

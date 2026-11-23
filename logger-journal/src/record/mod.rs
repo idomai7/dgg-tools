@@ -1,32 +1,35 @@
-//! A decoded line from a file of any readable variant and version.
+//! A decoded record from a file of any readable variant and version.
 //!
 //! The header line every journal file starts with (see [`Header`]):
-//! `journal <major>.<minor>` for dgg, `journal kick.<major>.<minor>` for
-//! Kick, each optionally followed by ` ;` and informational fields.
+//! `journal dgg.<major>.<minor>` for dgg, `journal kick.<major>.<minor>` for
+//! Kick, each optionally followed by ` ;` and informational fields. dgg's
+//! files up to 0.1 name no variant: `journal 0.1`.
 
 pub mod kick;
 mod line;
 pub mod v0;
 
+pub use line::{Framing, RS};
+
 /// Format name at the start of every file's header line.
 pub const MAGIC: &str = "journal";
-/// The newest version of each major of dgg's format this crate has a
-/// decoder for.
-pub const READABLE: &[Version] = &[v0::VERSION];
+/// The versions of dgg's format this crate has a decoder for.
+pub const READABLE: &[Version] = &[v0::LEGACY, v0::VERSION];
 
 /// Which platform's format a file is in. Each is versioned on its own, so one
 /// platform's changes never break the other's files.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Variant {
-  /// dgg's, the first: its header names no variant (`journal 0.1`), and its
-  /// majors are [`v0`].
+  /// dgg's, the first, `journal dgg.<major>.<minor>`, its majors under
+  /// [`v0`]. Up to 0.1 its header named no variant (`journal 0.1`).
   Dgg,
   /// Kick's, `journal kick.<major>.<minor>`, its majors under [`kick`].
   Kick,
 }
 
 impl Variant {
-  /// The newest version of each major this crate has a decoder for.
+  /// The versions this crate has a decoder for: within major 0, each minor;
+  /// from major 1 on, the newest of each major.
   pub fn readable(self) -> &'static [Version] {
     match self {
       Self::Dgg => READABLE,
@@ -34,12 +37,17 @@ impl Variant {
     }
   }
 
-  /// Its name in headers; dgg's is left out.
-  fn name(self) -> Option<&'static str> {
+  /// Its name in headers.
+  fn name(self) -> &'static str {
     match self {
-      Self::Dgg => None,
-      Self::Kick => Some("kick"),
+      Self::Dgg => "dgg",
+      Self::Kick => "kick",
     }
+  }
+
+  /// Whether `version`'s header names no variant: dgg's up to 0.1.
+  fn unnamed(self, version: Version) -> bool {
+    self == Self::Dgg && (version.major, version.minor) <= (0, 1)
   }
 }
 
@@ -56,7 +64,7 @@ pub struct Version {
 
 impl Version {
   /// Whether this crate can read dgg files written at this version: within
-  /// major 0, only the exact minor it knows; from major 1 on, any minor of
+  /// major 0, only the exact minors it knows; from major 1 on, any minor of
   /// a major it knows.
   pub fn readable(self) -> bool {
     self.readable_in(Variant::Dgg)
@@ -69,13 +77,15 @@ impl Version {
     })
   }
 
-  /// The dgg header line, without its newline.
+  /// The dgg header line as it was up to 0.1, naming no variant, without its
+  /// newline. See [`Header::line`] for any variant's.
   pub fn header(self) -> String {
     format!("{MAGIC} {}.{}", self.major, self.minor)
   }
 
-  /// Parses a dgg header line without informational fields, and without its
-  /// newline. See [`Header::parse`] for any variant's.
+  /// Parses a dgg header line as it was up to 0.1, naming no variant and
+  /// without informational fields, and without its newline. See
+  /// [`Header::parse`] for any variant's.
   pub fn parse_header(line: &[u8]) -> Option<Self> {
     let line = ::std::str::from_utf8(line).ok()?;
     let version = line.strip_prefix(MAGIC)?.strip_prefix(' ')?;
@@ -90,9 +100,10 @@ impl Version {
   }
 }
 
-/// A file's header line: `journal <version>` for dgg, or `journal
-/// <variant>.<version>`, then optionally ` ;` and informational `key=value`
-/// fields, separated by single spaces. For example:
+/// A file's header line: `journal <variant>.<version>` (or for dgg up to
+/// 0.1, `journal <version>`), then optionally ` ;` and informational
+/// `key=value` fields, separated by single spaces. It ends at LF, whatever
+/// the file's [`Framing`]. For example:
 ///
 /// ```text
 /// journal kick.0.0 ; endpoint=wss://example.com/connection channel=destiny
@@ -143,12 +154,23 @@ impl Header {
     self.version.readable_in(self.variant)
   }
 
+  /// How the file's records end: at LF for dgg's up to 0.1, at RS LF
+  /// otherwise.
+  pub fn framing(&self) -> Framing {
+    if self.variant.unnamed(self.version) {
+      Framing::Lf
+    } else {
+      Framing::RsLf
+    }
+  }
+
   /// The header line, without its newline.
   pub fn line(&self) -> String {
     let Version { major, minor } = self.version;
-    let mut line = match self.variant.name() {
-      Some(name) => format!("{MAGIC} {name}.{major}.{minor}"),
-      None => format!("{MAGIC} {major}.{minor}"),
+    let mut line = if self.variant.unnamed(self.version) {
+      format!("{MAGIC} {major}.{minor}")
+    } else {
+      format!("{MAGIC} {}.{major}.{minor}", self.variant.name())
     };
     if !self.info.is_empty() {
       line.push_str(" ;");
@@ -168,9 +190,10 @@ impl Header {
       None => (rest, None),
     };
     let parts: Vec<&str> = required.split('.').collect();
-    let (variant, major, minor) = match parts[..] {
-      [major, minor] => (Variant::Dgg, major, minor),
-      ["kick", major, minor] => (Variant::Kick, major, minor),
+    let (variant, named, major, minor) = match parts[..] {
+      [major, minor] => (Variant::Dgg, false, major, minor),
+      ["dgg", major, minor] => (Variant::Dgg, true, major, minor),
+      ["kick", major, minor] => (Variant::Kick, true, major, minor),
       _ => return None,
     };
     if !digits(major) || !digits(minor) {
@@ -180,6 +203,10 @@ impl Header {
       major: major.parse().ok()?,
       minor: minor.parse().ok()?,
     };
+    // Each version's header has one form.
+    if named == variant.unnamed(version) {
+      return None;
+    }
     let mut header = Self::new(variant, version);
     for field in info.into_iter().flat_map(|info| info.split(' ')) {
       let (key, value) = field.split_once('=')?;
@@ -206,10 +233,10 @@ pub enum Record {
   Kick0(kick::v0::Record),
 }
 
-/// Why a complete line couldn't be decoded.
+/// Why a complete record couldn't be decoded.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DecodeError {
-  /// Not a well-formed line, e.g. one torn by a crash.
+  /// Not a well-formed record, e.g. one torn by a crash.
   Bad(&'static str),
   /// Well-formed, but a kind this version doesn't know (added by a newer
   /// minor, say).
@@ -219,15 +246,13 @@ pub enum DecodeError {
 }
 
 impl Record {
-  /// Decodes one line, without its newline, from a file of `variant` at
-  /// `version`.
-  pub fn decode(
-    variant: Variant,
-    version: Version,
-    line: &[u8],
-  ) -> Result<Self, DecodeError> {
-    match (variant, version.major) {
-      (Variant::Dgg, 0) => v0::Record::decode(line).map(Self::V0),
+  /// Decodes one record, without its end, from a file with `header`.
+  pub fn decode(header: &Header, line: &[u8]) -> Result<Self, DecodeError> {
+    let framing = header.framing();
+    match (header.variant, header.version.major) {
+      (Variant::Dgg, 0) => {
+        v0::Record::decode_framed(framing, line).map(Self::V0)
+      }
       (Variant::Kick, 0) => kick::v0::Record::decode(line).map(Self::Kick0),
       (_, major) => Err(DecodeError::NoDecoder(major)),
     }

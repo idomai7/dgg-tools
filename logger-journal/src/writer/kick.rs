@@ -2,19 +2,16 @@
 //! format.
 
 use {
-  super::{SYNC_INTERVAL, open_append},
-  crate::{
-    layout::numbered_live_file,
-    record::{
-      Header, Variant,
-      kick::{self, v0::Body},
-      v0::{valid_instance, valid_token},
-    },
+  super::{SYNC_INTERVAL, open_day},
+  crate::record::{
+    Header, Variant,
+    kick::{self, v0::Body},
+    v0::{valid_instance, valid_token},
   },
-  ::common::{fs::MissingOk, time::utc_day},
+  ::common::time::utc_day,
   ::std::{
     fs::File,
-    io::{self, BufRead, BufReader, Write},
+    io::{self, Write},
     path::PathBuf,
     time::Instant,
   },
@@ -150,24 +147,10 @@ impl Writer {
     Ok(())
   }
 
-  /// Opens the day's last file if its header is for the endpoint, or
-  /// creates the next.
+  /// Opens the day's last file if its header is this one's, endpoint
+  /// included, or starts the next.
   fn open_day(&self, day: &str) -> io::Result<File> {
-    let header = self.header();
-    let path = |n| numbered_live_file(&self.root, day, &self.instance, n);
-    let mut n = 1;
-    while path(n + 1).exists() {
-      n += 1;
-    }
-    let same = match File::open(path(n)).missing_ok()? {
-      Some(file) => same_endpoint(file, &header)?,
-      // None yet: the first is new.
-      None => true,
-    };
-    if !same {
-      n += 1;
-    }
-    open_append(&path(n), &header.line())
+    open_day(&self.root, day, &self.instance, &self.header())
   }
 
   /// The header for a new file.
@@ -179,19 +162,6 @@ impl Writer {
     };
     header.with("channel", &self.channel)
   }
-}
-
-/// Whether `file`'s header is complete and has `header`'s endpoint.
-fn same_endpoint(file: File, header: &Header) -> io::Result<bool> {
-  let mut line = Vec::new();
-  BufReader::new(file).read_until(b'\n', &mut line)?;
-  let Some(line) = line.strip_suffix(b"\n") else {
-    return Ok(false);
-  };
-  Ok(Header::parse(line).is_some_and(|found| {
-    found.variant == Variant::Kick
-      && found.get("endpoint") == header.get("endpoint")
-  }))
 }
 
 impl Drop for Writer {

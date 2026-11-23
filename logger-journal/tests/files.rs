@@ -3,9 +3,13 @@
 use {
   ::common::temp_dir::TempDir,
   ::logger_journal::{
-    DecodeError, Entry, ReadError, Reader, Record, Variant, Version, Writer,
-    layout::{backfill_files, live_dir, live_files},
-    record::v0::{self, Body},
+    DecodeError, Entry, Header, ReadError, Reader, Record, Variant, Version,
+    Writer,
+    layout::{backfill_files, live_dir, live_file, live_files},
+    record::{
+      Framing,
+      v0::{self, Body},
+    },
   },
   ::std::{
     fs::{self, OpenOptions},
@@ -126,26 +130,31 @@ fn header_is_checked() {
   drop(writer);
   let path = live_files(root.path()).unwrap()[0].clone();
   let text = fs::read_to_string(&path).unwrap();
-  assert_eq!(text, "journal 0.1\n0 a 1 frame MSG 1\n");
+  assert_eq!(text, "journal dgg.0.2\n0 a 1 frame MSG 1\u{1e}\n");
 
   let with = |header: &str| {
-    fs::write(&path, text.replacen("journal 0.1", header, 1)).unwrap();
+    fs::write(&path, text.replacen("journal dgg.0.2", header, 1)).unwrap();
     Reader::open(&path, 0)
   };
-  let mut reader = with("journal 0.1").unwrap();
-  assert_eq!(reader.version(), Some(Version { major: 0, minor: 1 }));
+  let mut reader = with("journal dgg.0.2").unwrap();
+  assert_eq!(reader.version(), Some(Version { major: 0, minor: 2 }));
   assert_eq!(frame(reader.next().unwrap()), "MSG 1");
   // Within major 0 another minor may have broken anything: refused.
   let v07 = Version { major: 0, minor: 7 };
-  assert!(
-    matches!(with("journal 0.7"), Err(ReadError::Version(Variant::Dgg, v)) if v == v07)
-  );
+  assert!(matches!(
+    with("journal dgg.0.7"),
+    Err(ReadError::Version(Variant::Dgg, v)) if v == v07
+  ));
   // As is a major without a decoder.
   let v2 = Version { major: 2, minor: 0 };
   assert!(matches!(
-    with("journal 2.0"),
+    with("journal dgg.2.0"),
     Err(ReadError::Version(Variant::Dgg, v)) if v == v2
   ));
+  // Each version's header has one form.
+  for header in ["journal 0.2", "journal dgg.0.1"] {
+    assert!(matches!(with(header), Err(ReadError::Header { .. })));
+  }
   assert!(matches!(
     with("dgg-journal 1.0"),
     Err(ReadError::Header { found }) if found == "dgg-journal 1.0"
@@ -186,6 +195,74 @@ fn partial_tail_is_left_for_later() {
 }
 
 #[test]
+fn records_may_span_lines() {
+  let root = TempDir::new("logger-journal-files");
+  let mut writer = Writer::new(root.path(), "a");
+  write(&mut writer, &frame_record(0, "MSG 1\nand 2\n"));
+  write(&mut writer, &frame_record(0, "MSG 3"));
+  drop(writer);
+  let path = &live_files(root.path()).unwrap()[0];
+  assert_eq!(
+    fs::read_to_string(path).unwrap(),
+    "journal dgg.0.2\n0 a 1 frame MSG 1\nand 2\n\u{1e}\n0 a 1 frame MSG 3\u{1e}\n"
+  );
+  let mut reader = Reader::open(path, 0).unwrap();
+  assert_eq!(frame(reader.next().unwrap()), "MSG 1\nand 2\n");
+  assert_eq!(frame(reader.next().unwrap()), "MSG 3");
+
+  // A tail ending at a bare LF is still being written.
+  let full = fs::read(path).unwrap().len() as u64;
+  let mut file = OpenOptions::new().append(true).open(path).unwrap();
+  file.write_all(b"0 a 1 frame MSG 4\n").unwrap();
+  let mut reader = Reader::open(path, 0).unwrap();
+  assert_eq!(reader.by_ref().count(), 2);
+  assert_eq!(reader.offset(), full);
+  file.write_all(b"more\x1e\n").unwrap();
+  let mut rest = Reader::open(path, full).unwrap();
+  assert_eq!(frame(rest.next().unwrap()), "MSG 4\nmore");
+}
+
+#[test]
+fn legacy_files_are_read_and_never_appended_to() {
+  let root = TempDir::new("logger-journal-files");
+  let day = live_file(root.path(), "1970-01-01", "a");
+  fs::create_dir_all(day.parent().unwrap()).unwrap();
+  // A file of 0.1: a record per line, an LF in data as base64.
+  fs::write(&day, "journal 0.1\n0 a 1 frame64 QQpC\n0 a 1 frame B\n").unwrap();
+  let reader = Reader::open(&day, 0).unwrap();
+  assert_eq!(reader.header().unwrap().framing(), Framing::Lf);
+  let frames: Vec<_> = reader.map(frame).collect();
+  assert_eq!(frames, ["A\nB", "B"]);
+
+  // The writer starts the day's next file, in the new format.
+  let mut writer = Writer::new(root.path(), "a");
+  write(&mut writer, &frame_record(0, "MSG 1"));
+  drop(writer);
+  let files = live_files(root.path()).unwrap();
+  let names: Vec<_> = files
+    .iter()
+    .map(|f| f.file_name().unwrap().to_owned())
+    .collect();
+  assert_eq!(names, ["a.2.journal", "a.journal"]);
+  assert_eq!(
+    fs::read_to_string(&files[0]).unwrap(),
+    "journal dgg.0.2\n0 a 1 frame MSG 1\u{1e}\n"
+  );
+  assert_eq!(
+    fs::read_to_string(&day).unwrap(),
+    "journal 0.1\n0 a 1 frame64 QQpC\n0 a 1 frame B\n"
+  );
+  // And appends to that one after.
+  let mut writer = Writer::new(root.path(), "a");
+  write(&mut writer, &frame_record(0, "MSG 2"));
+  drop(writer);
+  assert_eq!(live_files(root.path()).unwrap().len(), 2);
+  let header = Header::new(Variant::Dgg, v0::VERSION);
+  assert_eq!(header.line(), "journal dgg.0.2");
+  assert_eq!(header.framing(), Framing::RsLf);
+}
+
+#[test]
 fn torn_line_is_isolated_on_reopen() {
   let root = TempDir::new("logger-journal-files");
   let mut writer = Writer::new(root.path(), "a");
@@ -210,4 +287,15 @@ fn torn_line_is_isolated_on_reopen() {
   ));
   assert_eq!(frame(read.next().unwrap()), "MSG 2");
   assert!(read.next().is_none());
+
+  // Torn after an LF in its data, too.
+  let mut file = OpenOptions::new().append(true).open(&path).unwrap();
+  file.write_all(b"0 a 1 frame MSG\n").unwrap();
+  drop(file);
+  let mut writer = Writer::new(root.path(), "a");
+  write(&mut writer, &frame_record(0, "MSG 3"));
+  drop(writer);
+  let last: Vec<_> = Reader::open(&path, 0).unwrap().skip(3).collect();
+  assert_eq!(last.len(), 2);
+  assert_eq!(frame(last.into_iter().nth(1).unwrap()), "MSG 3");
 }

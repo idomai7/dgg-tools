@@ -42,9 +42,9 @@ impl From<io::Error> for ReadError {
 /// Reads complete lines from an offset on, decoding them with the decoder
 /// for the file's header variant and version.
 ///
-/// A trailing line without its newline is still being written (or was torn
-/// by a crash), so iteration stops before it; read again from the last
-/// `next` to pick it up later.
+/// A trailing record without its end (see [`Header::framing`]) is still
+/// being written (or was torn by a crash), so iteration stops before it;
+/// read again from the last `next` to pick it up later.
 ///
 /// Archives (`.journal.zst`) are read the same way, decompressed as they
 /// go; their offsets are into the decompressed journal.
@@ -127,29 +127,35 @@ impl Iterator for Reader {
   type Item = Result<Entry, ReadError>;
 
   fn next(&mut self) -> Option<Self::Item> {
-    let Header {
-      variant, version, ..
-    } = *self.header.as_ref()?;
+    let header = self.header.as_ref()?;
+    let end = header.framing().end();
     while !self.done {
       self.line.clear();
-      let n = match self.inner.read_until(b'\n', &mut self.line) {
-        Ok(n) => n,
-        Err(e) => {
-          self.done = true;
-          return Some(Err(ReadError::Io(e)));
+      // A record may span lines: read them until its end.
+      let complete = loop {
+        match self.inner.read_until(b'\n', &mut self.line) {
+          Ok(0) => break false,
+          Ok(_) if self.line.ends_with(end) => break true,
+          Ok(_) if self.line.last() == Some(&b'\n') => {}
+          Ok(_) => break false,
+          Err(e) => {
+            self.done = true;
+            return Some(Err(ReadError::Io(e)));
+          }
         }
       };
-      if n == 0 || self.line.last() != Some(&b'\n') {
+      if !complete {
         self.done = true;
         break;
       }
+      let n = self.line.len();
       let offset = self.offset;
       self.offset += n as u64;
-      let text = &self.line[..n - 1];
+      let text = &self.line[..n - end.len()];
       if text.is_empty() {
         continue;
       }
-      return Some(match Record::decode(variant, version, text) {
+      return Some(match Record::decode(header, text) {
         Ok(record) => Ok(Entry {
           offset,
           next: self.offset,

@@ -1,16 +1,19 @@
-//! Format version 0, pre-release: any minor may break, so readers accept
-//! only the minor they know.
+//! dgg's format version 0, pre-release: any minor may break, so readers
+//! accept only the minors they know.
 //!
-//! After the `journal 0.<minor>` header, each line is
+//! After the `journal dgg.0.<minor>` header, a line ending at LF, each
+//! record is
 //!
 //! ```text
-//! <receive-time> <instance> <connection> <kind> <data>
+//! <receive-time> <instance> <connection> <kind> <data><RS><LF>
 //! ```
 //!
-//! separated by single spaces. `receive-time` (local receive time, unix ms)
-//! and `connection` are decimal digits, `instance` is `[A-Za-z0-9._-]+`, and
-//! `kind` is `[a-z0-9]+`. `data` is the rest of the line, verbatim; the space
-//! before it is omitted when it's empty. Kinds:
+//! separated by single spaces, with `RS` the record separator, 0x1E.
+//! `receive-time` (local receive time, unix ms) and `connection` are decimal
+//! digits, `instance` is `[A-Za-z0-9._-]+`, and `kind` is `[a-z0-9]+`.
+//! `data` is the rest of the record, verbatim, LFs and CRs included, so a
+//! record may span lines; the space before it is omitted when it's empty.
+//! Kinds:
 //!
 //! - `frame`: a dgg text frame exactly as received (`EVENT payload`).
 //! - `binary`: a binary frame, base64.
@@ -18,29 +21,38 @@
 //! - `close`: a connection dropped; data is why.
 //! - `fetched`: a message fetched from another source to fill a gap; data is
 //!   `<source> <timestamp> <nick> <text>`, with `timestamp` dgg's unix ms and
-//!   `text` verbatim to the end of the line. (0.1)
+//!   `text` verbatim to the end of the record. (0.1)
 //! - `fetchrange`: a source returned everything it has between two times;
 //!   data is `<source> <from> <to>`, unix ms. (0.1)
 //!
-//! `source` and `nick` are [tokens](valid_token). Lines end at LF only; a CR
-//! is ordinary data. Data containing an LF can't sit on one line, so it's
-//! written with the kind suffixed `64` and the data base64 (`frame64`,
-//! `open64`, `close64`, `fetched64`).
+//! `source` and `nick` are [tokens](valid_token). An RS only ever ends a
+//! record: text data containing one is written with the kind suffixed `64`
+//! and the data base64 (`frame64`, `open64`, `close64`, `fetched64`).
 //!
 //! Minor versions:
 //!
 //! - `0.0`: `frame`, `binary`, `open` and `close`.
 //! - `0.1`: adds `fetched` and `fetchrange`.
+//! - `0.2`: records end at RS LF, not LF, and the header names the variant.
+//!   Before, it was `journal 0.<minor>`, each record was one line, ending at
+//!   LF, and text data holding an LF went base64 instead. Those files are
+//!   still read ([`LEGACY`]), but no longer written.
 
 pub use super::line::{valid_instance, valid_token};
 use {
-  super::{DecodeError, Version, digits, line},
+  super::{
+    DecodeError, Version, digits,
+    line::{self, Framing},
+  },
   ::std::borrow::Cow,
 };
 
-pub const VERSION: Version = Version { major: 0, minor: 1 };
+pub const VERSION: Version = Version { major: 0, minor: 2 };
 
-/// One line.
+/// The last version with a record per line, its header naming no variant.
+pub const LEGACY: Version = Version { major: 0, minor: 1 };
+
+/// One record.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Record {
   /// Local receive time, unix ms.
@@ -77,7 +89,7 @@ pub enum Body {
 }
 
 impl Record {
-  /// Appends this record's line, newline included, to `out`.
+  /// Appends this record, with its RS LF, to `out`.
   ///
   /// # Panics
   ///
@@ -113,6 +125,7 @@ impl Record {
     let binary = matches!(self.body, Body::Binary(_));
     line::encode(
       out,
+      Framing::RsLf,
       self.receive_time,
       &self.instance,
       self.connection,
@@ -122,9 +135,18 @@ impl Record {
     );
   }
 
-  /// Decodes one line, without its newline.
+  /// Decodes one record, without its RS LF.
   pub fn decode(line: &[u8]) -> Result<Self, DecodeError> {
-    let line = line::decode(line)?;
+    Self::decode_framed(Framing::RsLf, line)
+  }
+
+  /// Decodes one record, without its end, from a file with `framing`:
+  /// [`Framing::Lf`] for a [`LEGACY`] file.
+  pub fn decode_framed(
+    framing: Framing,
+    line: &[u8],
+  ) -> Result<Self, DecodeError> {
+    let line = line::decode(framing, line)?;
     let data = line.data;
     let body = match line.kind {
       "frame" => Body::Frame(data.into()),
