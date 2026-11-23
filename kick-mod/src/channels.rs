@@ -9,23 +9,18 @@
 //!
 //! It's written whole, pretty-printed and sorted by slug. [`update`]
 //! re-reads it just before writing, so hand edits made while kick-mod runs
-//! survive, and fields kick-mod doesn't know are kept. It writes to a
-//! temporary file beside it and renames that over it, so a reader sees the
-//! old file or the new one, never half of one. A hand edit saved between
-//! the read and the rename is still lost.
+//! survive, and fields kick-mod doesn't know are kept. It's
+//! [replaced](files::replace) whole, never half-written. A hand edit saved
+//! between the read and the write is still lost.
 
 use {
+  crate::files,
   ::serde::{Deserialize, Serialize},
   ::serde_json::{Map, Value},
-  ::std::{collections::BTreeMap, fs, io, path::Path, thread, time::Duration},
+  ::std::{collections::BTreeMap, fs, io, path::Path},
 };
 
 pub const DEFAULT_PATH: &str = "data/kick-mod/channels.json";
-
-/// Tries at renaming over the file: on Windows it fails while another
-/// process has the file open.
-const RENAME_TRIES: u32 = 10;
-const RENAME_WAIT: Duration = Duration::from_millis(100);
 
 /// By slug.
 pub type Channels = BTreeMap<String, Channel>;
@@ -85,26 +80,7 @@ pub fn record(
 }
 
 fn write(path: &Path, channels: &Channels) -> io::Result<()> {
-  if let Some(dir) = path.parent().filter(|dir| !dir.as_os_str().is_empty()) {
-    fs::create_dir_all(dir)?;
-  }
   let mut text = ::serde_json::to_string_pretty(channels)?;
   text.push('\n');
-  let mut temporary = path.as_os_str().to_owned();
-  temporary.push(".tmp");
-  fs::write(&temporary, text)?;
-  let mut tries = 1;
-  loop {
-    match fs::rename(&temporary, path) {
-      Ok(()) => return Ok(()),
-      Err(_) if tries < RENAME_TRIES => {
-        tries += 1;
-        thread::sleep(RENAME_WAIT);
-      }
-      Err(e) => {
-        let _ = fs::remove_file(&temporary);
-        return Err(e);
-      }
-    }
-  }
+  files::replace(path, &text)
 }
