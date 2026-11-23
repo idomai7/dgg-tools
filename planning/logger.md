@@ -90,9 +90,51 @@ the [overall rules](README.md), and [deploy](deploy.md) for the mesh it runs on.
          byte-for-byte identical: same records, same order, same fields and
          data. A file that fails is reported, and nothing of it is removed.
       3. Only once the validation has passed are the old files removed.
-      - It covers live, archived and backfill journals, and the archive
-        manifests, whose digests change with the archives.
-      - The index's offsets point into the old files, so it's rebuilt after.
+
+      In detail (step C, proposed):
+      - **What it covers:** the archives, both the journal's and the
+        backfill journal's, and their monthly manifests. Live files aren't
+        rewritten: compaction converts them into archives anyway, within a
+        day or two, with the same checks. Rewriting them in place would also
+        break the index, whose checkpoints for live files are offsets without
+        a digest.
+      - **Converting a record:** shared by the migration and compaction, in
+        `logger-journal`. A record is copied byte for byte unless it holds an
+        RS; that one is decoded and encoded again. Either way the result is
+        decoded by the new parser and compared with the old parser's decoding
+        of the original: the same record, or for one that doesn't decode the
+        same error and the same bytes. Anything else fails.
+      - **Converting an archive:** decompressed, converted record by record
+        under a `journal dgg.0.2` header, compressed at compaction's default
+        level, so both hosts turn the same archive into the same bytes.
+      - **Validating it,** before anything is removed: the new file is
+        written next to the old (`<day>.journal.zst.new`), fsynced, and read
+        back. Both are read with `Reader`, each by its own framing, and
+        compared record by record: as many, in the same order, each equal as
+        above. Its size, bytes, records and SHA-256 are taken from the file
+        as read back.
+      - **Replacing it:** a month at a time. Once every archive of a month
+        has been validated, each is renamed over its old one, then the
+        month's manifest is written (`journal-archive dgg.0.1`) with the new
+        entries. A month with a failure is left as it was, and reported, and
+        the rest carry on.
+      - **Rerunning it** is safe: an archive already in `dgg.0.2` isn't
+        converted again, only checked against its manifest entry, which is
+        rewritten from the file if a crash came between the rename and the
+        manifest. Leftover `.new` files are removed first.
+      - `dgg-logger migrate --dry-run` converts and validates without
+        replacing anything, and reports what it would do.
+      - **Taken archives:** `control/synced-archives` lists peers' archives by
+        their old SHA-256. Archives installed as they came convert to the
+        same bytes on both hosts, so they still match. One that was merged
+        with local files differs, so after both hosts migrate it's taken once
+        more and merged again; deduplication makes that harmless.
+      - **Index:** `index --rebuild` after. Changed digests alone would make
+        it read every archive again, which deduplication makes harmless, but
+        `unparsed` rows keyed by old offsets would linger.
+      - **Rollout:** stop both hosts' supervisors; install the new build on
+        both; `migrate --dry-run`, then `migrate`, on each; `index
+        --rebuild`; start the supervisors.
     - **Steps,** each its own commit and review. A and B ship together:
       without B, compaction splits the new files on LF.
       1. **A, logger-journal:** RS LF framing by header, `dgg.0.2`, the
