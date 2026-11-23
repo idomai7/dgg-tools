@@ -16,7 +16,7 @@
 //! - `0.1`: the header, ending at LF; entries end at RS LF.
 //! - `0.2`: the header ends at RS LF too.
 //!
-//! Older versions are still read, and rewritten as the newest by `migrate`.
+//! Only 0.2 is read: every host's file was migrated to it.
 
 use {
   ::common::{atomic_file, fs::MissingOk},
@@ -36,11 +36,8 @@ pub const FORMAT: Format = Format {
   rs_header: &[(Variant::Dgg, Version { major: 0, minor: 2 })],
 };
 
-/// The version this crate writes.
+/// The version this crate writes and reads.
 pub const VERSION: Version = Version { major: 0, minor: 2 };
-
-/// The version before headers.
-pub const LEGACY: Version = Version { major: 0, minor: 0 };
 
 /// One archive taken: its day and SHA-256.
 pub type Taken = (String, String);
@@ -54,24 +51,17 @@ pub fn encode(taken: &[Taken]) -> String {
   text
 }
 
-/// Parses the file's contents: their version, and what was taken. `None`
-/// if they aren't readable.
-pub fn decode(text: &str) -> Option<(Version, Vec<Taken>)> {
+/// Parses the file's contents: what was taken. `None` if they aren't
+/// readable.
+pub fn decode(text: &str) -> Option<Vec<Taken>> {
   let entry = |entry: &str| {
     let (day, sha256) = entry.split_once(' ')?;
     (valid_day(day) && valid_sha256(sha256))
       .then(|| (day.into(), sha256.into()))
   };
-  if !text.starts_with(&format!("{} ", FORMAT.magic)) {
-    // Before headers: a line each.
-    return Some((LEGACY, text.lines().filter_map(entry).collect()));
-  }
   let (first, body) = text.split_once('\n')?;
   let header = Header::parse_as(FORMAT, first.as_bytes())?;
-  let earlier = Version { major: 0, minor: 1 };
-  if header.variant != Variant::Dgg
-    || (header.version != VERSION && header.version != earlier)
-  {
+  if header.variant != Variant::Dgg || header.version != VERSION {
     return None;
   }
   let (entries, tail) = Framing::RsLf.split(body.as_bytes());
@@ -83,7 +73,7 @@ pub fn decode(text: &str) -> Option<(Version, Vec<Taken>)> {
     .filter_map(|entry| ::std::str::from_utf8(entry).ok())
     .filter_map(entry)
     .collect();
-  Some((header.version, taken))
+  Some(taken)
 }
 
 /// What journal `root`'s file lists; nothing if there's none.
@@ -92,11 +82,10 @@ pub fn read(root: &Path) -> io::Result<Vec<Taken>> {
   let Some(text) = fs::read_to_string(&path).missing_ok()? else {
     return Ok(Vec::new());
   };
-  let (_, taken) = decode(&text).ok_or_else(|| {
+  decode(&text).ok_or_else(|| {
     let why = format!("{}: not a readable synced-archives", path.display());
     io::Error::new(io::ErrorKind::InvalidData, why)
-  })?;
-  Ok(taken)
+  })
 }
 
 /// Adds the archive of `day` with `sha256` to journal `root`'s file,
