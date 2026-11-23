@@ -1,8 +1,8 @@
 //! `status --watch`: the report redrawn every few seconds, with a log
 //! filling the rest of the screen.
 //!
-//! Keys: `1`-`5` show the capture, index, compact, supervisor or sync
-//! log, `f` the newest frames a capture wrote (again for the next
+//! Keys: `1`-`6` show the capture, index, compact, supervisor, sync or
+//! migrate log, `f` the newest frames a capture wrote (again for the next
 //! capture), `g` the gaps in capture (again to look again), `r` redraws
 //! now, `e` opens the data folder, `q` (or Esc, or Ctrl-C) quits.
 
@@ -30,7 +30,7 @@ use {
   },
 };
 
-const KEYS: &str = " 1 capture  2 index  3 compact  4 supervisor  5 sync  f frames  g gaps   r redraw  e open data  q quit";
+const KEYS: &str = " 1 capture  2 index  3 compact  4 supervisor  5 sync  6 migrate  f frames  g gaps   r redraw  e open data  q quit";
 
 /// What fills the bottom of the screen.
 enum View {
@@ -155,7 +155,7 @@ fn event_loop(
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
           return Ok(());
         }
-        KeyCode::Char(digit @ '1'..='5') => {
+        KeyCode::Char(digit @ '1'..='6') => {
           view = View::Log(digit as usize - '1' as usize);
           break;
         }
