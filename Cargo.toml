@@ -30,6 +30,7 @@ clap = { version = "4.6.7", features = ["derive", "env"] }
 ctrlc = "3.5.2"
 embed-resource = "3.0.12"
 dotenvy = "0.15.7"
+fastrand = "2.5.0"
 futures-util = "0.3.34"
 gethostname = "1.1.0"
 getrandom = "0.4.3"
