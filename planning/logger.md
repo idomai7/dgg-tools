@@ -54,8 +54,33 @@ the [overall rules](README.md), and [deploy](deploy.md) for the mesh it runs on.
   - **Versions:** dgg's logger isn't changed for now and keeps writing
     `journal 0.1`. `logger-journal` reads that alongside `kick.0.0`.
   - **dgg moves to RS LF (planned):** dgg's journals move to Kick's framing,
-    with records ending at RS LF, as a new version of dgg's variant
-    (`dgg.0.<minor>`).
+    with records ending at RS LF, as `journal dgg.0.2`: dgg's variant named,
+    its minor going on from 0.1.
+    - A header without a variant stays dgg's LF-framed format. `journal 0.1`
+      stays readable for good.
+    - **Writers:** a day's file is appended to only if its header is the one
+      the writer would write: the same version, and for Kick the same
+      endpoint. Otherwise the day's next numbered file is started, so new
+      records never land in an old file. (Capture's instances are new each
+      run, but backfill's keep their names.)
+    - **Compaction:** follows each input's framing; inputs may mix 0.1 and
+      0.2, on the upgrade day or when a 0.1 archive is merged again.
+      Archives are always written in the new version. A 0.1 record is copied
+      byte for byte unless it holds an RS; then it's decoded and encoded
+      again, as `frame64` and the like. A line that doesn't decode is kept
+      byte for byte, as now; one that also holds an RS can't be, so the day
+      is refused and reported.
+    - **Archive manifests:** the monthly manifest is versioned like the
+      journals, with a variant and informational fields:
+      `journal-archive dgg.0.1`, and `journal-archive kick.0.0`. Its `lines`
+      becomes `records`: what an archive holds, after its header, counted by
+      its framing. `journal-archive 0.0` stays readable, and the migration
+      rewrites it.
+    - **Sync** counts an archive's records by its framing, to check them
+      against its manifest.
+    - **Rollout:** a logger without this can't read `dgg.0.2` journals or the
+      new manifests, so sync between it and upgraded ones fails until every
+      host is upgraded.
     - **Migration:** existing `journal 0.1` journals are rewritten in the new
       format by a migration.
       1. It writes each file's new version alongside the old.
@@ -64,13 +89,18 @@ the [overall rules](README.md), and [deploy](deploy.md) for the mesh it runs on.
          byte-for-byte identical: same records, same order, same fields and
          data. A file that fails is reported, and nothing of it is removed.
       3. Only once the validation has passed are the old files removed.
-    - Still to decide:
-      - Which journals it covers: live, archived (`.zst`, with their
-        manifests' digests) and backfill.
-      - What changes with it: index offsets point into the old files, so the
-        index is rebuilt, and sync's peers must agree on the new archives.
-      - What has to follow the framing rather than split on LF: compaction,
-        sync's checks, the index, and deploy's status page.
+      - It covers live, archived and backfill journals, and the archive
+        manifests, whose digests change with the archives.
+      - The index's offsets point into the old files, so it's rebuilt after.
+    - **Steps,** each its own commit and review. A and B ship together:
+      without B, compaction splits the new files on LF.
+      1. **A, logger-journal:** RS LF framing by header, `dgg.0.2`, the
+         reader, the writers' crash repair and next-file rule, Kick's variant
+         on the same framing.
+      2. **B, logger:** compaction and sync following the framing, and the new
+         archive manifests.
+      3. **C, the migration:** `dgg-logger migrate`, planned in detail first.
+      4. **D:** rollout notes.
 
 ## Design
 - **Journal layout:**
