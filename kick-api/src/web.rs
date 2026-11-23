@@ -54,6 +54,16 @@ impl Web {
     channel_id: u64,
     cursor: Option<&str>,
   ) -> Result<Page, Error> {
+    parse(&self.history_text(channel_id, cursor).await?)
+  }
+
+  /// [`Web::history`]'s page as served, to keep it raw: [`parse`] decodes
+  /// it.
+  pub async fn history_text(
+    &self,
+    channel_id: u64,
+    cursor: Option<&str>,
+  ) -> Result<String, Error> {
     let url = format!("{}/chat/{channel_id}/history", self.base);
     let mut request = self
       .http
@@ -66,19 +76,25 @@ impl Web {
     let response = request.send().await.map_err(Error::Http)?;
     let status = response.status();
     let body = response.text().await.map_err(Error::Http)?;
-    if !status.is_success() {
-      return Err(Error::Status {
+    if status.is_success() {
+      Ok(body)
+    } else {
+      Err(Error::Status {
         status: status.as_u16(),
         body,
-      });
+      })
     }
-    match ::serde_json::from_str::<Envelope>(&body) {
-      Ok(envelope) => Ok(envelope.data),
-      Err(e) => Err(Error::Decode {
-        raw: body,
-        error: e.to_string(),
-      }),
-    }
+  }
+}
+
+/// Decodes a history page as served (see [`Web::history_text`]).
+pub fn parse(text: &str) -> Result<Page, Error> {
+  match ::serde_json::from_str::<Envelope>(text) {
+    Ok(envelope) => Ok(envelope.data),
+    Err(e) => Err(Error::Decode {
+      raw: text.into(),
+      error: e.to_string(),
+    }),
   }
 }
 
