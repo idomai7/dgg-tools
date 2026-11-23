@@ -20,10 +20,7 @@ failures, and runs compact (and sync, given a peer); it's `dgg-logger
 supervise` without a window, for the logon task and the service. It runs
 `kick-capture` too once `kick-channels` has channels (it looks every
 minute until then). A change to the list takes effect when the supervisor
-next starts. On an upgrade, Kick's capture stops a few seconds after the
-new install starts, leaving a short gap in Kick that nothing fills yet. In
-Task
-Manager, both show as "dgg-tools: ..."; the Details tab's Command line
+next starts. In Task Manager, both show as "dgg-tools: ..."; the Details tab's Command line
 column tells the commands apart.
 
 The commands that work on the data (`capture` to `serve`) take `--data`,
@@ -99,6 +96,11 @@ from the new build starts first (the "bridge", its lines in `capture.log`
 marked `(bridge)`),
 the old install hands over to it and stops, and then the new install starts
 and takes over from the bridge. Old builds are pruned, keeping three.
+
+With Kick channels, Kick's capture is bridged the same way, its bridge's
+lines in `kick-capture.log`. If that bridge isn't healthy in time,
+`install` warns that Kick may miss a few seconds, and carries on: dgg's
+capture comes first. `kick-channels` moves with the install's folder.
 
 Running `install` with the other kind (with or without `--machine`)
 switches to it the same way, moving the data and logs to the new folder.
