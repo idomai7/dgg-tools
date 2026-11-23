@@ -303,13 +303,17 @@ fn checkpoint(
   Ok(found.unwrap_or((0, None)))
 }
 
-/// Drops checkpoints of live and backfill files that no longer exist
-/// (compacted away).
+/// Drops what the index holds of live and backfill files that no longer
+/// exist (compacted away): their checkpoints and their unparsed rows.
 fn forget_gone(db: &mut Connection, live: &[String]) -> Result<(), Error> {
   let transaction = db.transaction()?;
+  // Unparsed rows too, even ones a build from before this left behind.
   let stale: Vec<String> = transaction
     .prepare(
       "SELECT path FROM files
+       WHERE path LIKE 'live/%' OR path LIKE 'backfill/live/%'
+       UNION
+       SELECT path FROM unparsed
        WHERE path LIKE 'live/%' OR path LIKE 'backfill/live/%'",
     )?
     .query_map([], |row| row.get(0))?
@@ -318,7 +322,8 @@ fn forget_gone(db: &mut Connection, live: &[String]) -> Result<(), Error> {
     .filter(|path| !live.contains(path))
     .collect();
   for path in stale {
-    transaction.execute("DELETE FROM files WHERE path = ?1", [path])?;
+    transaction.execute("DELETE FROM files WHERE path = ?1", [&path])?;
+    transaction.execute("DELETE FROM unparsed WHERE path = ?1", [&path])?;
   }
   transaction.commit()?;
   Ok(())

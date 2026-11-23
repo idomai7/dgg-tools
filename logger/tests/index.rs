@@ -469,3 +469,37 @@ fn follows_files_into_archives() {
   assert_eq!(messages(&db), incremental);
   assert_eq!(incremental.len(), 3);
 }
+
+#[test]
+fn forgets_compacted_files_unparsed_rows() {
+  use ::logger::compact::compact_day;
+  let root = TempDir::new("logger-index");
+  let mut a = Writer::new(journal(&root), "a");
+  a.write(100, 1, Body::Open("wss://x".into())).unwrap();
+  a.write(101, 1, frame("MSG not json".into())).unwrap();
+  drop(a);
+  let mut db = open(&database(&root)).unwrap();
+  index(&mut db, &journal(&root)).unwrap();
+  let rows = |db: &Connection| -> Vec<String> {
+    db.prepare("SELECT path FROM unparsed ORDER BY path")
+      .unwrap()
+      .query_map([], |row| row.get(0))
+      .unwrap()
+      .map(Result::unwrap)
+      .collect()
+  };
+  assert_eq!(rows(&db), ["live/1970-01-01/a.journal"]);
+  // One a build from before this left behind, its file long gone.
+  db.execute(
+    "INSERT INTO unparsed (path, offset, item, reason)
+     VALUES ('live/1970-01-02/old.journal', 20, 0, 'MSG not JSON')",
+    [],
+  )
+  .unwrap();
+
+  compact_day(&journal(&root), "1970-01-01", 3)
+    .unwrap()
+    .unwrap();
+  index(&mut db, &journal(&root)).unwrap();
+  assert_eq!(rows(&db), ["archive/1970/01/1970-01-01.journal.zst"]);
+}
