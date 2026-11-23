@@ -151,18 +151,33 @@ the [overall rules](README.md), and [deploy](deploy.md) for the mesh it runs on.
           0.5: the same tables, its archive offsets into `dgg.0.2` files. An
           index at 0.4 is refused, as now, so nothing indexes old offsets
           into new archives. `index --rebuild` still works at any time.
-      - **The supervisor runs it:** there's one host, and no peers sync now.
-        On starting, before anything else, it runs `migrate`, which does
-        nothing once every manifest is `dgg.0.1` and the index is at 0.5.
-        - `capture` starts at once regardless: it only writes live files,
-          already `dgg.0.2`.
-        - `index`, `compact` and `sync` start once the migration has
+      - **In place, with nothing missed:** it runs during an ordinary
+        upgrade, a new supervisor started alongside the old one, so capture
+        never stops. There's one host, and no peers sync now.
+        - The new supervisor starts its `capture` at once, as always: it
+          only writes live files, already `dgg.0.2`. The old capture keeps
+          going until the handoff, its last live files `journal 0.1`, which
+          compaction converts later.
+        - `migrate` holds `index.lock`, `compact.lock` and `sync.lock` while
+          it runs, waiting for them like a supervisor does. So it starts
+          only once the old supervisor has exited, and nothing else indexes,
+          compacts or syncs meanwhile. Run by hand, it waits the same way.
+        - The new supervisor runs `migrate` before taking those locks
+          itself, and starts `index`, `compact` and `sync` once it has
           succeeded. If it fails, they don't, and the failure is in the
           supervisor's log and the status page; the next start tries again.
+          Once every manifest is `dgg.0.1` and the index is at 0.5, `migrate`
+          does nothing.
+        - During the overlap, the old supervisor's programs meet the new
+          capture's `dgg.0.2` live files: its index skips them as
+          unreadable (the new index reads them from the start), and its
+          compaction only touches closed days, which the new capture hasn't
+          written.
         - Converting at level 19 is slow, so a large journal can take a
-          while; capture runs meanwhile.
-      - **Rollout:** install the new build and restart the supervisor.
-        `migrate --dry-run` can be run by hand first.
+          while; capture runs meanwhile, and indexing catches up after.
+      - **Rollout:** install the new build and start its supervisor, as for
+        any upgrade. `migrate --dry-run` can be run by hand first; it only
+        reads, so it takes no locks.
     - **Steps,** each its own commit and review. A and B ship together:
       without B, compaction splits the new files on LF.
       1. **A, logger-journal:** RS LF framing by header, `dgg.0.2`, the
