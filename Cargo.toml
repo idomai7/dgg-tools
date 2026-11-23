@@ -8,6 +8,7 @@ members = [
   "kick-mod",
   "logger",
   "logger-journal",
+  "rustlesearch-api",
   "version-info",
   "viewer",
 ]
@@ -21,6 +22,7 @@ dgg-api = { path = "dgg-api" }
 kick-api = { path = "kick-api" }
 logger = { path = "logger" }
 logger-journal = { path = "logger-journal" }
+rustlesearch-api = { path = "rustlesearch-api" }
 version-info = { path = "version-info" }
 
 axum = "0.8.9"
