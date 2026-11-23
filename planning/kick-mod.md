@@ -88,6 +88,11 @@ Each is a pause for review.
 3. **Live chat:** a realtime connection per channel, and a column per channel on
    the page, fed over SSE: messages, with deletions, bans and timeouts shown as
    they happen.
+   - The channels are read when kick-mod starts: one added later is listened
+     to after a restart, until channels can be added from the page.
+   - A page that connects gets each channel's status, then what happens
+     after. Nothing is replayed, to a page that reconnects or after Kick's
+     connection drops: the page says so, and that chat is missing.
 4. **Manual actions:** delete, timeout (preset durations), ban and unban on each
    message, with an optional reason. Each is appended to the mod log: when, by
    whom, what, on whom, why, and Kick's answer. A failure shows Kick's error.
