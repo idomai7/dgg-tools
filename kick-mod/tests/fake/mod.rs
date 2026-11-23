@@ -1,5 +1,6 @@
-//! A local server standing in for Kick's sign-in and API: it answers each
-//! path as the test says, and keeps what it was sent.
+//! Local servers standing in for Kick's: its sign-in and API, answering
+//! each path as the test says and keeping what it was sent, and its
+//! Centrifugo.
 
 // Each test file uses its own part of it.
 #![allow(dead_code)]
@@ -10,11 +11,16 @@ use {
     extract::State,
     http::{HeaderMap, Method, StatusCode, Uri, header::AUTHORIZATION},
   },
+  ::futures_util::{SinkExt, StreamExt},
+  ::kick_api::realtime::{Options, Setup},
+  ::serde_json::{Value, json},
   ::std::{
     collections::HashMap,
     sync::{Arc, Mutex},
+    time::Duration,
   },
-  ::tokio::net::TcpListener,
+  ::tokio::net::{TcpListener, TcpStream},
+  ::tokio_tungstenite::{WebSocketStream, tungstenite::Message},
 };
 
 #[derive(Clone, Debug)]
@@ -95,4 +101,75 @@ async fn answer(
     .cloned()
     .unwrap_or((404, r#"{"message":"Not found"}"#.into()));
   (StatusCode::from_u16(status).unwrap(), body)
+}
+
+pub type Ws = WebSocketStream<TcpStream>;
+
+/// A local server standing in for Kick's Centrifugo, for one connection
+/// at a time.
+pub struct Centrifugo {
+  /// `ws://127.0.0.1:<port>`.
+  pub url: String,
+  listener: TcpListener,
+}
+
+impl Centrifugo {
+  pub async fn start() -> Self {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("ws://{}", listener.local_addr().unwrap());
+    Self { url, listener }
+  }
+
+  /// The client's options, to connect here.
+  pub fn options(&self) -> Options {
+    Options {
+      setup: Setup::Fixed {
+        endpoint: self.url.clone(),
+        token: "t0k3n".into(),
+      },
+      min_backoff: Duration::from_millis(10),
+      ..Default::default()
+    }
+  }
+
+  /// Accepts a connection, answers its connect, and its subscribe to
+  /// `channel`.
+  pub async fn accept(&self, channel: &str) -> Ws {
+    let (tcp, _) = self.listener.accept().await.unwrap();
+    let mut ws = ::tokio_tungstenite::accept_async(tcp).await.unwrap();
+    assert!(receive(&mut ws).await.contains(r#""connect""#));
+    send(&mut ws, r#"{"id":1,"connect":{"client":"c1","ping":25}}"#).await;
+    let subscribe =
+      format!(r#"{{"id":2,"subscribe":{{"channel":"{channel}"}}}}"#);
+    assert_eq!(receive(&mut ws).await, subscribe);
+    send(&mut ws, r#"{"id":2,"subscribe":{}}"#).await;
+    ws
+  }
+}
+
+/// Publishes Kick's event `event` (without `App\Events\`), with `data`.
+pub async fn publish(ws: &mut Ws, channel: &str, event: &str, data: Value) {
+  let push = json!({
+    "push": {
+      "channel": channel,
+      "pub": {
+        "data": {
+          "event": format!(r"App\Events\{event}"),
+          "data": data.to_string(),
+        },
+      },
+    },
+  });
+  send(ws, &push.to_string()).await;
+}
+
+async fn send(ws: &mut Ws, text: &str) {
+  ws.send(Message::text(text)).await.unwrap();
+}
+
+async fn receive(ws: &mut Ws) -> String {
+  match ws.next().await {
+    Some(Ok(Message::Text(text))) => text.as_str().to_owned(),
+    other => panic!("expected text, got {other:?}"),
+  }
 }

@@ -8,21 +8,33 @@
   :root {
     color-scheme: light dark;
     --ground: #fafafa;
+    --panel: #ffffff;
     --ink: #1a1a1a;
     --faint: #6b6b6b;
     --line: #dddddd;
+    --live: #1f9d55;
+    --waiting: #c98a00;
+    --down: #c0392b;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --ground: #161616;
+      --panel: #1e1e1e;
       --ink: #e8e8e8;
       --faint: #9a9a9a;
       --line: #333333;
+      --live: #3ccf7a;
+      --waiting: #e0a920;
+      --down: #e5604f;
     }
   }
+  html, body { height: 100%; }
   body {
     margin: 0;
     padding: 1rem;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
     background: var(--ground);
     color: var(--ink);
     font: 14px/1.4 system-ui, sans-serif;
@@ -45,14 +57,68 @@
     padding: 0.1rem 0.5rem;
     cursor: pointer;
   }
-  table { border-collapse: collapse; }
-  th, td {
-    padding: 0.3rem 0.8rem 0.3rem 0;
-    border-bottom: 1px solid var(--line);
-    text-align: left;
-  }
-  th { color: var(--faint); font-weight: normal; }
   .faint { color: var(--faint); }
+  #channels {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    gap: 0.75rem;
+    overflow-x: auto;
+  }
+  .column {
+    flex: 1 0 18rem;
+    max-width: 40rem;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+  }
+  .column > h2 {
+    display: flex;
+    gap: 0.5rem;
+    align-items: baseline;
+    margin: 0;
+    padding: 0.4rem 0.6rem;
+    border-bottom: 1px solid var(--line);
+    font-size: 1rem;
+  }
+  .state { font-size: 0.8rem; font-weight: normal; color: var(--faint); }
+  .dot {
+    align-self: center;
+    flex: none;
+    width: 0.6rem;
+    height: 0.6rem;
+    border-radius: 50%;
+    background: var(--faint);
+  }
+  .dot.live { background: var(--live); }
+  .dot.connecting, .dot.reconnecting { background: var(--waiting); }
+  .dot.stopped { background: var(--down); }
+  .lines {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 0.3rem 0.6rem;
+    overflow-wrap: anywhere;
+  }
+  .line { padding: 0.1rem 0; }
+  .time { color: var(--faint); font-size: 0.8rem; margin-right: 0.3rem; }
+  .badge {
+    font-size: 0.7rem;
+    padding: 0 0.25rem;
+    margin-right: 0.2rem;
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    color: var(--faint);
+  }
+  .name { font-weight: 600; }
+  .emote { height: 1.6em; vertical-align: middle; }
+  .notice { color: var(--faint); font-style: italic; }
+  .deleted .text { text-decoration: line-through; }
+  .deleted, .gone { opacity: 0.45; }
+  .tag { color: var(--down); font-size: 0.8rem; margin-left: 0.3rem; }
 </style>
 </head>
 <body>
@@ -64,6 +130,8 @@
 <script>
   const shown = document.getElementById("channels");
   const account = document.getElementById("account");
+  // How many lines a column keeps.
+  const KEPT = 500;
 
   async function showAccount() {
     const answer = await fetch("/api/me");
@@ -90,6 +158,157 @@
     account.replaceChildren(`Signed in as ${user.name ?? user.user_id} `, out);
   }
 
+  /** Each channel's column, by slug. */
+  const columns = new Map();
+
+  function element(tag, className, text) {
+    const made = document.createElement(tag);
+    if (className) made.className = className;
+    if (text !== undefined) made.textContent = text;
+    return made;
+  }
+
+  function column(slug, channel) {
+    const dot = element("span", "dot");
+    const state = element("span", "state", "not listening: restart kick-mod");
+    const title = element("h2");
+    title.title =
+      `broadcaster ${channel.broadcaster_user_id}, ` +
+      `chatroom ${channel.chatroom_id ?? "unknown"}`;
+    title.append(dot, element("span", "", slug), state);
+    const lines = element("div", "lines");
+    const box = element("section", "column");
+    box.append(title, lines);
+    return { box, dot, state, lines };
+  }
+
+  /** Adds `line` to the column, scrolled along if it was at the bottom. */
+  function append(col, line) {
+    const { lines } = col;
+    const following =
+      lines.scrollHeight - lines.scrollTop - lines.clientHeight < 40;
+    line.classList.add("line");
+    lines.append(line);
+    while (lines.childElementCount > KEPT) lines.firstElementChild.remove();
+    if (following) lines.scrollTop = lines.scrollHeight;
+  }
+
+  function notice(col, text) {
+    append(col, element("div", "notice", text));
+  }
+
+  function clock(ms) {
+    const at = ms == null ? new Date() : new Date(ms);
+    return at.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  }
+
+  /** `content`, with `[emote:<id>:<name>]` as images and the rest as text. */
+  function content(text) {
+    const out = element("span", "text");
+    const emote = /\[emote:(\d+):([^\]]*)\]/g;
+    let from = 0;
+    for (const match of text.matchAll(emote)) {
+      out.append(text.slice(from, match.index));
+      const image = element("img", "emote");
+      image.src = `https://files.kick.com/emotes/${match[1]}/fullsize`;
+      image.alt = image.title = match[2];
+      out.append(image);
+      from = match.index + match[0].length;
+    }
+    out.append(text.slice(from));
+    return out;
+  }
+
+  function message(update) {
+    const line = element("div");
+    line.dataset.id = update.id;
+    line.dataset.user = update.sender.id;
+    line.append(element("span", "time", clock(update.at)));
+    for (const badge of update.sender.badges) {
+      line.append(element("span", "badge", badge));
+    }
+    const name = element("span", "name", update.sender.username);
+    if (update.sender.color) name.style.color = update.sender.color;
+    line.append(name, ": ", content(update.content));
+    return line;
+  }
+
+  function lines(col, selector) {
+    return col.lines.querySelectorAll(selector);
+  }
+
+  function by(who) {
+    return who ? ` by ${who}` : "";
+  }
+
+  function apply(update) {
+    const col = columns.get(update.slug);
+    if (!col) return;
+    switch (update.kind) {
+      case "status":
+        col.dot.className = `dot ${update.state}`;
+        col.state.textContent = update.detail
+          ? `${update.state}: ${update.detail}`
+          : update.state;
+        break;
+      case "message":
+        append(col, message(update));
+        break;
+      case "deleted":
+        for (const line of lines(col, `[data-id="${CSS.escape(update.id)}"]`)) {
+          if (line.classList.contains("deleted")) continue;
+          line.classList.add("deleted");
+          const tag = update.ai ? "deleted by Kick's AI" : "deleted";
+          line.append(element("span", "tag", tag));
+        }
+        break;
+      case "banned": {
+        for (const line of lines(col, `[data-user="${update.user.id}"]`)) {
+          line.classList.add("gone");
+        }
+        const what = update.permanent
+          ? "banned"
+          : `timed out for ${update.minutes ?? "?"} min`;
+        const until = update.until ? ` (until ${clock(update.until)})` : "";
+        notice(col, `${update.user.username} ${what}${by(update.by)}${until}`);
+        break;
+      }
+      case "unbanned":
+        notice(col, `${update.user.username} unbanned${by(update.by)}`);
+        break;
+      case "cleared":
+        for (const line of lines(col, "[data-id]")) line.classList.add("gone");
+        notice(col, "chat cleared");
+        break;
+    }
+  }
+
+  function listen() {
+    const events = new EventSource("/api/events");
+    let dropped = false;
+    events.onmessage = (event) => apply(JSON.parse(event.data));
+    events.addEventListener("missed", (event) => {
+      for (const col of columns.values()) {
+        notice(col, `this page fell behind: ${event.data} updates missed`);
+      }
+    });
+    events.onerror = () => {
+      if (dropped) return;
+      dropped = true;
+      for (const col of columns.values()) {
+        col.dot.className = "dot reconnecting";
+        col.state.textContent = "kick-mod unreachable";
+      }
+    };
+    events.onopen = () => {
+      if (!dropped) return;
+      dropped = false;
+      for (const col of columns.values()) {
+        notice(col, "reconnected to kick-mod: chat meanwhile is missing");
+      }
+    };
+  }
+
   async function show() {
     const answer = await fetch("/api/channels");
     if (!answer.ok) {
@@ -101,22 +320,14 @@
       shown.textContent = "No channels yet: add one with kick-mod ids <slug>.";
       return;
     }
-    const table = document.createElement("table");
-    const head = table.insertRow();
-    for (const name of ["Channel", "Broadcaster", "Chatroom"]) {
-      const cell = document.createElement("th");
-      cell.textContent = name;
-      head.append(cell);
-    }
-    for (const [slug, channel] of channels) {
-      const row = table.insertRow();
-      row.insertCell().textContent = slug;
-      row.insertCell().textContent = channel.broadcaster_user_id;
-      row.insertCell().textContent =
-        channel.chatroom_id ?? "unknown: enter it in channels.json";
-    }
     shown.className = "";
-    shown.replaceChildren(table);
+    shown.replaceChildren();
+    for (const [slug, channel] of channels) {
+      const col = column(slug, channel);
+      columns.set(slug, col);
+      shown.append(col.box);
+    }
+    listen();
   }
 
   showAccount().catch((error) => {

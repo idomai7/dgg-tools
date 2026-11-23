@@ -1,20 +1,21 @@
-//! The page's server, on a port of its own, with a local server standing
-//! in for Kick's. Slugs, ids and tokens are made up.
+//! The page's server, on a port of its own, with local servers standing
+//! in for Kick's. Slugs, ids, names and tokens are made up.
 
 mod fake;
 
 use {
   ::common::temp_dir::TempDir,
-  ::kick_api::official::oauth::App,
-  ::kick_mod::{account::Account, serve},
+  ::kick_api::{official::oauth::App, realtime::Options},
+  ::kick_mod::{account::Account, channels, chat::Chat, serve},
   ::reqwest::{
     Url,
     header::{HOST, LOCATION, ORIGIN},
     redirect::Policy,
   },
-  ::std::fs,
-  ::tokio::net::TcpListener,
-  fake::Kick,
+  ::serde_json::{Value, json},
+  ::std::{fs, time::Duration},
+  ::tokio::{net::TcpListener, time::timeout},
+  fake::{Centrifugo, Kick},
 };
 
 /// The server, with its files in a directory removed when the test ends.
@@ -28,7 +29,14 @@ struct Server {
 
 impl Server {
   async fn start() -> Self {
+    Self::start_with("{}", Options::default()).await
+  }
+
+  /// With `channels` as `channels.json`, their chat connecting with
+  /// `options`.
+  async fn start_with(channels: &str, options: Options) -> Self {
     let dir = TempDir::new("kick-mod-serve");
+    dir.write("channels.json", channels);
     let kick = Kick::start().await;
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
@@ -39,7 +47,8 @@ impl Server {
     let http = ::reqwest::Client::new();
     let account = Account::new(http, app, &kick.base, redirect, token);
     let channels = dir.path().join("channels.json");
-    ::tokio::spawn(serve::run(listener, channels, account.unwrap()));
+    let chat = Chat::start(&channels::load(&channels).unwrap(), &options);
+    ::tokio::spawn(serve::run(listener, channels, account.unwrap(), chat));
     Self {
       base: format!("http://127.0.0.1:{port}"),
       port,
@@ -75,6 +84,55 @@ impl Server {
 
   fn channels(&self) -> ::std::path::PathBuf {
     self.dir.path().join("channels.json")
+  }
+
+  async fn events(&self) -> Events {
+    let url = format!("{}/api/events", self.base);
+    let response = self.http.get(url).send().await.unwrap();
+    assert_eq!(response.status().as_u16(), 200);
+    Events {
+      response,
+      buffer: String::new(),
+    }
+  }
+}
+
+/// Server-sent events, read as they come.
+struct Events {
+  response: ::reqwest::Response,
+  buffer: String,
+}
+
+impl Events {
+  /// The next event's data, as JSON.
+  async fn next(&mut self) -> Value {
+    loop {
+      if let Some(end) = self.buffer.find("\n\n") {
+        let event: String = self.buffer.drain(..end + 2).collect();
+        let data: Vec<_> = event
+          .lines()
+          .filter_map(|line| line.strip_prefix("data: "))
+          .collect();
+        // A keep-alive has none.
+        if !data.is_empty() {
+          return ::serde_json::from_str(&data.join("\n")).unwrap();
+        }
+        continue;
+      }
+      let chunk = timeout(Duration::from_secs(5), self.response.chunk());
+      let chunk = chunk.await.expect("an event in time").unwrap().unwrap();
+      self.buffer.push_str(&String::from_utf8_lossy(&chunk));
+    }
+  }
+
+  /// The state of `slug`'s connection next shown.
+  async fn status(&mut self, slug: &str) -> Value {
+    loop {
+      let event = self.next().await;
+      if event["slug"] == slug && event["kind"] == "status" {
+        return event["state"].clone();
+      }
+    }
   }
 }
 
@@ -211,4 +269,141 @@ async fn signing_out_needs_its_own_origin() {
     .post(format!("{}/api/sign-out", server.base))
     .header(ORIGIN, "https://example.com");
   assert_eq!(out.send().await.unwrap().status().as_u16(), 403);
+}
+
+const ROOM: &str = "chatrooms.1000.v2";
+
+#[tokio::test]
+async fn streams_chat() {
+  let centrifugo = Centrifugo::start().await;
+  let channels = r#"{
+    "one": {"broadcaster_user_id": 1, "chatroom_id": 1000},
+    "two": {"broadcaster_user_id": 2, "chatroom_id": null}
+  }"#;
+  let server = Server::start_with(channels, centrifugo.options()).await;
+  let mut events = server.events().await;
+  // Each channel's status first.
+  assert_eq!(
+    events.next().await,
+    json!({"slug": "one", "kind": "status", "state": "connecting", "detail": null})
+  );
+  assert_eq!(
+    events.next().await,
+    json!({
+      "slug": "two",
+      "kind": "status",
+      "state": "off",
+      "detail": "no chatroom id: enter it in channels.json",
+    })
+  );
+  let mut ws = centrifugo.accept(ROOM).await;
+  assert_eq!(events.status("one").await, "live");
+
+  let sender = json!({
+    "id": 7,
+    "username": "someone",
+    "slug": "someone",
+    "identity": {
+      "color": "#00FF00",
+      "badges": [{"type": "moderator", "text": "Moderator"}],
+    },
+  });
+  let message = json!({
+    "id": "m1",
+    "chatroom_id": 1000,
+    "content": "hi [emote:1:wave]",
+    "type": "message",
+    "created_at": "2026-11-23T10:00:00+00:00",
+    "sender": sender,
+    "metadata": null,
+  });
+  fake::publish(&mut ws, ROOM, "ChatMessageEvent", message).await;
+  assert_eq!(
+    events.next().await,
+    json!({
+      "slug": "one",
+      "kind": "message",
+      "id": "m1",
+      "at": ::common::time::unix_ms("2026-11-23T10:00:00Z"),
+      "sender": {
+        "id": 7,
+        "username": "someone",
+        "color": "#00FF00",
+        "badges": ["moderator"],
+      },
+      "content": "hi [emote:1:wave]",
+    })
+  );
+
+  let deleted =
+    json!({"id": "d1", "message": {"id": "m1"}, "aiModerated": true});
+  fake::publish(&mut ws, ROOM, "MessageDeletedEvent", deleted).await;
+  assert_eq!(
+    events.next().await,
+    json!({"slug": "one", "kind": "deleted", "id": "m1", "ai": true})
+  );
+
+  let user = json!({"id": 7, "username": "someone", "slug": "someone"});
+  let moderator =
+    json!({"id": 0, "username": "moderator", "slug": "moderator"});
+  let banned = json!({
+    "id": "b1",
+    "user": user,
+    "banned_by": moderator,
+    "permanent": false,
+    "duration": 5,
+    "expires_at": "2026-11-23T10:05:00+00:00",
+  });
+  fake::publish(&mut ws, ROOM, "UserBannedEvent", banned).await;
+  assert_eq!(
+    events.next().await,
+    json!({
+      "slug": "one",
+      "kind": "banned",
+      "user": {"id": 7, "username": "someone"},
+      "by": "moderator",
+      "permanent": false,
+      "minutes": 5,
+      "until": ::common::time::unix_ms("2026-11-23T10:05:00Z"),
+    })
+  );
+
+  let unbanned = json!({"id": "u1", "user": user, "unbanned_by": moderator});
+  fake::publish(&mut ws, ROOM, "UserUnbannedEvent", unbanned).await;
+  assert_eq!(
+    events.next().await,
+    json!({
+      "slug": "one",
+      "kind": "unbanned",
+      "user": {"id": 7, "username": "someone"},
+      "by": "moderator",
+    })
+  );
+
+  // What the page doesn't show is skipped.
+  fake::publish(&mut ws, ROOM, "PinnedMessageDeletedEvent", json!([])).await;
+  fake::publish(&mut ws, ROOM, "ChatroomClearEvent", json!({"id": "c1"})).await;
+  assert_eq!(
+    events.next().await,
+    json!({"slug": "one", "kind": "cleared"})
+  );
+
+  // A dropped connection is retried, and shown.
+  drop(ws);
+  assert_eq!(events.status("one").await, "reconnecting");
+  let _ws = centrifugo.accept(ROOM).await;
+  assert_eq!(events.status("one").await, "live");
+}
+
+#[tokio::test]
+async fn a_page_opened_later_sees_the_status_now() {
+  let centrifugo = Centrifugo::start().await;
+  let channels = r#"{"one": {"broadcaster_user_id": 1, "chatroom_id": 1000}}"#;
+  let server = Server::start_with(channels, centrifugo.options()).await;
+  let mut first = server.events().await;
+  assert_eq!(first.status("one").await, "connecting");
+  let _ws = centrifugo.accept(ROOM).await;
+  assert_eq!(first.status("one").await, "live");
+  let mut later = server.events().await;
+  assert_eq!(later.status("one").await, "live");
 }

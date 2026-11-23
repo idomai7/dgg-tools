@@ -6,13 +6,22 @@ description = "A chat client and moderation tools for Kick channels"
 
 [dependencies]
 common.workspace = true
-kick-api = { workspace = true, features = ["channel", "official"] }
+kick-api = { workspace = true, features = [
+  "channel",
+  "client",
+  "official",
+  "protocol",
+] }
 
 axum.workspace = true
 clap.workspace = true
+futures-util.workspace = true
 reqwest.workspace = true
 rustls.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 toml.workspace = true
+
+[dev-dependencies]
+tokio-tungstenite.workspace = true

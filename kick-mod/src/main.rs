@@ -5,10 +5,12 @@ use {
   ::kick_api::{
     channel,
     official::{Api, api},
+    realtime::Options,
   },
   ::kick_mod::{
     account::{self, Account},
     channels::{self, Channels},
+    chat::Chat,
     config::{self, Config},
     serve,
   },
@@ -91,7 +93,8 @@ async fn run(
     known.len(),
     listen.port()
   );
-  serve::run(listener, channels, account)
+  let chat = Chat::start(&known, &Options::default());
+  serve::run(listener, channels, account, chat)
     .await
     .map_err(|e| format!("serving: {e}"))
 }
