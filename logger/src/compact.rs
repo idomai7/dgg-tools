@@ -11,10 +11,12 @@
 //!
 //! Each input is split by its own framing, and the archive is written in the
 //! newest version, `journal dgg.0.2`, its records ending at RS LF. Inputs of
-//! `journal 0.1`, a record per line, are converted: each record is copied
-//! byte for byte, unless it holds an RS; that one is decoded and encoded
-//! again, its text as base64. A record that doesn't decode is kept byte for
-//! byte too, but can't be if it holds an RS: then the day is refused.
+//! `journal 0.1`, a record per line, are [converted](convert::record): each
+//! record is copied byte for byte, unless it holds an RS; that one is
+//! decoded and encoded again, its text as base64, and either way checked to
+//! read the same. A record that doesn't decode is kept byte for byte too,
+//! but can't be if it holds an RS: then the day is refused, as it is if any
+//! record would read differently.
 //!
 //! The archive is written to a temporary file, fsynced, read back and
 //! checked against what was meant to be written, and only then renamed
@@ -36,8 +38,9 @@ use {
   },
   ::logger_journal::{
     archive::{self, Archive, valid_day},
+    convert,
     layout::{EXTENSION, archive_file, live_day_dir, live_dir},
-    record::{Framing, Header, RS, Variant, v0},
+    record::{Header, Variant, v0},
     writer::writing,
   },
   ::sha2::{Digest, Sha256},
@@ -126,32 +129,17 @@ fn parse(path: &Path, bytes: &[u8]) -> io::Result<(Vec<Vec<u8>>, bool)> {
   if !header.readable() {
     return Err(invalid(path, "journal of an unreadable version"));
   }
-  let framing = header.framing();
-  let (records, tail) = framing.split(&bytes[header_end + 1..]);
+  let (records, tail) = header.framing().split(&bytes[header_end + 1..]);
   let records = records
     .into_iter()
     .filter(|record| !record.is_empty())
-    .map(|record| convert(path, framing, record))
+    .map(|record| {
+      convert::record(&header, record)
+        .map(|converted| converted.into_owned())
+        .map_err(|e| invalid(path, &e.to_string()))
+    })
     .collect::<io::Result<_>>()?;
   Ok((records, !tail.is_empty()))
-}
-
-/// `record`, from a file with `framing`, as the newest version holds it.
-fn convert(
-  path: &Path,
-  framing: Framing,
-  record: &[u8],
-) -> io::Result<Vec<u8>> {
-  if framing == Framing::RsLf || !record.contains(&RS) {
-    return Ok(record.to_vec());
-  }
-  let Ok(decoded) = v0::Record::decode_framed(framing, record) else {
-    return Err(invalid(path, "a record that doesn't decode holds an RS"));
-  };
-  let mut encoded = Vec::new();
-  decoded.encode(&mut encoded);
-  encoded.truncate(encoded.len() - Framing::RsLf.end().len());
-  Ok(encoded)
 }
 
 /// A record's receive time, the first field; unreadable ones sort last.

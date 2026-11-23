@@ -39,6 +39,7 @@
 //! readers without that major's module refuse the file.
 
 pub mod archive;
+pub mod convert;
 pub mod layout;
 pub mod reader;
 pub mod record;
