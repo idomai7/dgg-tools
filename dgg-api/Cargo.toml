@@ -8,6 +8,7 @@ description = "destiny.gg's APIs (chat, and more to come), shared by the dgg too
 [features]
 # The chat socket client, chat::Client: raw frames.
 client = [
+  "dep:common",
   "dep:futures-util",
   "dep:rustls",
   "dep:tokio",
@@ -21,6 +22,7 @@ assets = ["dep:serde", "dep:serde_json"]
 http = ["assets", "dep:reqwest"]
 
 [dependencies]
+common = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 

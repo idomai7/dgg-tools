@@ -11,6 +11,7 @@
 
 use {
   super::{DEFAULT_ORIGIN, DEFAULT_URL},
+  ::common::random::backoff,
   ::futures_util::{SinkExt, StreamExt},
   ::std::{
     error, fmt,
@@ -41,6 +42,8 @@ pub struct Options {
   pub origin: Option<String>,
   /// Raw `Cookie` header value, for authenticated connections.
   pub cookie: Option<String>,
+  /// Bounds on the wait before reconnecting, which doubles from one to the
+  /// other, with jitter.
   pub min_backoff: Duration,
   pub max_backoff: Duration,
   /// Reconnect if nothing arrives for this long. Websocket pings are sent
@@ -193,10 +196,10 @@ async fn run(
   mut outgoing: Outgoing,
   connected: Arc<AtomicU64>,
 ) {
-  let mut backoff = options.min_backoff;
+  let mut step = 0;
   let mut connection = 0;
   loop {
-    match connect(&options).await {
+    let failed = match connect(&options).await {
       Ok(ws) => {
         connection += 1;
         // Frames sent as the last connection dropped are stale now.
@@ -215,21 +218,24 @@ async fn run(
           return;
         }
         if started.elapsed() >= STABLE_AFTER {
-          backoff = options.min_backoff;
+          step = 0;
         }
+        None
       }
-      Err(error) => {
-        let item = Item::ConnectFailed {
-          error,
-          retry_in: backoff,
-        };
-        if tx.send(item).is_err() {
-          return;
-        }
+      Err(error) => Some(error),
+    };
+    let wait = backoff(step, options.min_backoff, options.max_backoff);
+    step = step.saturating_add(1);
+    if let Some(error) = failed {
+      let item = Item::ConnectFailed {
+        error,
+        retry_in: wait,
+      };
+      if tx.send(item).is_err() {
+        return;
       }
     }
-    sleep(backoff).await;
-    backoff = (backoff * 2).min(options.max_backoff);
+    sleep(wait).await;
   }
 }
 
