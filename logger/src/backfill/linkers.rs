@@ -1,14 +1,14 @@
 //! linkers.ooo, a public log of dgg chat since 2026-01-06, plus its copy of
 //! the rustle archive before that.
 //!
-//! ```text
+//! ```http
 //! GET <base>/api/messages?messageType=MSG&sources=all&endTime=<ISO 8601>
 //!   &limit=500
 //! ```
 //!
 //! returns up to `limit` messages at or before `endTime`, newest first:
 //!
-//! ```text
+//! ```js
 //! {
 //!   "messages": [
 //!     {"id", "timestamp", "user", "message", "message_type", "source", ...}

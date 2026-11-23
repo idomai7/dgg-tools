@@ -3,7 +3,7 @@
 //! `GET <base>/anon/search?channel=Destinygg&search_after=<ms>` returns up
 //! to 100 messages older than `search_after`, newest first:
 //!
-//! ```text
+//! ```js
 //! {
 //!   "data": {
 //!     "messages": [{"channel", "text", "ts", "username", "searchAfter"}]
