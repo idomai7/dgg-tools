@@ -21,7 +21,7 @@ fn header() {
   let header = Header::new(Variant::Kick, v0::VERSION)
     .with("endpoint", A)
     .with("channel", "one");
-  let line = format!("journal kick.0.0 ; endpoint={A} channel=one");
+  let line = format!("journal kick.0.1 ; endpoint={A} channel=one");
   assert_eq!(header.line(), line);
   // It ends at RS LF, as its records do.
   assert_eq!(header.text(), format!("{line}\u{1e}\n"));
@@ -41,7 +41,10 @@ fn header() {
 
   let kick =
     |major, minor| Header::new(Variant::Kick, Version { major, minor });
-  assert!(!kick(0, 1).readable());
+  // 0.0's files are read too: 0.1 only added a kind.
+  assert!(kick(0, 0).readable());
+  assert!(kick(0, 1).readable());
+  assert!(!kick(0, 2).readable());
   assert!(!kick(1, 0).readable());
   for bad in [
     "journal kick.0",
@@ -80,6 +83,27 @@ fn lines_round_trip() {
     (Body::Binary(vec![0, 1]), "5 i 2 binary AAE=\u{1e}\n".into()),
     (Body::Open(A.into()), format!("5 i 2 open {A}\u{1e}\n")),
     (Body::Close(String::new()), "5 i 2 close\u{1e}\n".into()),
+    (
+      Body::History {
+        cursor: None,
+        page: frame.into(),
+      },
+      format!("5 i 2 history - {frame}\u{1e}\n"),
+    ),
+    (
+      Body::History {
+        cursor: Some("1795462741539000".into()),
+        page: "{}".into(),
+      },
+      "5 i 2 history 1795462741539000 {}\u{1e}\n".into(),
+    ),
+    (
+      Body::History {
+        cursor: None,
+        page: rs.into(),
+      },
+      format!("5 i 2 history64 {}\u{1e}\n", base64(&format!("- {rs}"))),
+    ),
   ] {
     let record = v0::Record {
       receive_time: 5,
@@ -102,6 +126,9 @@ fn lines_round_trip() {
     v0::Record::decode(b"5 i 2 frame {}\x1e{}"),
     Err(DecodeError::Bad(_))
   ));
+  for bad in [&b"5 i 2 history -"[..], b"5 i 2 history"] {
+    assert!(matches!(v0::Record::decode(bad), Err(DecodeError::Bad(_))));
+  }
 }
 
 fn base64(text: &str) -> String {
@@ -153,7 +180,7 @@ fn a_new_endpoint_starts_the_next_file() {
   drop(writer);
 
   let header =
-    |endpoint| format!("journal kick.0.0 ; endpoint={endpoint} channel=one");
+    |endpoint| format!("journal kick.0.1 ; endpoint={endpoint} channel=one");
   assert_eq!(
     read(&root),
     [
@@ -201,7 +228,7 @@ fn rolls_over_at_midnight_and_carries_on_after_a_restart() {
     .iter()
     .map(|f| fs::read_to_string(f).unwrap())
     .collect();
-  let header = format!("journal kick.0.0 ; endpoint={A} channel=one\u{1e}\n");
+  let header = format!("journal kick.0.1 ; endpoint={A} channel=one\u{1e}\n");
   assert_eq!(texts[0], format!("{header}{DAY} i 1 open {A}\u{1e}\n"));
   let next = DAY + day;
   assert_eq!(
@@ -222,7 +249,51 @@ fn lines_before_any_open_go_in_a_file_with_no_endpoint() {
   assert_eq!(
     text,
     format!(
-      "journal kick.0.0 ; channel=one\u{1e}\n{DAY} i 1 close why\u{1e}\n"
+      "journal kick.0.1 ; channel=one\u{1e}\n{DAY} i 1 close why\u{1e}\n"
     )
+  );
+}
+
+#[test]
+fn history_cursors_must_be_tokens() {
+  let dir = TempDir::new("logger-journal-kick");
+  let mut writer = Writer::new(dir.path(), "i", "one");
+  for cursor in ["-", "a b", ""] {
+    let body = Body::History {
+      cursor: Some(cursor.into()),
+      page: "{}".into(),
+    };
+    assert!(writer.write(DAY, 1, body).is_err(), "{cursor:?}");
+  }
+}
+
+#[test]
+fn reads_0_0_and_starts_the_next_file() {
+  let dir = TempDir::new("logger-journal-kick");
+  let root = channel_root(dir.path(), "one");
+  // A file kick-mod wrote at 0.0.
+  let old = root.join("live/2023-11-14/i.journal");
+  fs::create_dir_all(old.parent().unwrap()).unwrap();
+  let header = format!("journal kick.0.0 ; endpoint={A} channel=one\u{1e}\n");
+  fs::write(&old, format!("{header}{DAY} i 1 open {A}\u{1e}\n")).unwrap();
+  assert_eq!(
+    read(&root),
+    [(
+      format!("i.journal: journal kick.0.0 ; endpoint={A} channel=one"),
+      vec![Body::Open(A.into())],
+    )]
+  );
+
+  // Written at 0.1, to the day's next file.
+  let mut writer = Writer::new(&root, "i", "one");
+  writer.write(DAY, 1, Body::Open(A.into())).unwrap();
+  drop(writer);
+  let names: Vec<_> = read(&root).into_iter().map(|(name, _)| name).collect();
+  assert_eq!(
+    names,
+    [
+      format!("i.2.journal: journal kick.0.1 ; endpoint={A} channel=one"),
+      format!("i.journal: journal kick.0.0 ; endpoint={A} channel=one"),
+    ]
   );
 }

@@ -23,7 +23,7 @@ pub struct Format {
   pub magic: &'static str,
 }
 
-/// The journal: `journal dgg.0.3` and `journal kick.0.0`.
+/// The journal: `journal dgg.0.3` and `journal kick.0.1`.
 pub const JOURNAL: Format = Format { magic: MAGIC };
 /// The versions of dgg's format this crate has a decoder for.
 pub const READABLE: &[Version] = &[v0::VERSION];
@@ -91,7 +91,7 @@ impl Version {
 /// For example:
 ///
 /// ```text
-/// journal kick.0.0 ; endpoint=wss://example.com/connection channel=destiny
+/// journal kick.0.1 ; endpoint=wss://example.com/connection channel=destiny
 /// ```
 ///
 /// Only the variant and version are required, and a new required field

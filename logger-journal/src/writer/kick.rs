@@ -85,7 +85,8 @@ impl Writer {
   /// fsynced; see [`Writer::sync`].
   ///
   /// An `open` record to an endpoint that isn't a [`valid_token`] fails, as
-  /// the header couldn't hold it.
+  /// the header couldn't hold it, as does a `history` record whose cursor
+  /// isn't [`valid_cursor`](kick::v0::valid_cursor).
   pub fn write(
     &mut self,
     receive_time: i64,
@@ -98,6 +99,15 @@ impl Writer {
         return Err(io::Error::new(io::ErrorKind::InvalidInput, error));
       }
       self.endpoint = Some(endpoint.clone());
+    }
+    if let Body::History {
+      cursor: Some(cursor),
+      ..
+    } = &body
+      && !kick::v0::valid_cursor(cursor)
+    {
+      let error = format!("not a valid cursor: {cursor:?}");
+      return Err(io::Error::new(io::ErrorKind::InvalidInput, error));
     }
     let day = utc_day(receive_time);
     if self
