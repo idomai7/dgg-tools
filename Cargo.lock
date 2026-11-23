@@ -1575,12 +1575,14 @@ dependencies = [
  "axum",
  "clap",
  "common",
+ "futures-util",
  "kick-api",
  "reqwest",
  "rustls",
  "serde",
  "serde_json",
  "tokio",
+ "tokio-tungstenite",
  "toml",
 ]
 
