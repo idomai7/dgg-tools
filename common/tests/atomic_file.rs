@@ -2,35 +2,13 @@
 
 use {
   ::common::atomic_file::{replace, replace_with, temporary},
+  ::common::temp_dir::TempDir,
   ::std::{
     fs,
     io::{self, Read, Seek, SeekFrom, Write},
-    path::{Path, PathBuf},
-    sync::atomic::{AtomicU32, Ordering},
+    path::Path,
   },
 };
-
-/// A directory of its own, removed when the test ends.
-struct TempDir(PathBuf);
-
-impl TempDir {
-  fn new() -> Self {
-    static N: AtomicU32 = AtomicU32::new(0);
-    let n = N.fetch_add(1, Ordering::Relaxed);
-    let dir = ::std::env::temp_dir().join(format!(
-      "common-atomic-file-test-{}-{n}",
-      ::std::process::id()
-    ));
-    let _ = fs::remove_dir_all(&dir);
-    Self(dir)
-  }
-}
-
-impl Drop for TempDir {
-  fn drop(&mut self) {
-    let _ = fs::remove_dir_all(&self.0);
-  }
-}
 
 /// The names in `dir`, sorted.
 fn names(dir: &Path) -> Vec<String> {
@@ -44,14 +22,14 @@ fn names(dir: &Path) -> Vec<String> {
 
 #[test]
 fn writes_and_replaces() {
-  let dir = TempDir::new();
+  let dir = TempDir::new("common-atomic-file");
   // Its directory doesn't exist yet.
-  let path = dir.0.join("a").join("b.json");
+  let path = dir.path().join("a").join("b.json");
   replace(&path, "first").unwrap();
   assert_eq!(fs::read_to_string(&path).unwrap(), "first");
   replace(&path, b"second").unwrap();
   assert_eq!(fs::read_to_string(&path).unwrap(), "second");
-  assert_eq!(names(&dir.0.join("a")), ["b.json"]);
+  assert_eq!(names(&dir.path().join("a")), ["b.json"]);
 }
 
 #[test]
@@ -65,8 +43,8 @@ fn the_temporary_file_is_beside_it() {
 
 #[test]
 fn fill_can_check_what_it_wrote() {
-  let dir = TempDir::new();
-  let path = dir.0.join("checked");
+  let dir = TempDir::new("common-atomic-file");
+  let path = dir.path().join("checked");
   replace_with(&path, |file| {
     file.write_all(b"written")?;
     file.seek(SeekFrom::Start(0))?;
@@ -81,8 +59,8 @@ fn fill_can_check_what_it_wrote() {
 
 #[test]
 fn a_failure_leaves_the_file_as_it_was() {
-  let dir = TempDir::new();
-  let path = dir.0.join("kept");
+  let dir = TempDir::new("common-atomic-file");
+  let path = dir.path().join("kept");
   replace(&path, "old").unwrap();
   let failed = replace_with(&path, |file| {
     file.write_all(b"half")?;
@@ -90,11 +68,11 @@ fn a_failure_leaves_the_file_as_it_was() {
   });
   assert_eq!(failed.unwrap_err().to_string(), "didn't check out");
   assert_eq!(fs::read_to_string(&path).unwrap(), "old");
-  assert_eq!(names(&dir.0), ["kept"]);
+  assert_eq!(names(dir.path()), ["kept"]);
 
   // Renaming over a directory fails, after its tries.
-  let blocked = dir.0.join("blocked");
+  let blocked = dir.path().join("blocked");
   fs::create_dir_all(blocked.join("inside")).unwrap();
   assert!(replace(&blocked, "new").is_err());
-  assert_eq!(names(&dir.0), ["blocked", "kept"]);
+  assert_eq!(names(dir.path()), ["blocked", "kept"]);
 }

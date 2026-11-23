@@ -1,37 +1,13 @@
 //! The status report, against a made-up data directory.
 
 use {
+  ::common::temp_dir::TempDir,
   ::common::time::{now_ms, utc_day},
   ::deploy::{
     paths::Paths,
     status::{Health, Watcher, capture_tail, gaps, journal_lines, tail, text},
   },
-  ::std::{fs, path::PathBuf},
 };
-
-struct TempDir(PathBuf);
-
-impl TempDir {
-  fn new(name: &str) -> Self {
-    let path = ::std::env::temp_dir()
-      .join(format!("deploy-status-{name}-{}", ::std::process::id()));
-    let _ = fs::remove_dir_all(&path);
-    fs::create_dir_all(&path).unwrap();
-    Self(path)
-  }
-
-  fn write(&self, path: &str, contents: &str) {
-    let path = self.0.join(path);
-    fs::create_dir_all(path.parent().unwrap()).unwrap();
-    fs::write(path, contents).unwrap();
-  }
-}
-
-impl Drop for TempDir {
-  fn drop(&mut self) {
-    let _ = fs::remove_dir_all(&self.0);
-  }
-}
 
 fn status(
   instance: &str,
@@ -50,44 +26,44 @@ fn status(
 
 #[test]
 fn reports_captures_and_the_journal() {
-  let dir = TempDir::new("report");
+  let dir = TempDir::new("deploy-status-report");
   let now = now_ms();
   let today = utc_day(now);
   let control = "data/journal/control";
   dir.write(
-    &format!("{control}/a-1.status"),
-    &status("a-1", now - 3_600_000, now - 500, Some(now - 3_500_000)),
+    format!("{control}/a-1.status"),
+    status("a-1", now - 3_600_000, now - 500, Some(now - 3_500_000)),
   );
   dir.write(
-    &format!("{control}/a-2.status"),
-    &status("a-2", now - 120_000, now - 60_000, None),
+    format!("{control}/a-2.status"),
+    status("a-2", now - 120_000, now - 60_000, None),
   );
   dir.write(
-    &format!("{control}/a-3.status"),
-    &status("a-3", now - 2000, now - 100, None),
+    format!("{control}/a-3.status"),
+    status("a-3", now - 2000, now - 100, None),
   );
   // Two frames, a connection opening, and a frame still being written.
   dir.write(
-    &format!("data/journal/live/{today}/a-3.journal"),
+    format!("data/journal/live/{today}/a-3.journal"),
     "journal 0.1\n1 a-3 1 open wss://x\n2 a-3 1 frame MSG {}\n\
      3 a-3 1 frame NAMES {}\n4 a-3 1 frame JO",
   );
   dir.write(
-    &format!("data/journal/live/{today}/a-1.journal"),
+    format!("data/journal/live/{today}/a-1.journal"),
     "0123456789",
   );
   dir.write("data/journal/live/2026-01-02/a-1.journal", "01234");
   dir.write("data/journal/backfill/live/2026-01-01/b.journal", "012");
   dir.write(
     "data/journal/archive/2026/01/manifest",
-    &format!(
+    format!(
       "journal-archive 0.0\n2026-01-01 100 1000 10 {0}\n2026-01-03 50 500 5 {0}\n",
       "0".repeat(64)
     ),
   );
   dir.write("data/index.sqlite", "x");
 
-  let paths = Paths::under(dir.0.clone());
+  let paths = Paths::under(dir.to_path_buf());
   let mut watcher = Watcher::new().unwrap();
   let report = watcher.gather(&paths).unwrap();
 
@@ -131,12 +107,12 @@ fn reports_captures_and_the_journal() {
 
   // A second look sees today's growth.
   dir.write(
-    &format!("data/journal/live/{today}/a-1.journal"),
-    &"0".repeat(5000),
+    format!("data/journal/live/{today}/a-1.journal"),
+    "0".repeat(5000),
   );
   // The frame being written was finished, and the connection closed.
   dir.write(
-    &format!("data/journal/live/{today}/a-3.journal"),
+    format!("data/journal/live/{today}/a-3.journal"),
     "journal 0.1\n1 a-3 1 open wss://x\n2 a-3 1 frame MSG {}\n\
      3 a-3 1 frame NAMES {}\n4 a-3 1 frame JOIN {}\n5 a-3 1 close bye\n",
   );
@@ -148,32 +124,32 @@ fn reports_captures_and_the_journal() {
 
 #[test]
 fn tails_logs() {
-  let dir = TempDir::new("tail");
+  let dir = TempDir::new("deploy-status-tail");
   let lines: String = (0..10).map(|n| format!("line {n}\n")).collect();
   dir.write("x.log", &lines);
   assert_eq!(
-    tail(&dir.0.join("x.log"), 3).unwrap(),
+    tail(&dir.path().join("x.log"), 3).unwrap(),
     ["line 7", "line 8", "line 9"]
   );
-  assert_eq!(tail(&dir.0.join("x.log"), 50).unwrap().len(), 10);
+  assert_eq!(tail(&dir.path().join("x.log"), 50).unwrap().len(), 10);
   // Past 64 KB, a cut first line is dropped.
-  dir.write("big.log", &format!("{}\nlast\n", "x".repeat(70_000)));
-  assert_eq!(tail(&dir.0.join("big.log"), 5).unwrap(), ["last"]);
+  dir.write("big.log", format!("{}\nlast\n", "x".repeat(70_000)));
+  assert_eq!(tail(&dir.path().join("big.log"), 5).unwrap(), ["last"]);
 }
 
 #[test]
 fn draws_the_watch_screen() {
   use ::ratatui::{Terminal, backend::TestBackend};
 
-  let dir = TempDir::new("watch");
+  let dir = TempDir::new("deploy-status-watch");
   let now = now_ms();
   dir.write(
     "data/journal/control/a-1.status",
-    &status("a-1", now - 60_000, now, Some(now - 50_000)),
+    status("a-1", now - 60_000, now, Some(now - 50_000)),
   );
   let report = Watcher::new()
     .unwrap()
-    .gather(&Paths::under(dir.0.clone()))
+    .gather(&Paths::under(dir.to_path_buf()))
     .unwrap();
   let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
   let pane = ::deploy::status::watch::Pane {
@@ -208,8 +184,8 @@ fn draws_the_watch_screen() {
 
 #[test]
 fn reports_the_peers() {
-  let dir = TempDir::new("peer");
-  let paths = Paths::under(dir.0.clone());
+  let dir = TempDir::new("deploy-status-peer");
+  let paths = Paths::under(dir.to_path_buf());
   let mut watcher = Watcher::new().unwrap();
   // No peers: nothing about syncing.
   let report = watcher.gather(&paths).unwrap();
@@ -256,8 +232,8 @@ fn reports_the_peers() {
 
 #[test]
 fn tails_a_captures_frames() {
-  let dir = TempDir::new("frames");
-  let root = dir.0.join("journal");
+  let dir = TempDir::new("deploy-status-frames");
+  let root = dir.path().join("journal");
   assert!(capture_tail(&root, "a-1", 10).unwrap().is_empty());
   // 2026-11-09 12:00:00.000 UTC, then on.
   let at = 1_794_225_600_000_i64;
@@ -283,7 +259,7 @@ fn tails_a_captures_frames() {
   // A newer day's file is the one shown.
   dir.write(
     "journal/live/2026-11-10/a-1.journal",
-    &format!("journal 0.1\n{} a-1 2 frame PING {{}}\n", at + 86_400_000),
+    format!("journal 0.1\n{} a-1 2 frame PING {{}}\n", at + 86_400_000),
   );
   assert_eq!(
     capture_tail(&root, "a-1", 10).unwrap(),
@@ -293,8 +269,8 @@ fn tails_a_captures_frames() {
 
 #[test]
 fn reports_gaps_without_writing_the_index() {
-  let dir = TempDir::new("gaps");
-  let index = dir.0.join("index.sqlite");
+  let dir = TempDir::new("deploy-status-gaps");
+  let index = dir.path().join("index.sqlite");
   assert_eq!(gaps(&index), Err("no index yet".into()));
   // Connected 1 s to 2 s, then again from 5 s: one 3 s gap, not filled.
   dir.write(
@@ -303,7 +279,7 @@ fn reports_gaps_without_writing_the_index() {
      5000 a 2 open wss://x\n6000 a 2 close shutdown\n",
   );
   let mut db = ::logger::index::open(&index).unwrap();
-  ::logger::index::index(&mut db, &dir.0.join("journal")).unwrap();
+  ::logger::index::index(&mut db, &dir.path().join("journal")).unwrap();
   drop(db);
   let (summary, lines) = gaps(&index).unwrap().unwrap();
   assert!(summary.ends_with("1 gaps, 3.0s in all; 1 not filled, 3.0s"));

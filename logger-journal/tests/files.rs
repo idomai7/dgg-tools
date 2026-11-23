@@ -1,6 +1,7 @@
 //! Writer and Reader against real files.
 
 use {
+  ::common::temp_dir::TempDir,
   ::logger_journal::{
     DecodeError, Entry, ReadError, Reader, Record, Version, Writer,
     layout::{backfill_files, live_dir, live_files},
@@ -9,30 +10,9 @@ use {
   ::std::{
     fs::{self, OpenOptions},
     io::Write,
-    path::{Path, PathBuf},
-    sync::atomic::{AtomicU32, Ordering},
+    path::Path,
   },
 };
-
-/// A fresh directory, removed when dropped.
-struct TempRoot(PathBuf);
-
-impl TempRoot {
-  fn new() -> Self {
-    static N: AtomicU32 = AtomicU32::new(0);
-    let n = N.fetch_add(1, Ordering::Relaxed);
-    let dir = ::std::env::temp_dir()
-      .join(format!("journal-test-{}-{n}", ::std::process::id()));
-    let _ = fs::remove_dir_all(&dir);
-    Self(dir)
-  }
-}
-
-impl Drop for TempRoot {
-  fn drop(&mut self) {
-    let _ = fs::remove_dir_all(&self.0);
-  }
-}
 
 fn frame_record(receive_time: i64, frame: &str) -> v0::Record {
   v0::Record {
@@ -63,8 +43,8 @@ fn frame(entry: Result<Entry, ReadError>) -> String {
 
 #[test]
 fn write_read_and_rollover() {
-  let root = TempRoot::new();
-  let mut writer = Writer::new(&root.0, "a");
+  let root = TempDir::new("logger-journal-files");
+  let mut writer = Writer::new(root.path(), "a");
   let records = [
     frame_record(1_709_251_199_998, "MSG {\"n\":1}"),
     frame_record(1_709_251_199_999, "MSG {\"n\":2}"),
@@ -75,10 +55,10 @@ fn write_read_and_rollover() {
   }
   drop(writer);
 
-  let files = live_files(&root.0).unwrap();
+  let files = live_files(root.path()).unwrap();
   let names: Vec<_> = files
     .iter()
-    .map(|p| p.strip_prefix(live_dir(&root.0)).unwrap().to_owned())
+    .map(|p| p.strip_prefix(live_dir(root.path())).unwrap().to_owned())
     .collect();
   assert_eq!(
     names,
@@ -97,8 +77,8 @@ fn write_read_and_rollover() {
 
 #[test]
 fn backfill_files_by_the_given_day() {
-  let root = TempRoot::new();
-  let mut writer = Writer::backfill(&root.0, "backfill-x").unwrap();
+  let root = TempDir::new("logger-journal-files");
+  let mut writer = Writer::backfill(root.path(), "backfill-x").unwrap();
   let fetched = |timestamp| Body::Fetched {
     source: "linkers".into(),
     timestamp,
@@ -114,11 +94,11 @@ fn backfill_files_by_the_given_day() {
   }
   drop(writer);
 
-  assert!(live_files(&root.0).unwrap().is_empty());
-  let files = backfill_files(&root.0).unwrap();
+  assert!(live_files(root.path()).unwrap().is_empty());
+  let files = backfill_files(root.path()).unwrap();
   let names: Vec<_> = files
     .iter()
-    .map(|p| p.strip_prefix(&root.0).unwrap().to_owned())
+    .map(|p| p.strip_prefix(root.path()).unwrap().to_owned())
     .collect();
   assert_eq!(
     names,
@@ -138,11 +118,11 @@ fn backfill_files_by_the_given_day() {
 
 #[test]
 fn header_is_checked() {
-  let root = TempRoot::new();
-  let mut writer = Writer::new(&root.0, "a");
+  let root = TempDir::new("logger-journal-files");
+  let mut writer = Writer::new(root.path(), "a");
   write(&mut writer, &frame_record(0, "MSG 1"));
   drop(writer);
-  let path = live_files(&root.0).unwrap()[0].clone();
+  let path = live_files(root.path()).unwrap()[0].clone();
   let text = fs::read_to_string(&path).unwrap();
   assert_eq!(text, "journal 0.1\n0 a 1 frame MSG 1\n");
 
@@ -174,12 +154,12 @@ fn header_is_checked() {
 
 #[test]
 fn partial_tail_is_left_for_later() {
-  let root = TempRoot::new();
-  let mut writer = Writer::new(&root.0, "a");
+  let root = TempDir::new("logger-journal-files");
+  let mut writer = Writer::new(root.path(), "a");
   write(&mut writer, &frame_record(0, "MSG 1"));
   write(&mut writer, &frame_record(0, "MSG 2"));
   drop(writer);
-  let path = &live_files(&root.0).unwrap()[0];
+  let path = &live_files(root.path()).unwrap()[0];
   let full = fs::read(path).unwrap();
   let mut third = Vec::new();
   frame_record(0, "MSG 3").encode(&mut third);
@@ -202,16 +182,16 @@ fn partial_tail_is_left_for_later() {
 
 #[test]
 fn torn_line_is_isolated_on_reopen() {
-  let root = TempRoot::new();
-  let mut writer = Writer::new(&root.0, "a");
+  let root = TempDir::new("logger-journal-files");
+  let mut writer = Writer::new(root.path(), "a");
   write(&mut writer, &frame_record(0, "MSG 1"));
   drop(writer);
-  let path = live_files(&root.0).unwrap()[0].clone();
+  let path = live_files(root.path()).unwrap()[0].clone();
   let mut file = OpenOptions::new().append(true).open(&path).unwrap();
   file.write_all(b"0 a 1 fra").unwrap();
   drop(file);
 
-  let mut writer = Writer::new(&root.0, "a");
+  let mut writer = Writer::new(root.path(), "a");
   write(&mut writer, &frame_record(0, "MSG 2"));
   drop(writer);
   let mut read = Reader::open(&path, 0).unwrap();

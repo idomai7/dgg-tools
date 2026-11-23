@@ -1,4 +1,5 @@
 use {
+  ::common::temp_dir::TempDir,
   ::dgg_api::chat::Options,
   ::futures_util::{SinkExt, StreamExt},
   ::logger::{
@@ -12,35 +13,10 @@ use {
     layout::live_files,
     record::v0::{self, Body},
   },
-  ::std::{
-    fs,
-    path::PathBuf,
-    sync::atomic::{AtomicU32, Ordering},
-    time::Duration,
-  },
+  ::std::time::Duration,
   ::tokio::{net::TcpListener, sync::oneshot},
   ::tokio_tungstenite::tungstenite::Message,
 };
-
-/// A fresh directory, removed when dropped.
-struct TempRoot(PathBuf);
-
-impl TempRoot {
-  fn new() -> Self {
-    static N: AtomicU32 = AtomicU32::new(0);
-    let n = N.fetch_add(1, Ordering::Relaxed);
-    let dir = ::std::env::temp_dir()
-      .join(format!("logger-test-{}-{n}", ::std::process::id()));
-    let _ = fs::remove_dir_all(&dir);
-    Self(dir)
-  }
-}
-
-impl Drop for TempRoot {
-  fn drop(&mut self) {
-    let _ = fs::remove_dir_all(&self.0);
-  }
-}
 
 /// A chat server where every connection gets HISTORY, then a MSG every
 /// 10 ms, so instances become healthy at once.
@@ -100,7 +76,7 @@ async fn journals_connections_and_shutdown() {
     while ws.next().await.is_some() {}
   });
 
-  let root = TempRoot::new();
+  let root = TempDir::new("logger-capture");
   let chat = Options {
     url: url.clone(),
     origin: None,
@@ -114,7 +90,7 @@ async fn journals_connections_and_shutdown() {
   };
   let config = Config {
     chat,
-    journal_root: root.0.clone(),
+    journal_root: root.to_path_buf(),
     instance: "t".into(),
     started: 1,
     handoff: Handoff::default(),
@@ -124,7 +100,7 @@ async fn journals_connections_and_shutdown() {
   assert_eq!(run(config, shutdown).await.unwrap(), Exit::Shutdown);
   server.abort();
 
-  let files = live_files(&root.0).unwrap();
+  let files = live_files(root.path()).unwrap();
   assert_eq!(files.len(), 1);
   let bodies: Vec<_> = Reader::open(&files[0], 0)
     .unwrap()
@@ -156,8 +132,8 @@ async fn journals_connections_and_shutdown() {
 }
 
 /// Reads every v0 record body from `instance`'s live files.
-fn bodies(root: &TempRoot, instance: &str) -> Vec<Body> {
-  live_files(&root.0)
+fn bodies(root: &TempDir, instance: &str) -> Vec<Body> {
+  live_files(root.path())
     .unwrap()
     .iter()
     .filter(|file| file.file_stem().unwrap() == instance)
@@ -175,14 +151,14 @@ fn bodies(root: &TempRoot, instance: &str) -> Vec<Body> {
 async fn hands_off_to_a_newer_instance() {
   let (url, server) = chat_server().await;
 
-  let root = TempRoot::new();
+  let root = TempDir::new("logger-capture");
   let config = |instance: &str, started| Config {
     chat: Options {
       url: url.clone(),
       origin: None,
       ..Options::default()
     },
-    journal_root: root.0.clone(),
+    journal_root: root.to_path_buf(),
     instance: instance.into(),
     started,
     handoff: quick_handoff(),
@@ -212,7 +188,7 @@ async fn hands_off_to_a_newer_instance() {
   let new = bodies(&root, "new");
   assert!(matches!(new.first(), Some(Body::Open(_))));
   assert_eq!(new.last(), Some(&Body::Close(SHUTDOWN.into())));
-  let control = control::dir(&root.0);
+  let control = control::dir(root.path());
   assert_eq!(control::read_all(&control).unwrap(), []);
 }
 
@@ -222,24 +198,27 @@ async fn hands_off_to_a_newer_instance() {
 #[::tokio::test]
 async fn hands_off_to_an_instance_on_another_host() {
   let (url, server) = chat_server().await;
-  let (old_host, new_host) = (TempRoot::new(), TempRoot::new());
+  let (old_host, new_host) = (
+    TempDir::new("logger-capture"),
+    TempDir::new("logger-capture"),
+  );
   let serve = TcpListener::bind("127.0.0.1:0").await.unwrap();
   let serve_url = format!("http://{}", serve.local_addr().unwrap());
   let tokens = ::logger::serve::Tokens {
     read: "reader".into(),
     control: Some("secret".into()),
   };
-  let router = ::logger::serve::router(old_host.0.clone(), tokens);
+  let router = ::logger::serve::router(old_host.to_path_buf(), tokens);
   let serving =
     ::tokio::spawn(async move { ::axum::serve(serve, router).await.unwrap() });
 
-  let config = |root: &TempRoot, instance: &str, started, peer| Config {
+  let config = |root: &TempDir, instance: &str, started, peer| Config {
     chat: Options {
       url: url.clone(),
       origin: None,
       ..Options::default()
     },
-    journal_root: root.0.clone(),
+    journal_root: root.to_path_buf(),
     instance: instance.into(),
     started,
     handoff: quick_handoff(),
@@ -275,6 +254,6 @@ async fn hands_off_to_an_instance_on_another_host() {
   let handoff = Body::Close(format!("{HANDOFF}new"));
   assert_eq!(old_bodies.last(), Some(&handoff));
   // The new instance withdrew its status from the old host on exit.
-  let control = control::dir(&old_host.0);
+  let control = control::dir(old_host.path());
   assert_eq!(control::read_all(&control).unwrap(), []);
 }

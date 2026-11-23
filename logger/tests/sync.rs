@@ -1,4 +1,5 @@
 use {
+  ::common::temp_dir::TempDir,
   ::logger::{
     capture::Peer,
     cert,
@@ -11,33 +12,11 @@ use {
   ::std::{
     fs::{self, OpenOptions},
     io::Write,
-    path::PathBuf,
-    sync::atomic::{AtomicU32, Ordering},
   },
 };
 
-/// A fresh directory, removed when dropped.
-struct TempRoot(PathBuf);
-
-impl TempRoot {
-  fn new() -> Self {
-    static N: AtomicU32 = AtomicU32::new(0);
-    let n = N.fetch_add(1, Ordering::Relaxed);
-    let dir = ::std::env::temp_dir()
-      .join(format!("logger-sync-test-{}-{n}", ::std::process::id()));
-    let _ = fs::remove_dir_all(&dir);
-    Self(dir)
-  }
-}
-
-impl Drop for TempRoot {
-  fn drop(&mut self) {
-    let _ = fs::remove_dir_all(&self.0);
-  }
-}
-
 /// Serves `root` on a free port; returns its URL.
-async fn serve(root: &TempRoot) -> String {
+async fn serve(root: &TempDir) -> String {
   let listener = ::tokio::net::TcpListener::bind("127.0.0.1:0")
     .await
     .unwrap();
@@ -46,7 +25,7 @@ async fn serve(root: &TempRoot) -> String {
     read: "secret".into(),
     control: None,
   };
-  let app = router(root.0.clone(), tokens);
+  let app = router(root.to_path_buf(), tokens);
   ::tokio::spawn(async move { ::axum::serve(listener, app).await.unwrap() });
   url
 }
@@ -132,8 +111,8 @@ fn manifest_format() {
 
 #[::tokio::test]
 async fn file_endpoint() {
-  let root = TempRoot::new();
-  let mut writer = Writer::new(root.0.clone(), "a");
+  let root = TempDir::new("logger-sync");
+  let mut writer = Writer::new(root.to_path_buf(), "a");
   writer.write(0, 1, Body::Frame("MSG 1".into())).unwrap();
   drop(writer);
   let base = serve(&root).await;
@@ -171,7 +150,7 @@ async fn file_endpoint() {
 
 /// Serves `root` over TLS on a free port, with a certificate for
 /// 127.0.0.1 from a new CA; returns its URL and the CA's certificate.
-async fn serve_tls(root: &TempRoot) -> (String, String) {
+async fn serve_tls(root: &TempDir) -> (String, String) {
   let key = ::rcgen::KeyPair::generate().unwrap();
   let ca_cert = cert::ca(&key).unwrap();
   let node = cert::node("node", &["127.0.0.1".into()], &ca_cert, &key).unwrap();
@@ -184,7 +163,7 @@ async fn serve_tls(root: &TempRoot) -> (String, String) {
     read: "secret".into(),
     control: None,
   };
-  let app = router(root.0.clone(), tokens);
+  let app = router(root.to_path_buf(), tokens);
   ::tokio::spawn(
     async move { serve::run(listener, app, Some(tls)).await.unwrap() },
   );
@@ -193,9 +172,10 @@ async fn serve_tls(root: &TempRoot) -> (String, String) {
 
 #[::tokio::test]
 async fn pulls_over_tls_from_its_ca_alone() {
-  let (remote, local) = (TempRoot::new(), TempRoot::new());
+  let (remote, local) =
+    (TempDir::new("logger-sync"), TempDir::new("logger-sync"));
   let (url, ca_cert) = serve_tls(&remote).await;
-  let mut writer = Writer::new(remote.0.clone(), "a");
+  let mut writer = Writer::new(remote.to_path_buf(), "a");
   writer.write(0, 1, Body::Frame("MSG 1".into())).unwrap();
   drop(writer);
   let peer = Peer {
@@ -203,7 +183,7 @@ async fn pulls_over_tls_from_its_ca_alone() {
     token: "secret".into(),
     ca: Some(ca_cert),
   };
-  let stats = sync(&peer, &local.0).await.unwrap();
+  let stats = sync(&peer, local.path()).await.unwrap();
   assert_eq!((stats.files, stats.updated), (1, 1));
   // Not from a server another CA vouches for, nor the system's roots.
   let other = cert::ca(&::rcgen::KeyPair::generate().unwrap()).unwrap();
@@ -212,35 +192,36 @@ async fn pulls_over_tls_from_its_ca_alone() {
     token: "secret".into(),
     ca,
   };
-  assert!(sync(&refused(Some(other)), &local.0).await.is_err());
-  assert!(sync(&refused(None), &local.0).await.is_err());
+  assert!(sync(&refused(Some(other)), local.path()).await.is_err());
+  assert!(sync(&refused(None), local.path()).await.is_err());
   // And with a CA, never over plain HTTP.
   let plain = Peer {
     url: serve(&remote).await,
     ..peer
   };
-  assert!(sync(&plain, &local.0).await.is_err());
+  assert!(sync(&plain, local.path()).await.is_err());
 }
 
 #[::tokio::test]
 async fn pulls_only_what_is_missing() {
-  let (remote, local) = (TempRoot::new(), TempRoot::new());
+  let (remote, local) =
+    (TempDir::new("logger-sync"), TempDir::new("logger-sync"));
   let peer = Peer {
     url: serve(&remote).await,
     token: "secret".into(),
     ca: None,
   };
-  let mut writer = Writer::new(remote.0.clone(), "a");
+  let mut writer = Writer::new(remote.to_path_buf(), "a");
   writer.write(0, 1, Body::Frame("MSG 1".into())).unwrap();
   writer
     .write(86_400_000, 1, Body::Frame("MSG 2".into()))
     .unwrap();
   drop(writer);
 
-  let first = sync(&peer, &local.0).await.unwrap();
+  let first = sync(&peer, local.path()).await.unwrap();
   assert_eq!((first.files, first.updated), (2, 2));
   let same = |path: &str| {
-    let read = |root: &TempRoot| fs::read(root.0.join(path)).unwrap();
+    let read = |root: &TempDir| fs::read(root.path().join(path)).unwrap();
     assert_eq!(read(&local), read(&remote), "{path}");
   };
   same("live/1970-01-01/a.journal");
@@ -252,37 +233,39 @@ async fn pulls_only_what_is_missing() {
   let append = |bytes: &[u8]| {
     let mut file = OpenOptions::new()
       .append(true)
-      .open(remote.0.join(path))
+      .open(remote.path().join(path))
       .unwrap();
     file.write_all(bytes).unwrap();
   };
   append(b"86400001 a 1 frame MSG");
-  let second = sync(&peer, &local.0).await.unwrap();
+  let second = sync(&peer, local.path()).await.unwrap();
   assert_eq!((second.updated, second.bytes), (1, 22));
   same(path);
   append(b" 3\n");
-  sync(&peer, &local.0).await.unwrap();
+  sync(&peer, local.path()).await.unwrap();
   same(path);
-  let idle = sync(&peer, &local.0).await.unwrap();
+  let idle = sync(&peer, local.path()).await.unwrap();
   assert_eq!((idle.updated, idle.bytes), (0, 0));
 
   // A file shorter remotely than here was rewritten: reported, untouched.
-  let before = fs::read(local.0.join(path)).unwrap();
-  fs::write(remote.0.join(path), "journal 0.1\n").unwrap();
-  let rewritten = sync(&peer, &local.0).await.unwrap();
+  let before = fs::read(local.path().join(path)).unwrap();
+  fs::write(remote.path().join(path), "journal 0.1\n").unwrap();
+  let rewritten = sync(&peer, local.path()).await.unwrap();
   assert_eq!(rewritten.mismatched, [path]);
-  assert_eq!(fs::read(local.0.join(path)).unwrap(), before);
+  assert_eq!(fs::read(local.path().join(path)).unwrap(), before);
 }
 
 #[::tokio::test]
 async fn pulls_backfill_files() {
-  let (remote, local) = (TempRoot::new(), TempRoot::new());
+  let (remote, local) =
+    (TempDir::new("logger-sync"), TempDir::new("logger-sync"));
   let peer = Peer {
     url: serve(&remote).await,
     token: "secret".into(),
     ca: None,
   };
-  let mut writer = Writer::backfill(remote.0.clone(), "backfill-a").unwrap();
+  let mut writer =
+    Writer::backfill(remote.to_path_buf(), "backfill-a").unwrap();
   let range = Body::FetchRange {
     source: "x".into(),
     from: 0,
@@ -290,12 +273,12 @@ async fn pulls_backfill_files() {
   };
   writer.write_on(0, 10, 1, range).unwrap();
   drop(writer);
-  let stats = sync(&peer, &local.0).await.unwrap();
+  let stats = sync(&peer, local.path()).await.unwrap();
   assert_eq!((stats.files, stats.updated), (1, 1));
   let path = "backfill/live/1970-01-01/backfill-a.journal";
   assert_eq!(
-    fs::read(local.0.join(path)).unwrap(),
-    fs::read(remote.0.join(path)).unwrap()
+    fs::read(local.path().join(path)).unwrap(),
+    fs::read(remote.path().join(path)).unwrap()
   );
 }
 
@@ -306,64 +289,67 @@ fn compact(root: &::std::path::Path) {
 
 #[::tokio::test]
 async fn takes_archives_without_overwriting() {
-  let (remote, local) = (TempRoot::new(), TempRoot::new());
+  let (remote, local) =
+    (TempDir::new("logger-sync"), TempDir::new("logger-sync"));
   let peer = Peer {
     url: serve(&remote).await,
     token: "secret".into(),
     ca: None,
   };
-  let mut writer = Writer::new(remote.0.clone(), "a");
+  let mut writer = Writer::new(remote.to_path_buf(), "a");
   writer.write(0, 1, Body::Frame("MSG 1".into())).unwrap();
   drop(writer);
-  compact(&remote.0);
+  compact(remote.path());
   let path = "archive/1970/01/1970-01-01.journal.zst";
 
   // Nothing here for the day: installed as it is, and not taken again.
-  let stats = sync(&peer, &local.0).await.unwrap();
+  let stats = sync(&peer, local.path()).await.unwrap();
   assert_eq!((stats.installed, stats.merging), (1, 0));
   assert_eq!(
-    fs::read(local.0.join(path)).unwrap(),
-    fs::read(remote.0.join(path)).unwrap()
+    fs::read(local.path().join(path)).unwrap(),
+    fs::read(remote.path().join(path)).unwrap()
   );
   assert_eq!(
-    ::logger_journal::archive::all(&local.0).unwrap(),
-    ::logger_journal::archive::all(&remote.0).unwrap()
+    ::logger_journal::archive::all(local.path()).unwrap(),
+    ::logger_journal::archive::all(remote.path()).unwrap()
   );
-  let stats = sync(&peer, &local.0).await.unwrap();
+  let stats = sync(&peer, local.path()).await.unwrap();
   assert_eq!((stats.installed, stats.merging, stats.bytes), (0, 0, 0));
 
   // The remote merges more into its archive: this one is kept, and the new
   // one written out as a live file for compaction to merge, once.
-  let mut writer = Writer::new(remote.0.clone(), "b");
+  let mut writer = Writer::new(remote.to_path_buf(), "b");
   writer.write(5, 1, Body::Frame("MSG 2".into())).unwrap();
   drop(writer);
-  compact(&remote.0);
-  let before = fs::read(local.0.join(path)).unwrap();
-  let stats = sync(&peer, &local.0).await.unwrap();
+  compact(remote.path());
+  let before = fs::read(local.path().join(path)).unwrap();
+  let stats = sync(&peer, local.path()).await.unwrap();
   assert_eq!((stats.installed, stats.merging), (0, 1));
-  assert_eq!(fs::read(local.0.join(path)).unwrap(), before);
-  let day = local.0.join("live/1970-01-01");
+  assert_eq!(fs::read(local.path().join(path)).unwrap(), before);
+  let day = local.path().join("live/1970-01-01");
   assert_eq!(fs::read_dir(&day).unwrap().count(), 1);
-  compact(&local.0);
+  compact(local.path());
   assert_eq!(
-    ::logger_journal::archive::all(&local.0).unwrap()[0].lines,
+    ::logger_journal::archive::all(local.path()).unwrap()[0].lines,
     2
   );
-  let taken = fs::read_to_string(local.0.join(TAKEN)).unwrap();
+  let taken = fs::read_to_string(local.path().join(TAKEN)).unwrap();
   assert_eq!(taken.lines().count(), 2);
-  let stats = sync(&peer, &local.0).await.unwrap();
+  let stats = sync(&peer, local.path()).await.unwrap();
   assert_eq!((stats.installed, stats.merging, stats.bytes), (0, 0, 0));
 }
 
 #[::tokio::test]
 async fn takes_backfill_archives() {
-  let (remote, local) = (TempRoot::new(), TempRoot::new());
+  let (remote, local) =
+    (TempDir::new("logger-sync"), TempDir::new("logger-sync"));
   let peer = Peer {
     url: serve(&remote).await,
     token: "secret".into(),
     ca: None,
   };
-  let mut writer = Writer::backfill(remote.0.clone(), "backfill-a").unwrap();
+  let mut writer =
+    Writer::backfill(remote.to_path_buf(), "backfill-a").unwrap();
   let range = Body::FetchRange {
     source: "x".into(),
     from: 0,
@@ -371,13 +357,13 @@ async fn takes_backfill_archives() {
   };
   writer.write_on(0, 10, 1, range).unwrap();
   drop(writer);
-  compact(&remote.0.join("backfill"));
-  let stats = sync(&peer, &local.0).await.unwrap();
+  compact(&remote.path().join("backfill"));
+  let stats = sync(&peer, local.path()).await.unwrap();
   assert_eq!((stats.installed, stats.merging), (1, 0));
   let path = "backfill/archive/1970/01/1970-01-01.journal.zst";
   assert_eq!(
-    fs::read(local.0.join(path)).unwrap(),
-    fs::read(remote.0.join(path)).unwrap()
+    fs::read(local.path().join(path)).unwrap(),
+    fs::read(remote.path().join(path)).unwrap()
   );
 }
 
@@ -399,10 +385,14 @@ fn archived_lines(root: &::std::path::Path) -> Vec<String> {
 async fn a_mesh_settles() {
   // Three nodes capturing the same day, at the same times, so each can
   // order its archive's ties differently.
-  let roots = [TempRoot::new(), TempRoot::new(), TempRoot::new()];
+  let roots = [
+    TempDir::new("logger-sync"),
+    TempDir::new("logger-sync"),
+    TempDir::new("logger-sync"),
+  ];
   let mut urls = Vec::new();
   for (n, root) in roots.iter().enumerate() {
-    let mut writer = Writer::new(root.0.clone(), format!("node{n}"));
+    let mut writer = Writer::new(root.to_path_buf(), format!("node{n}"));
     for at in [0, 5, 10] {
       let frame = format!("MSG {n}-{at}");
       writer.write(at, 1, Body::Frame(frame)).unwrap();
@@ -410,7 +400,7 @@ async fn a_mesh_settles() {
     drop(writer);
     // Compacted before hearing from the others: each starts with an
     // archive the others' differ from.
-    compact_day(&root.0, "1970-01-01", 3).unwrap();
+    compact_day(root.path(), "1970-01-01", 3).unwrap();
     urls.push(serve(root).await);
   }
   let peer = |n: usize| Peer {
@@ -428,26 +418,26 @@ async fn a_mesh_settles() {
     let mut moved = 0;
     for (n, root) in roots.iter().enumerate() {
       for other in (0..3).filter(|&other| other != n) {
-        moved += sync(&peer(other), &root.0).await.unwrap().bytes;
+        moved += sync(&peer(other), root.path()).await.unwrap().bytes;
       }
     }
     for root in &roots {
-      compact_day(&root.0, "1970-01-01", 3).unwrap();
+      compact_day(root.path(), "1970-01-01", 3).unwrap();
     }
     if moved == 0 {
       break;
     }
   }
   // Each node holds every line once, whatever order its ties are in.
-  let all = archived_lines(&roots[0].0);
+  let all = archived_lines(&roots[0]);
   assert_eq!(all.len(), 9);
   for root in &roots[1..] {
-    assert_eq!(archived_lines(&root.0), all);
+    assert_eq!(archived_lines(root.path()), all);
   }
   // A settled mesh stays settled.
   for (n, root) in roots.iter().enumerate() {
     for other in (0..3).filter(|&other| other != n) {
-      let stats = sync(&peer(other), &root.0).await.unwrap();
+      let stats = sync(&peer(other), root.path()).await.unwrap();
       assert_eq!((stats.bytes, stats.merging), (0, 0));
     }
   }
@@ -466,14 +456,14 @@ async fn serve_routes(routes: ::axum::Router) -> String {
 #[::tokio::test]
 async fn takes_no_more_than_the_manifest_says() {
   use ::axum::{http::StatusCode, response::Redirect, routing::get};
-  let local = TempRoot::new();
+  let local = TempDir::new("logger-sync");
   let sync_from = |routes: ::axum::Router| async {
     let peer = Peer {
       url: serve_routes(routes).await,
       token: "secret".into(),
       ca: None,
     };
-    sync(&peer, &local.0).await
+    sync(&peer, local.path()).await
   };
   let manifest = |text: String| {
     let text = format!("journal-manifest 0.0\n{text}");
@@ -487,7 +477,7 @@ async fn takes_no_more_than_the_manifest_says() {
   );
   let stats = sync_from(routes).await.unwrap();
   assert_eq!((stats.updated, stats.bytes), (1, 5));
-  let path = local.0.join("live/2026-11-08/a.journal");
+  let path = local.path().join("live/2026-11-08/a.journal");
   assert_eq!(fs::read(path).unwrap(), b"xxxxx");
 
   // A file listed as too big to take.
@@ -505,8 +495,11 @@ async fn takes_no_more_than_the_manifest_says() {
       .route("/files/{*path}", get(|| async { "abc" }));
   let error = sync_from(routes).await.unwrap_err();
   assert!(error.contains("doesn't match"), "{error}");
-  assert_eq!(fs::read_dir(local.0.join("control")).unwrap().count(), 0);
-  assert!(!local.0.join("archive").exists());
+  assert_eq!(
+    fs::read_dir(local.path().join("control")).unwrap().count(),
+    0
+  );
+  assert!(!local.path().join("archive").exists());
 
   // A redirect isn't followed: the token would go with it.
   let routes = ::axum::Router::new().route(
@@ -531,9 +524,9 @@ fn refuses_a_decompression_bomb() {
   encoder.write_all(&vec![0; 8 << 20]).unwrap();
   let bomb = encoder.finish().unwrap();
   assert!(bomb.len() < 4 << 10, "{}", bomb.len());
-  let root = TempRoot::new();
-  fs::create_dir_all(&root.0).unwrap();
-  let download = root.0.join("bomb.zst");
+  let root = TempDir::new("logger-sync");
+  fs::create_dir_all(root.path()).unwrap();
+  let download = root.path().join("bomb.zst");
   fs::write(&download, &bomb).unwrap();
   let error = unpack(&download, None, 1 << 20).unwrap_err();
   assert!(error.to_string().contains("over 1048576 bytes"), "{error}");

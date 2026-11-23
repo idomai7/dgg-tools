@@ -1,4 +1,5 @@
 use {
+  ::common::temp_dir::TempDir,
   ::logger::backfill::{
     Message, Options, Page, Source, linkers, run,
     rustlesearch::{parse, remaining},
@@ -9,8 +10,6 @@ use {
     record::v0::{self, Body},
   },
   ::std::{
-    fs,
-    path::PathBuf,
     sync::{
       Mutex,
       atomic::{AtomicU32, Ordering},
@@ -18,26 +17,6 @@ use {
     time::Duration,
   },
 };
-
-/// A fresh directory, removed when dropped.
-struct TempRoot(PathBuf);
-
-impl TempRoot {
-  fn new() -> Self {
-    static N: AtomicU32 = AtomicU32::new(0);
-    let n = N.fetch_add(1, Ordering::Relaxed);
-    let dir = ::std::env::temp_dir()
-      .join(format!("logger-backfill-test-{}-{n}", ::std::process::id()));
-    let _ = fs::remove_dir_all(&dir);
-    Self(dir)
-  }
-}
-
-impl Drop for TempRoot {
-  fn drop(&mut self) {
-    let _ = fs::remove_dir_all(&self.0);
-  }
-}
 
 /// A message every 100 ms from 0 to 10 s, served five per page, recording
 /// the cursors it was asked for.
@@ -107,9 +86,9 @@ fn gap(start: i64, end: i64) -> (i64, i64) {
   (start - 500, end + 500)
 }
 
-fn options(root: &TempRoot, max_requests: u64) -> Options {
+fn options(root: &TempDir, max_requests: u64) -> Options {
   Options {
-    journal_root: root.0.join("journal"),
+    journal_root: root.path().join("journal"),
     instance: "backfill-t".into(),
     max_requests,
     reserve: 10,
@@ -120,8 +99,8 @@ fn options(root: &TempRoot, max_requests: u64) -> Options {
 }
 
 /// Everything journaled, which must all be in backfill files.
-fn bodies(root: &TempRoot) -> Vec<v0::Body> {
-  let journal = root.0.join("journal");
+fn bodies(root: &TempDir) -> Vec<v0::Body> {
+  let journal = root.path().join("journal");
   assert!(live_files(&journal).unwrap().is_empty());
   backfill_files(&journal)
     .unwrap()
@@ -140,7 +119,7 @@ fn bodies(root: &TempRoot) -> Vec<v0::Body> {
 
 #[::tokio::test]
 async fn fills_a_gap_page_by_page() {
-  let root = TempRoot::new();
+  let root = TempDir::new("logger-backfill");
   let source = Fake::new(None);
   // 3000..5000 widened by the margin: messages 2500..=5400 are wanted.
   let stats = run(&source, &[gap(3000, 5000)], &options(&root, 50))
@@ -204,7 +183,7 @@ async fn fills_a_gap_page_by_page() {
 
 #[::tokio::test(start_paused = true)]
 async fn retries_failed_requests() {
-  let root = TempRoot::new();
+  let root = TempDir::new("logger-backfill");
   let source = Fake::new(None);
   source.failing.store(2, Ordering::Relaxed);
   let mut options = options(&root, 50);
@@ -216,7 +195,7 @@ async fn retries_failed_requests() {
   assert_eq!(stats.messages, 29);
 
   // One failure too many gives up.
-  let root = TempRoot::new();
+  let root = TempDir::new("logger-backfill");
   source.failing.store(3, Ordering::Relaxed);
   let mut options = self::options(&root, 50);
   options.retries = 2;
@@ -227,7 +206,7 @@ async fn retries_failed_requests() {
 
 #[::tokio::test]
 async fn stops_at_the_request_budget() {
-  let root = TempRoot::new();
+  let root = TempDir::new("logger-backfill");
   let source = Fake::new(None);
   let stats = run(&source, &[gap(3000, 5000)], &options(&root, 2))
     .await
@@ -238,7 +217,7 @@ async fn stops_at_the_request_budget() {
 
 #[::tokio::test]
 async fn stops_when_the_rate_limit_runs_low() {
-  let root = TempRoot::new();
+  let root = TempDir::new("logger-backfill");
   let source = Fake::new(Some(3));
   let stats = run(
     &source,
@@ -259,7 +238,7 @@ async fn stops_when_the_rate_limit_runs_low() {
 
 #[::tokio::test]
 async fn an_exhausted_source_covers_back_to_the_start() {
-  let root = TempRoot::new();
+  let root = TempDir::new("logger-backfill");
   let source = Fake::new(None);
   // Before the first message: one empty page settles it.
   let stats = run(&source, &[gap(-3000, -2000)], &options(&root, 50))

@@ -4,11 +4,12 @@
 mod fake;
 
 use {
+  ::common::temp_dir::TempDir,
   ::kick_api::official::oauth::App,
   ::kick_mod::account::{Account, SCOPES},
   ::reqwest::Url,
   ::std::{collections::HashMap, fs, path::PathBuf},
-  fake::{Kick, TempDir},
+  fake::Kick,
 };
 
 const REDIRECT: &str = "http://localhost:8787/oauth/callback";
@@ -24,8 +25,8 @@ async fn kick() -> (Kick, TempDir, PathBuf) {
   kick.answer("/oauth/token", 200, TOKEN);
   kick.answer("/users", 200, ME);
   kick.answer("/oauth/revoke", 200, "OK");
-  let dir = TempDir::new("account");
-  let token = dir.0.join("kick-mod").join("token.json");
+  let dir = TempDir::new("kick-mod-account");
+  let token = dir.path().join("kick-mod").join("token.json");
   (kick, dir, token)
 }
 

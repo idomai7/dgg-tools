@@ -1,4 +1,5 @@
 use {
+  ::common::temp_dir::TempDir,
   ::common::time::now_ms,
   ::logger::{
     cert,
@@ -7,32 +8,7 @@ use {
   },
   ::logger_journal::{Writer, record::v0::Body},
   ::rcgen::KeyPair,
-  ::std::{
-    fs,
-    path::PathBuf,
-    sync::atomic::{AtomicU32, Ordering},
-  },
 };
-
-/// A fresh directory, removed when dropped.
-struct TempRoot(PathBuf);
-
-impl TempRoot {
-  fn new() -> Self {
-    static N: AtomicU32 = AtomicU32::new(0);
-    let n = N.fetch_add(1, Ordering::Relaxed);
-    let dir = ::std::env::temp_dir()
-      .join(format!("logger-serve-test-{}-{n}", ::std::process::id()));
-    let _ = fs::remove_dir_all(&dir);
-    Self(dir)
-  }
-}
-
-impl Drop for TempRoot {
-  fn drop(&mut self) {
-    let _ = fs::remove_dir_all(&self.0);
-  }
-}
 
 fn status(instance: &str) -> Status {
   Status {
@@ -73,19 +49,19 @@ fn tokens_must_be_long_and_differ() {
 }
 
 /// Serves `root` with `tokens` on a free port; returns its URL.
-async fn serve(root: &TempRoot, tokens: Tokens) -> String {
+async fn serve(root: &TempDir, tokens: Tokens) -> String {
   let listener = ::tokio::net::TcpListener::bind("127.0.0.1:0")
     .await
     .unwrap();
   let base = format!("http://{}", listener.local_addr().unwrap());
-  let app = router(root.0.clone(), tokens);
+  let app = router(root.to_path_buf(), tokens);
   ::tokio::spawn(async move { ::axum::serve(listener, app).await.unwrap() });
   base
 }
 
 #[::tokio::test]
 async fn control_endpoints() {
-  let root = TempRoot::new();
+  let root = TempDir::new("logger-serve");
   let tokens = Tokens {
     read: "reader".into(),
     control: Some("secret".into()),
@@ -134,7 +110,7 @@ async fn control_endpoints() {
   );
 
   // It's written where local instances look.
-  let control = control::dir(&root.0);
+  let control = control::dir(root.path());
   let written = control::read_all(&control).unwrap();
   assert_eq!(written.len(), 1);
   assert_eq!(written[0].instance, "remote");
@@ -162,7 +138,7 @@ async fn control_endpoints() {
 
 #[::tokio::test]
 async fn without_a_control_token_nothing_pushes() {
-  let root = TempRoot::new();
+  let root = TempDir::new("logger-serve");
   let tokens = Tokens {
     read: "reader".into(),
     control: None,
@@ -180,14 +156,14 @@ async fn without_a_control_token_nothing_pushes() {
       .unwrap();
     assert!([401, 403].contains(&pushed.status().as_u16()), "{token:?}");
   }
-  assert_eq!(control::read_all(&control::dir(&root.0)).unwrap(), []);
+  assert_eq!(control::read_all(&control::dir(root.path())).unwrap(), []);
 }
 
 #[::tokio::test]
 async fn serves_a_few_requests_at_once() {
-  let root = TempRoot::new();
+  let root = TempDir::new("logger-serve");
   // Big enough that sending it stalls until it's read.
-  let mut writer = Writer::new(root.0.clone(), "a");
+  let mut writer = Writer::new(root.to_path_buf(), "a");
   let frame = "x".repeat(1 << 20);
   for _ in 0..64 {
     writer.write(0, 1, Body::Frame(frame.clone())).unwrap();
@@ -220,7 +196,7 @@ async fn serves_a_few_requests_at_once() {
 
 /// Serves `root` over TLS on a free port, with a certificate for `host`
 /// from a new CA; returns its URL and the CA's certificate.
-async fn serve_tls(root: &TempRoot, host: &str) -> (String, String) {
+async fn serve_tls(root: &TempDir, host: &str) -> (String, String) {
   let key = KeyPair::generate().unwrap();
   let ca_cert = cert::ca(&key).unwrap();
   let node = cert::node("node", &[host.into()], &ca_cert, &key).unwrap();
@@ -233,7 +209,7 @@ async fn serve_tls(root: &TempRoot, host: &str) -> (String, String) {
     read: "reader".into(),
     control: None,
   };
-  let app = router(root.0.clone(), tokens);
+  let app = router(root.to_path_buf(), tokens);
   ::tokio::spawn(
     async move { serve::run(listener, app, Some(tls)).await.unwrap() },
   );
@@ -252,7 +228,7 @@ fn trusting(ca_cert: &str) -> ::reqwest::Client {
 
 #[::tokio::test]
 async fn serves_over_tls() {
-  let root = TempRoot::new();
+  let root = TempDir::new("logger-serve");
   let (base, ca_cert) = serve_tls(&root, "127.0.0.1").await;
   let manifest = |client: ::reqwest::Client, base: String| async move {
     client
@@ -273,7 +249,7 @@ async fn serves_over_tls() {
 
 #[::tokio::test]
 async fn a_certificate_for_another_host_is_refused() {
-  let root = TempRoot::new();
+  let root = TempDir::new("logger-serve");
   let (base, ca_cert) = serve_tls(&root, "192.0.2.1").await;
   let sent = trusting(&ca_cert)
     .get(format!("{base}/manifest"))

@@ -1,4 +1,5 @@
 use {
+  ::common::temp_dir::TempDir,
   ::common::time::utc_timestamp,
   ::deploy::log::{Log, rotated},
   ::std::{
@@ -6,24 +7,6 @@ use {
     path::{Path, PathBuf},
   },
 };
-
-struct TempDir(PathBuf);
-
-impl TempDir {
-  fn new(name: &str) -> Self {
-    let path = ::std::env::temp_dir()
-      .join(format!("deploy-log-{name}-{}", ::std::process::id()));
-    let _ = fs::remove_dir_all(&path);
-    fs::create_dir_all(&path).unwrap();
-    Self(path)
-  }
-}
-
-impl Drop for TempDir {
-  fn drop(&mut self) {
-    let _ = fs::remove_dir_all(&self.0);
-  }
-}
 
 #[test]
 fn rotated_names_keep_the_extension() {
@@ -36,8 +19,8 @@ fn rotated_names_keep_the_extension() {
 
 #[test]
 fn rotates_by_size_keeping_some() {
-  let dir = TempDir::new("rotate");
-  let path = dir.0.join("capture.log");
+  let dir = TempDir::new("deploy-log-rotate");
+  let path = dir.path().join("capture.log");
   // Each line is a 25-byte timestamp, a space, 4 bytes and a newline.
   let mut log = Log::open(&path, 70, 2).unwrap();
   for n in 0..7 {
@@ -58,8 +41,8 @@ fn rotates_by_size_keeping_some() {
 
 #[test]
 fn appends_to_an_existing_log() {
-  let dir = TempDir::new("append");
-  let path = dir.0.join("index.log");
+  let dir = TempDir::new("deploy-log-append");
+  let path = dir.path().join("index.log");
   Log::open(&path, 1 << 20, 1)
     .unwrap()
     .line_at(0, "first")

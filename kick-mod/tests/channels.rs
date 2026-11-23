@@ -1,40 +1,15 @@
 //! The channels file. Slugs and ids are made up.
 
 use {
+  ::common::temp_dir::TempDir,
   ::kick_mod::channels::{self, Channel, Channels},
   ::serde_json::{Map, json},
-  ::std::{
-    fs,
-    path::PathBuf,
-    sync::atomic::{AtomicU32, Ordering},
-  },
+  ::std::{fs, path::PathBuf},
 };
 
-/// A directory of its own, removed when the test ends.
-struct TempDir(PathBuf);
-
-impl TempDir {
-  fn new() -> Self {
-    static N: AtomicU32 = AtomicU32::new(0);
-    let n = N.fetch_add(1, Ordering::Relaxed);
-    let dir = ::std::env::temp_dir().join(format!(
-      "kick-mod-channels-test-{}-{n}",
-      ::std::process::id()
-    ));
-    let _ = fs::remove_dir_all(&dir);
-    Self(dir)
-  }
-
-  /// `channels.json`, in a directory that doesn't exist yet.
-  fn file(&self) -> PathBuf {
-    self.0.join("kick-mod").join("channels.json")
-  }
-}
-
-impl Drop for TempDir {
-  fn drop(&mut self) {
-    let _ = fs::remove_dir_all(&self.0);
-  }
+/// `channels.json`, in a directory that doesn't exist yet.
+fn file(dir: &TempDir) -> PathBuf {
+  dir.path().join("kick-mod").join("channels.json")
 }
 
 fn channel(broadcaster_user_id: u64, chatroom_id: Option<u64>) -> Channel {
@@ -47,8 +22,8 @@ fn channel(broadcaster_user_id: u64, chatroom_id: Option<u64>) -> Channel {
 
 #[test]
 fn none_before_the_first_write() {
-  let dir = TempDir::new();
-  assert_eq!(channels::load(&dir.file()), Ok(Channels::new()));
+  let dir = TempDir::new("kick-mod-channels");
+  assert_eq!(channels::load(&file(&dir)), Ok(Channels::new()));
 }
 
 #[test]
@@ -69,8 +44,8 @@ fn records_lookups() {
 
 #[test]
 fn writes_sorted_and_pretty() {
-  let dir = TempDir::new();
-  let path = dir.file();
+  let dir = TempDir::new("kick-mod-channels");
+  let path = file(&dir);
   channels::update(&path, |known| {
     channels::record(known, "zed", 2, None);
     channels::record(known, "abe", 1, Some(10));
@@ -93,8 +68,8 @@ fn writes_sorted_and_pretty() {
 
 #[test]
 fn keeps_hand_edits() {
-  let dir = TempDir::new();
-  let path = dir.file();
+  let dir = TempDir::new("kick-mod-channels");
+  let path = file(&dir);
   channels::update(&path, |known| channels::record(known, "one", 1, None))
     .unwrap();
   // By hand, while kick-mod runs: a chatroom id, a field kick-mod doesn't
@@ -117,8 +92,8 @@ fn keeps_hand_edits() {
 
 #[test]
 fn reports_a_broken_file() {
-  let dir = TempDir::new();
-  let path = dir.file();
+  let dir = TempDir::new("kick-mod-channels");
+  let path = file(&dir);
   fs::create_dir_all(path.parent().unwrap()).unwrap();
   fs::write(&path, "{ not json").unwrap();
   assert!(channels::load(&path).is_err());

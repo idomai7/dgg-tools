@@ -1,36 +1,13 @@
 use {
+  ::common::temp_dir::TempDir,
   ::logger_journal::{
     Reader, Record,
     archive::{self, Archive},
     layout::{archive_file, archive_month_dir},
     record::v0::Body,
   },
-  ::std::{
-    fs,
-    path::{Path, PathBuf},
-    sync::atomic::{AtomicU32, Ordering},
-  },
+  ::std::{fs, path::Path},
 };
-
-/// A fresh directory, removed when dropped.
-struct TempRoot(PathBuf);
-
-impl TempRoot {
-  fn new() -> Self {
-    static N: AtomicU32 = AtomicU32::new(0);
-    let n = N.fetch_add(1, Ordering::Relaxed);
-    let dir = ::std::env::temp_dir()
-      .join(format!("journal-archive-test-{}-{n}", ::std::process::id()));
-    let _ = fs::remove_dir_all(&dir);
-    Self(dir)
-  }
-}
-
-impl Drop for TempRoot {
-  fn drop(&mut self) {
-    let _ = fs::remove_dir_all(&self.0);
-  }
-}
 
 fn entry(day: &str, lines: u64) -> Archive {
   Archive {
@@ -86,13 +63,13 @@ fn manifest_format() {
 
 #[test]
 fn recording_replaces_and_lists() {
-  let root = TempRoot::new();
-  assert_eq!(archive::all(&root.0).unwrap(), []);
-  archive::record(&root.0, &entry("2026-12-01", 1)).unwrap();
-  archive::record(&root.0, &entry("2026-11-08", 1)).unwrap();
-  archive::record(&root.0, &entry("2026-11-08", 5)).unwrap();
-  archive::record(&root.0, &entry("2025-01-31", 1)).unwrap();
-  let days: Vec<_> = archive::all(&root.0)
+  let root = TempDir::new("logger-journal-archive");
+  assert_eq!(archive::all(root.path()).unwrap(), []);
+  archive::record(root.path(), &entry("2026-12-01", 1)).unwrap();
+  archive::record(root.path(), &entry("2026-11-08", 1)).unwrap();
+  archive::record(root.path(), &entry("2026-11-08", 5)).unwrap();
+  archive::record(root.path(), &entry("2025-01-31", 1)).unwrap();
+  let days: Vec<_> = archive::all(root.path())
     .unwrap()
     .into_iter()
     .map(|archive| (archive.day, archive.lines))
@@ -105,13 +82,18 @@ fn recording_replaces_and_lists() {
       ("2026-12-01".into(), 1),
     ]
   );
-  assert_eq!(archive::read_month(&root.0, "2026-11-30").unwrap().len(), 1);
+  assert_eq!(
+    archive::read_month(root.path(), "2026-11-30")
+      .unwrap()
+      .len(),
+    1
+  );
 }
 
 #[test]
 fn reader_reads_archives_and_resumes() {
-  let root = TempRoot::new();
-  let path = archive_file(&root.0, "1970-01-01");
+  let root = TempDir::new("logger-journal-archive");
+  let path = archive_file(root.path(), "1970-01-01");
   fs::create_dir_all(path.parent().unwrap()).unwrap();
   let journal = "journal 0.1\n0 a 1 frame MSG 1\n5 b 1 frame MSG 2\n";
   let compressed = ::zstd::encode_all(journal.as_bytes(), 3).unwrap();

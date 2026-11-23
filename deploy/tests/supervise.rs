@@ -1,6 +1,7 @@
 //! The supervisor, with small scripts standing in for the logger's programs.
 
 use {
+  ::common::temp_dir::TempDir,
   ::deploy::supervise::{Backoff, Config, Exit, Program, Stop, run},
   ::std::{
     fs,
@@ -10,27 +11,9 @@ use {
   },
 };
 
-struct TempDir(PathBuf);
-
-impl TempDir {
-  fn new(name: &str) -> Self {
-    let path = ::std::env::temp_dir()
-      .join(format!("deploy-supervise-{name}-{}", ::std::process::id()));
-    let _ = fs::remove_dir_all(&path);
-    fs::create_dir_all(&path).unwrap();
-    Self(path)
-  }
-
-  fn log(&self, name: &str) -> String {
-    fs::read_to_string(self.0.join("logs").join(format!("{name}.log")))
-      .unwrap_or_default()
-  }
-}
-
-impl Drop for TempDir {
-  fn drop(&mut self) {
-    let _ = fs::remove_dir_all(&self.0);
-  }
+fn log(dir: &TempDir, name: &str) -> String {
+  fs::read_to_string(dir.path().join("logs").join(format!("{name}.log")))
+    .unwrap_or_default()
 }
 
 /// What a script does, in either shell.
@@ -97,9 +80,12 @@ fn script(dir: &Path, name: &str, steps: &[Step]) -> Program {
 }
 
 fn config(dir: &TempDir, capture: Program, index: Program) -> Config {
-  let quiet = script(&dir.0, "compact", &[Step::Exit(0)]);
-  let mut config =
-    Config::new(&dir.0, &dir.0.join("data"), &dir.0.join("logs"));
+  let quiet = script(dir.path(), "compact", &[Step::Exit(0)]);
+  let mut config = Config::new(
+    dir.path(),
+    &dir.path().join("data"),
+    &dir.path().join("logs"),
+  );
   config.capture = capture;
   config.index = index;
   config.compact = quiet;
@@ -114,43 +100,46 @@ fn config(dir: &TempDir, capture: Program, index: Program) -> Config {
 
 #[test]
 fn exits_when_capture_hands_off() {
-  let dir = TempDir::new("handoff");
+  let dir = TempDir::new("deploy-supervise-handoff");
   let capture = script(
-    &dir.0,
+    dir.path(),
     "capture",
     &[Step::Say("capturing"), Step::Sleep(1), Step::Exit(0)],
   );
-  let index =
-    script(&dir.0, "index", &[Step::Say("indexing"), Step::Sleep(20)]);
+  let index = script(
+    dir.path(),
+    "index",
+    &[Step::Say("indexing"), Step::Sleep(20)],
+  );
   let started = Instant::now();
   let exit = run(&config(&dir, capture, index), &Stop::new()).unwrap();
   assert_eq!(exit, Exit::HandedOff);
   // The index is killed, not waited for.
   assert!(started.elapsed() < Duration::from_secs(10));
-  assert!(dir.log("capture").contains(" capturing"));
-  assert!(dir.log("index").contains(" indexing"));
-  let supervisor = dir.log("supervisor");
+  assert!(log(&dir, "capture").contains(" capturing"));
+  assert!(log(&dir, "index").contains(" indexing"));
+  let supervisor = log(&dir, "supervisor");
   assert!(supervisor.contains("capture handed off; stopping"));
   assert!(supervisor.contains("index: stopped"));
 }
 
 #[test]
 fn restarts_programs_that_fail() {
-  let dir = TempDir::new("restart");
-  let capture = script(&dir.0, "capture", &[Step::FailOnce("failed")]);
-  let index = script(&dir.0, "index", &[Step::Sleep(20)]);
+  let dir = TempDir::new("deploy-supervise-restart");
+  let capture = script(dir.path(), "capture", &[Step::FailOnce("failed")]);
+  let index = script(dir.path(), "index", &[Step::Sleep(20)]);
   let exit = run(&config(&dir, capture, index), &Stop::new()).unwrap();
   assert_eq!(exit, Exit::HandedOff);
-  let supervisor = dir.log("supervisor");
+  let supervisor = log(&dir, "supervisor");
   assert!(supervisor.contains("capture: exited, exit code: 1"));
   assert!(supervisor.contains("capture: restarting in 0.05s"));
 }
 
 #[test]
 fn stops_on_request() {
-  let dir = TempDir::new("stop");
-  let capture = script(&dir.0, "capture", &[Step::Sleep(20)]);
-  let index = script(&dir.0, "index", &[Step::Sleep(20)]);
+  let dir = TempDir::new("deploy-supervise-stop");
+  let capture = script(dir.path(), "capture", &[Step::Sleep(20)]);
+  let index = script(dir.path(), "index", &[Step::Sleep(20)]);
   let stop = Stop::new();
   let requester = stop.clone();
   thread::spawn(move || {
@@ -161,26 +150,26 @@ fn stops_on_request() {
   let exit = run(&config(&dir, capture, index), &stop).unwrap();
   assert_eq!(exit, Exit::Stopped);
   assert!(started.elapsed() < Duration::from_secs(10));
-  let supervisor = dir.log("supervisor");
+  let supervisor = log(&dir, "supervisor");
   assert!(supervisor.contains("capture: stopped"));
   assert!(supervisor.contains("index: stopped"));
 }
 
 #[test]
 fn one_index_at_a_time() {
-  let dir = TempDir::new("lock");
+  let dir = TempDir::new("deploy-supervise-lock");
   let first = config(
     &dir,
-    script(&dir.0, "capture", &[Step::Sleep(20)]),
+    script(dir.path(), "capture", &[Step::Sleep(20)]),
     script(
-      &dir.0,
+      dir.path(),
       "index",
       &[Step::Say("first index"), Step::Sleep(20)],
     ),
   );
   let mut second = first.clone();
-  second.logs = dir.0.join("logs2");
-  second.index = script(&dir.0, "index2", &[Step::Say("second index")]);
+  second.logs = dir.path().join("logs2");
+  second.index = script(dir.path(), "index2", &[Step::Say("second index")]);
   let (stop_first, stop_second) = (Stop::new(), Stop::new());
   thread::scope(|scope| {
     scope.spawn(|| run(&first, &stop_first).unwrap());
@@ -188,11 +177,11 @@ fn one_index_at_a_time() {
     scope.spawn(|| run(&second, &stop_second).unwrap());
     thread::sleep(Duration::from_millis(1500));
     let waiting =
-      fs::read_to_string(dir.0.join("logs2/supervisor.log")).unwrap();
+      fs::read_to_string(dir.path().join("logs2/supervisor.log")).unwrap();
     assert!(waiting.contains("another supervisor has it"), "{waiting}");
     assert!(
-      !dir.0.join("logs2/index.log").exists() || {
-        !fs::read_to_string(dir.0.join("logs2/index.log"))
+      !dir.path().join("logs2/index.log").exists() || {
+        !fs::read_to_string(dir.path().join("logs2/index.log"))
           .unwrap()
           .contains("second index")
       }
@@ -200,7 +189,7 @@ fn one_index_at_a_time() {
     // Once the first stops, the second takes over the index.
     stop_first.request();
     thread::sleep(Duration::from_millis(2500));
-    let index = fs::read_to_string(dir.0.join("logs2/index.log")).unwrap();
+    let index = fs::read_to_string(dir.path().join("logs2/index.log")).unwrap();
     assert!(index.contains("second index"), "{index}");
     stop_second.request();
   });
@@ -231,11 +220,11 @@ fn runs_the_loggers_commands() {
 /// Runs `run` with a capture that hands off after a few seconds, and a sync
 /// that says how it was called, due soon after start.
 fn run_with_sync(dir: &TempDir, peers: Option<PathBuf>) {
-  let capture = script(&dir.0, "capture", &[Step::Sleep(3), Step::Exit(0)]);
-  let index = script(&dir.0, "index", &[Step::Sleep(20)]);
+  let capture = script(dir.path(), "capture", &[Step::Sleep(3), Step::Exit(0)]);
+  let index = script(dir.path(), "index", &[Step::Sleep(20)]);
   let mut config = config(dir, capture, index);
   let mut sync =
-    script(&dir.0, "sync", &[Step::SayArgsAnd("LOGGER_PEER_TOKEN")]);
+    script(dir.path(), "sync", &[Step::SayArgsAnd("LOGGER_PEER_TOKEN")]);
   sync.args = vec!["sync".into()];
   config.sync = sync;
   config.peers = peers;
@@ -246,22 +235,22 @@ fn run_with_sync(dir: &TempDir, peers: Option<PathBuf>) {
 
 #[test]
 fn syncs_from_the_peer_file() {
-  let dir = TempDir::new("sync");
+  let dir = TempDir::new("deploy-supervise-sync");
   fs::write(
-    dir.0.join("peer.env"),
+    dir.path().join("peer.env"),
     "# the old host\nLOGGER_PEER_URL=http://peer:8788\n\
      LOGGER_PEER_TOKEN=\"secret\"\n",
   )
   .unwrap();
-  run_with_sync(&dir, Some(dir.0.clone()));
-  let sync = dir.log("sync");
+  run_with_sync(&dir, Some(dir.to_path_buf()));
+  let sync = log(&dir, "sync");
   // The URL as an argument; the token only in its environment. Each line
   // says which peer it's about.
   assert!(
     sync.contains(" peer: sync --peer http://peer:8788 secret"),
     "{sync}"
   );
-  let supervisor = dir.log("supervisor");
+  let supervisor = log(&dir, "supervisor");
   assert!(
     supervisor.contains("sync: from peer (http://peer:8788)"),
     "{supervisor}"
@@ -271,29 +260,29 @@ fn syncs_from_the_peer_file() {
 
 #[test]
 fn syncs_from_every_node_in_turn() {
-  let dir = TempDir::new("mesh");
+  let dir = TempDir::new("deploy-supervise-mesh");
   fs::write(
-    dir.0.join("nodes"),
+    dir.path().join("nodes"),
     "a https://a:8788\nb https://b:8788\nme https://me:8788\npi push\n",
   )
   .unwrap();
   fs::write(
-    dir.0.join("mesh.env"),
+    dir.path().join("mesh.env"),
     "LOGGER_NODE=me\nLOGGER_PEER_TOKEN=mesh\n",
   )
   .unwrap();
   // With the mesh's CA, HTTPS peers trust it alone; others can't.
-  fs::write(dir.0.join("ca.pem"), "the CA").unwrap();
-  fs::create_dir(dir.0.join("peers")).unwrap();
+  fs::write(dir.path().join("ca.pem"), "the CA").unwrap();
+  fs::create_dir(dir.path().join("peers")).unwrap();
   fs::write(
-    dir.0.join("peers").join("old.env"),
+    dir.path().join("peers").join("old.env"),
     "LOGGER_PEER_URL=http://old:8788\nLOGGER_PEER_TOKEN=old\n",
   )
   .unwrap();
-  run_with_sync(&dir, Some(dir.0.clone()));
-  let sync = dir.log("sync");
+  run_with_sync(&dir, Some(dir.to_path_buf()));
+  let sync = log(&dir, "sync");
   let at = |text: &str| sync.find(text).unwrap_or_else(|| panic!("{sync}"));
-  let ca = dir.0.join("ca.pem");
+  let ca = dir.path().join("ca.pem");
   let a = at(&format!(
     " a: sync --peer https://a:8788 --peer-ca {} mesh",
     ca.display()
@@ -313,12 +302,12 @@ fn syncs_from_every_node_in_turn() {
 
 #[test]
 fn skips_sync_without_a_peer() {
-  let dir = TempDir::new("no-peer");
-  run_with_sync(&dir, Some(dir.0.clone()));
-  assert!(dir.log("sync").is_empty());
-  assert!(dir.log("supervisor").contains("sync: no peers in"));
+  let dir = TempDir::new("deploy-supervise-no-peer");
+  run_with_sync(&dir, Some(dir.to_path_buf()));
+  assert!(log(&dir, "sync").is_empty());
+  assert!(log(&dir, "supervisor").contains("sync: no peers in"));
   // With nowhere to look for peers, no sync at all.
-  let dir = TempDir::new("no-peer-file");
+  let dir = TempDir::new("deploy-supervise-no-peer-file");
   run_with_sync(&dir, None);
-  assert!(!dir.0.join("logs").join("sync.log").exists());
+  assert!(!dir.path().join("logs").join("sync.log").exists());
 }

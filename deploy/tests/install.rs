@@ -2,6 +2,7 @@
 //! scheduled task.
 
 use {
+  ::common::temp_dir::TempDir,
   ::common::time::now_ms,
   ::deploy::install::{BINARIES, build_name, copy_build, prune, wait_healthy},
   ::std::{
@@ -11,24 +12,6 @@ use {
     time::Duration,
   },
 };
-
-struct TempDir(PathBuf);
-
-impl TempDir {
-  fn new(name: &str) -> Self {
-    let path = ::std::env::temp_dir()
-      .join(format!("deploy-install-{name}-{}", ::std::process::id()));
-    let _ = fs::remove_dir_all(&path);
-    fs::create_dir_all(&path).unwrap();
-    Self(path)
-  }
-}
-
-impl Drop for TempDir {
-  fn drop(&mut self) {
-    let _ = fs::remove_dir_all(&self.0);
-  }
-}
 
 fn exe(dir: &Path, name: &str) -> PathBuf {
   dir.join(format!("{name}{EXE_SUFFIX}"))
@@ -45,13 +28,13 @@ fn names_builds_by_time_and_commit() {
 
 #[test]
 fn copies_a_whole_build_or_nothing() {
-  let dir = TempDir::new("copy");
-  let from = dir.0.join("release");
+  let dir = TempDir::new("deploy-install-copy");
+  let from = dir.path().join("release");
   fs::create_dir_all(&from).unwrap();
   for binary in &BINARIES[1..] {
     fs::write(exe(&from, binary), binary).unwrap();
   }
-  let bin = dir.0.join("bin");
+  let bin = dir.path().join("bin");
   let error = copy_build(&from, &bin, "b1").unwrap_err().to_string();
   assert!(error.starts_with("dgg-supervisor isn't in"), "{error}");
   assert!(!bin.join("b1").exists());
@@ -66,29 +49,29 @@ fn copies_a_whole_build_or_nothing() {
 
 #[test]
 fn prunes_old_builds() {
-  let dir = TempDir::new("prune");
+  let dir = TempDir::new("deploy-install-prune");
   for build in [
     "20260101-000000-0.1.0",
     "20260102-000000-0.1.0",
     "20260103-000000-0.1.0",
   ] {
-    fs::create_dir_all(dir.0.join(build)).unwrap();
-    fs::write(dir.0.join(build).join("x"), "").unwrap();
+    fs::create_dir_all(dir.path().join(build)).unwrap();
+    fs::write(dir.path().join(build).join("x"), "").unwrap();
   }
-  assert_eq!(prune(&dir.0, 2).unwrap(), Vec::<PathBuf>::new());
-  let mut left: Vec<_> = fs::read_dir(&dir.0)
+  assert_eq!(prune(dir.path(), 2).unwrap(), Vec::<PathBuf>::new());
+  let mut left: Vec<_> = fs::read_dir(dir.path())
     .unwrap()
     .map(|entry| entry.unwrap().file_name().into_string().unwrap())
     .collect();
   left.sort();
   assert_eq!(left, ["20260102-000000-0.1.0", "20260103-000000-0.1.0"]);
-  assert!(prune(&dir.0.join("missing"), 1).unwrap().is_empty());
+  assert!(prune(&dir.path().join("missing"), 1).unwrap().is_empty());
 }
 
 #[test]
 fn waits_for_a_new_healthy_capture() {
-  let dir = TempDir::new("healthy");
-  let control = dir.0.join("control");
+  let dir = TempDir::new("deploy-install-healthy");
+  let control = dir.path().join("control");
   fs::create_dir_all(&control).unwrap();
   let now = now_ms();
   let write = |instance: &str, started: i64, healthy: bool| {
@@ -104,10 +87,12 @@ fn waits_for_a_new_healthy_capture() {
   write("old-1", now - 600_000, true);
   write("new-2", now, false);
   let short = Duration::from_millis(600);
-  assert_eq!(wait_healthy(&dir.0, now - 1000, short).unwrap(), None);
+  assert_eq!(wait_healthy(dir.path(), now - 1000, short).unwrap(), None);
   write("new-2", now, true);
   assert_eq!(
-    wait_healthy(&dir.0, now - 1000, short).unwrap().as_deref(),
+    wait_healthy(dir.path(), now - 1000, short)
+      .unwrap()
+      .as_deref(),
     Some("new-2")
   );
 }
@@ -230,12 +215,12 @@ mod acl {
 
   #[test]
   fn finds_links_without_following_them() {
-    let dir = TempDir::new("links");
-    fs::create_dir_all(dir.0.join(r"a\b")).unwrap();
-    fs::write(dir.0.join(r"a\file"), "").unwrap();
-    assert!(links(&dir.0).unwrap().is_empty());
+    let dir = TempDir::new("deploy-install-links");
+    fs::create_dir_all(dir.path().join(r"a\b")).unwrap();
+    fs::write(dir.path().join(r"a\file"), "").unwrap();
+    assert!(links(dir.path()).unwrap().is_empty());
     // A junction (which needs no elevation) to somewhere big.
-    let junction = dir.0.join(r"a\b\elsewhere");
+    let junction = dir.path().join(r"a\b\elsewhere");
     let made = Command::new("cmd.exe")
       .args(["/c", "mklink", "/J"])
       .arg(&junction)
@@ -243,7 +228,10 @@ mod acl {
       .output()
       .unwrap();
     assert!(made.status.success());
-    assert_eq!(links(&dir.0).unwrap(), ::std::slice::from_ref(&junction));
+    assert_eq!(
+      links(dir.path()).unwrap(),
+      ::std::slice::from_ref(&junction)
+    );
     fs::remove_dir(&junction).unwrap();
   }
 
@@ -254,8 +242,8 @@ mod acl {
     if !elevated() {
       return;
     }
-    let dir = TempDir::new("secret");
-    let file = dir.0.join("peer.env");
+    let dir = TempDir::new("deploy-install-secret");
+    let file = dir.path().join("peer.env");
     fs::write(&file, "").unwrap();
     secret(&file, &[r"NT AUTHORITY\LOCAL SERVICE"]).unwrap();
     let shown = Command::new("icacls.exe").arg(&file).output().unwrap();
@@ -267,9 +255,9 @@ mod acl {
 
   #[test]
   fn reads_owners() {
-    let dir = TempDir::new("owner");
+    let dir = TempDir::new("deploy-install-owner");
     // Made by this (unelevated) user, so owned by them, not Administrators.
-    let sid = owner(&dir.0).unwrap();
+    let sid = owner(dir.path()).unwrap();
     assert!(sid.starts_with("S-1-5-"), "{sid}");
     if !elevated() {
       assert_ne!(sid, "S-1-5-32-544");
@@ -337,18 +325,18 @@ mod moving {
   };
 
   fn write(dir: &TempDir, path: &str, text: &str) {
-    let path = dir.0.join(path);
+    let path = dir.path().join(path);
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(path, text).unwrap();
   }
 
   #[test]
   fn merges_data_unless_a_file_is_in_both() {
-    let dir = TempDir::new("merge");
+    let dir = TempDir::new("deploy-install-merge");
     write(&dir, "old/journal/live/2026-11-09/a-1.journal", "a");
     write(&dir, "old/index.sqlite", "i");
     write(&dir, "new/journal/live/2026-11-09/b-2.journal", "b");
-    let (old, new) = (dir.0.join("old"), dir.0.join("new"));
+    let (old, new) = (dir.path().join("old"), dir.path().join("new"));
     assert!(collisions(&old, &new).unwrap().is_empty());
     merge(&old, &new).unwrap();
     assert!(!old.exists());
@@ -375,11 +363,11 @@ mod moving {
 
   #[test]
   fn merges_logs_oldest_first() {
-    let dir = TempDir::new("logs");
+    let dir = TempDir::new("deploy-install-logs");
     write(&dir, "old/capture.log", "old\n");
     write(&dir, "old/index.log", "index\n");
     write(&dir, "new/capture.log", "new\n");
-    let (old, new) = (dir.0.join("old"), dir.0.join("new"));
+    let (old, new) = (dir.path().join("old"), dir.path().join("new"));
     merge_logs(&old, &new).unwrap();
     assert_eq!(
       fs::read_to_string(new.join("capture.log")).unwrap(),
@@ -398,13 +386,17 @@ mod moving {
 fn bridges_run_detached_into_their_log() {
   use ::deploy::install::bridge;
 
-  let dir = TempDir::new("bridge");
+  let dir = TempDir::new("deploy-install-bridge");
   // Something to stand in for dgg-logger: it complains about `capture`,
   // into the log, and exits.
-  fs::copy(r"C:\Windows\System32\whoami.exe", exe(&dir.0, "dgg-logger"))
-    .unwrap();
-  let log = dir.0.join("bridge.log");
-  let mut child = bridge::start(&dir.0, &dir.0.join("data"), &log).unwrap();
+  fs::copy(
+    r"C:\Windows\System32\whoami.exe",
+    exe(dir.path(), "dgg-logger"),
+  )
+  .unwrap();
+  let log = dir.path().join("bridge.log");
+  let mut child =
+    bridge::start(dir.path(), &dir.path().join("data"), &log).unwrap();
   assert!(bridge::wait_gone(&mut child, Duration::from_secs(10)));
   assert!(!fs::read(&log).unwrap().is_empty());
 }

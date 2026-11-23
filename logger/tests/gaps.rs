@@ -1,36 +1,11 @@
 use {
+  ::common::temp_dir::TempDir,
   ::logger::{
     gaps::{Gap, coverage, unfetched},
     index::{index, open},
   },
   ::logger_journal::{Writer, record::v0::Body},
-  ::std::{
-    fs,
-    path::PathBuf,
-    sync::atomic::{AtomicU32, Ordering},
-  },
 };
-
-/// A fresh directory, removed when dropped.
-struct TempRoot(PathBuf);
-
-impl TempRoot {
-  fn new() -> Self {
-    static N: AtomicU32 = AtomicU32::new(0);
-    let n = N.fetch_add(1, Ordering::Relaxed);
-    let dir = ::std::env::temp_dir()
-      .join(format!("logger-gaps-test-{}-{n}", ::std::process::id()));
-    let _ = fs::remove_dir_all(&dir);
-    fs::create_dir_all(&dir).unwrap();
-    Self(dir)
-  }
-}
-
-impl Drop for TempRoot {
-  fn drop(&mut self) {
-    let _ = fs::remove_dir_all(&self.0);
-  }
-}
 
 fn history(timestamps: &[i64]) -> Body {
   let entries: Vec<_> = timestamps
@@ -49,8 +24,8 @@ fn history(timestamps: &[i64]) -> Body {
 
 #[test]
 fn finds_gaps_and_coverage() {
-  let root = TempRoot::new();
-  let journal = root.0.join("journal");
+  let root = TempDir::new("logger-gaps");
+  let journal = root.path().join("journal");
   let open_url = || Body::Open("wss://x".into());
 
   // a#1: 1000..2000, closed. a#2: 2500..3000, never closed (crashed); its
@@ -74,7 +49,7 @@ fn finds_gaps_and_coverage() {
   b.write(4000, 1, Body::Close("shutdown".into())).unwrap();
   drop(b);
 
-  let mut db = open(&root.0.join("index.sqlite")).unwrap();
+  let mut db = open(&root.path().join("index.sqlite")).unwrap();
   index(&mut db, &journal).unwrap();
   let coverage = coverage(&db).unwrap().unwrap();
   assert_eq!((coverage.first, coverage.last), (1000, 4000));
@@ -119,15 +94,15 @@ fn finds_gaps_and_coverage() {
 
 #[test]
 fn no_connections_no_coverage() {
-  let root = TempRoot::new();
-  let db = open(&root.0.join("index.sqlite")).unwrap();
+  let root = TempDir::new("logger-gaps");
+  let db = open(&root.path().join("index.sqlite")).unwrap();
   assert_eq!(coverage(&db).unwrap(), None);
 }
 
 #[test]
 fn fetched_spans_fill_gaps() {
-  let root = TempRoot::new();
-  let journal = root.0.join("journal");
+  let root = TempDir::new("logger-gaps");
+  let journal = root.path().join("journal");
   let mut a = Writer::new(&journal, "a");
   a.write(1000, 1, Body::Open("wss://x".into())).unwrap();
   a.write(2000, 1, Body::Close("reset".into())).unwrap();
@@ -148,7 +123,7 @@ fn fetched_spans_fill_gaps() {
   }
   drop(backfill);
 
-  let mut db = open(&root.0.join("index.sqlite")).unwrap();
+  let mut db = open(&root.path().join("index.sqlite")).unwrap();
   index(&mut db, &journal).unwrap();
   let gaps = coverage(&db).unwrap().unwrap().gaps;
   let summary: Vec<_> = gaps
@@ -163,8 +138,8 @@ fn fetched_spans_fill_gaps() {
 
 #[test]
 fn unfetched_ranges_resume_a_history_import() {
-  let root = TempRoot::new();
-  let journal = root.0.join("journal");
+  let root = TempDir::new("logger-gaps");
+  let journal = root.path().join("journal");
   let mut backfill = Writer::backfill(&journal, "backfill-x").unwrap();
   let spans = [
     ("linkers", 2000, 3000),
@@ -182,7 +157,7 @@ fn unfetched_ranges_resume_a_history_import() {
   }
   drop(backfill);
 
-  let mut db = open(&root.0.join("index.sqlite")).unwrap();
+  let mut db = open(&root.path().join("index.sqlite")).unwrap();
   index(&mut db, &journal).unwrap();
   // Only this source's spans count; what's left comes newest first.
   assert_eq!(

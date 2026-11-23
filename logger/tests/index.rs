@@ -1,43 +1,19 @@
 use {
+  ::common::temp_dir::TempDir,
   ::logger::index::{
     Error, SCHEMA_VERSION, follow, index, open, rebuild, user_version,
   },
   ::logger_journal::{Version, Writer, record::v0::Body},
   ::rusqlite::Connection,
-  ::std::{
-    fs,
-    path::PathBuf,
-    sync::atomic::{AtomicU32, Ordering},
-  },
+  ::std::{path::PathBuf, sync::atomic::Ordering},
 };
 
-/// A fresh directory, removed when dropped.
-struct TempRoot(PathBuf);
-
-impl TempRoot {
-  fn new() -> Self {
-    static N: AtomicU32 = AtomicU32::new(0);
-    let n = N.fetch_add(1, Ordering::Relaxed);
-    let dir = ::std::env::temp_dir()
-      .join(format!("logger-index-test-{}-{n}", ::std::process::id()));
-    let _ = fs::remove_dir_all(&dir);
-    fs::create_dir_all(&dir).unwrap();
-    Self(dir)
-  }
-
-  fn journal(&self) -> PathBuf {
-    self.0.join("journal")
-  }
-
-  fn database(&self) -> PathBuf {
-    self.0.join("index.sqlite")
-  }
+fn journal(dir: &TempDir) -> PathBuf {
+  dir.path().join("journal")
 }
 
-impl Drop for TempRoot {
-  fn drop(&mut self) {
-    let _ = fs::remove_dir_all(&self.0);
-  }
+fn database(dir: &TempDir) -> PathBuf {
+  dir.path().join("index.sqlite")
 }
 
 fn message(timestamp: i64, nick: &str, data: &str) -> String {
@@ -82,7 +58,7 @@ fn count(db: &Connection, sql: &str) -> i64 {
 }
 
 /// Two instances whose live messages and HISTORY replays overlap.
-fn write_journal(root: &TempRoot) {
+fn write_journal(root: &TempDir) {
   let history = |entries: &[String]| {
     let entries: Vec<_> = entries
       .iter()
@@ -90,7 +66,7 @@ fn write_journal(root: &TempRoot) {
       .collect();
     frame(format!("HISTORY {}", ::serde_json::Value::Array(entries)))
   };
-  let mut a = Writer::new(root.journal(), "a");
+  let mut a = Writer::new(journal(root), "a");
   a.write(100, 1, Body::Open("wss://x".into())).unwrap();
   let entries = [
     format!("MSG {}", message(10, "old", "before a started")),
@@ -114,7 +90,7 @@ fn write_journal(root: &TempRoot) {
   a.write(107, 1, Body::Close("handoff to b".into())).unwrap();
   drop(a);
 
-  let mut b = Writer::new(root.journal(), "b");
+  let mut b = Writer::new(journal(root), "b");
   b.write(90, 1, Body::Open("wss://x".into())).unwrap();
   // b saw "second" live earlier than a did, and replays "hello world".
   b.write(91, 1, frame(format!("MSG {}", message(30, "y", "second"))))
@@ -125,10 +101,10 @@ fn write_journal(root: &TempRoot) {
 
 #[test]
 fn indexes_and_deduplicates() {
-  let root = TempRoot::new();
+  let root = TempDir::new("logger-index");
   write_journal(&root);
-  let mut db = open(&root.database()).unwrap();
-  let stats = index(&mut db, &root.journal()).unwrap();
+  let mut db = open(&database(&root)).unwrap();
+  let stats = index(&mut db, &journal(&root)).unwrap();
   assert_eq!((stats.lines, stats.messages, stats.unparsed), (11, 3, 2));
   assert_eq!(stats.skipped, []);
   assert_eq!(
@@ -173,34 +149,34 @@ fn indexes_and_deduplicates() {
 
 #[test]
 fn resumes_from_checkpoints() {
-  let root = TempRoot::new();
+  let root = TempDir::new("logger-index");
   write_journal(&root);
-  let mut db = open(&root.database()).unwrap();
-  index(&mut db, &root.journal()).unwrap();
-  let again = index(&mut db, &root.journal()).unwrap();
+  let mut db = open(&database(&root)).unwrap();
+  index(&mut db, &journal(&root)).unwrap();
+  let again = index(&mut db, &journal(&root)).unwrap();
   assert_eq!((again.lines, again.messages), (0, 0));
 
   // b keeps writing; only the new line is read.
-  let mut b = Writer::new(root.journal(), "b");
+  let mut b = Writer::new(journal(&root), "b");
   b.write(93, 1, frame(format!("MSG {}", message(40, "z", "third"))))
     .unwrap();
   drop(b);
-  let more = index(&mut db, &root.journal()).unwrap();
+  let more = index(&mut db, &journal(&root)).unwrap();
   assert_eq!((more.lines, more.messages), (1, 1));
   assert_eq!(messages(&db).len(), 4);
 
   // A rebuild from scratch gives the same index.
   let incremental = messages(&db);
   drop(db);
-  let mut db = rebuild(&root.database()).unwrap();
-  index(&mut db, &root.journal()).unwrap();
+  let mut db = rebuild(&database(&root)).unwrap();
+  index(&mut db, &journal(&root)).unwrap();
   assert_eq!(messages(&db), incremental);
 }
 
 #[test]
 fn refuses_other_schema_versions() {
-  let root = TempRoot::new();
-  let db = open(&root.database()).unwrap();
+  let root = TempDir::new("logger-index");
+  let db = open(&database(&root)).unwrap();
   let next = Version {
     minor: SCHEMA_VERSION.minor + 1,
     ..SCHEMA_VERSION
@@ -208,9 +184,9 @@ fn refuses_other_schema_versions() {
   db.pragma_update(None, "user_version", user_version(next))
     .unwrap();
   drop(db);
-  let error = open(&root.database()).unwrap_err();
+  let error = open(&database(&root)).unwrap_err();
   assert!(matches!(error, Error::Schema(v) if v == next));
-  assert!(rebuild(&root.database()).is_ok());
+  assert!(rebuild(&database(&root)).is_ok());
 }
 
 #[test]
@@ -219,11 +195,11 @@ fn follows_new_lines() {
     sync::{Arc, atomic::AtomicBool},
     time::{Duration, Instant},
   };
-  let root = TempRoot::new();
+  let root = TempDir::new("logger-index");
   write_journal(&root);
   let running = Arc::new(AtomicBool::new(true));
   let follower = {
-    let (database, journal) = (root.database(), root.journal());
+    let (database, journal) = (database(&root), journal(&root));
     let running = running.clone();
     ::std::thread::spawn(move || {
       let mut db = open(&database).unwrap();
@@ -240,7 +216,7 @@ fn follows_new_lines() {
     })
   };
 
-  let reader = open(&root.database()).unwrap();
+  let reader = open(&database(&root)).unwrap();
   let wait_for = |expected| {
     let deadline = Instant::now() + Duration::from_secs(5);
     while count(&reader, "SELECT count(*) FROM messages") != expected {
@@ -249,7 +225,7 @@ fn follows_new_lines() {
     }
   };
   wait_for(3);
-  let mut b = Writer::new(root.journal(), "b");
+  let mut b = Writer::new(journal(&root), "b");
   b.write(93, 1, frame(format!("MSG {}", message(40, "z", "third"))))
     .unwrap();
   b.sync().unwrap();
@@ -260,7 +236,7 @@ fn follows_new_lines() {
 
 #[test]
 fn backfill_yields_to_native_messages() {
-  let root = TempRoot::new();
+  let root = TempDir::new("logger-index");
   let live = |nick: &str, timestamp, data: &str| {
     frame(format!("MSG {}", message(timestamp, nick, data)))
   };
@@ -270,11 +246,11 @@ fn backfill_yields_to_native_messages() {
     nick: nick.into(),
     text: text.into(),
   };
-  let mut a = Writer::new(root.journal(), "a");
+  let mut a = Writer::new(journal(&root), "a");
   a.write(100, 1, Body::Open("wss://x".into())).unwrap();
   a.write(101, 1, live("Alice", 100, "one\ntwo")).unwrap();
   drop(a);
-  let mut backfill = Writer::new(root.journal(), "backfill-x");
+  let mut backfill = Writer::new(journal(&root), "backfill-x");
   // The same message as a's, as rustlesearch has it: skipped.
   backfill
     .write(900, 1, fetched(100, "alice", "one two"))
@@ -295,8 +271,8 @@ fn backfill_yields_to_native_messages() {
   backfill.write(900, 1, range).unwrap();
   drop(backfill);
 
-  let mut db = open(&root.database()).unwrap();
-  let stats = index(&mut db, &root.journal()).unwrap();
+  let mut db = open(&database(&root)).unwrap();
+  let stats = index(&mut db, &journal(&root)).unwrap();
   assert_eq!((stats.messages, stats.backfilled), (4, 3));
   let rows = |db: &Connection| -> Vec<(i64, String, String)> {
     messages(db)
@@ -317,12 +293,12 @@ fn backfill_yields_to_native_messages() {
 
   // Native messages arrive later: Bob's replaces the backfilled copy, and
   // Carol's other message re-cases hers.
-  let mut b = Writer::new(root.journal(), "b");
+  let mut b = Writer::new(journal(&root), "b");
   b.write(1000, 1, Body::Open("wss://x".into())).unwrap();
   b.write(1001, 1, live("Bob", 300, "bob\nsays")).unwrap();
   b.write(1002, 1, live("Carol", 260, "yo")).unwrap();
   drop(b);
-  index(&mut db, &root.journal()).unwrap();
+  index(&mut db, &journal(&root)).unwrap();
   assert_eq!(
     rows(&db),
     [
@@ -349,14 +325,14 @@ fn backfill_yields_to_native_messages() {
   // Rebuilding indexes the files in one go, in path order, and agrees.
   let incremental = messages(&db);
   drop(db);
-  let mut db = rebuild(&root.database()).unwrap();
-  index(&mut db, &root.journal()).unwrap();
+  let mut db = rebuild(&database(&root)).unwrap();
+  index(&mut db, &journal(&root)).unwrap();
   assert_eq!(messages(&db), incremental);
 }
 
 #[test]
 fn truncated_timestamps_match_within_their_second() {
-  let root = TempRoot::new();
+  let root = TempDir::new("logger-index");
   let live = |nick: &str, timestamp, data: &str| {
     frame(format!("MSG {}", message(timestamp, nick, data)))
   };
@@ -367,11 +343,11 @@ fn truncated_timestamps_match_within_their_second() {
       nick: nick.into(),
       text: text.into(),
     };
-  let mut a = Writer::new(root.journal(), "a");
+  let mut a = Writer::new(journal(&root), "a");
   a.write(100, 1, Body::Open("wss://x".into())).unwrap();
   a.write(101, 1, live("Alice", 5_250, "one\ntwo")).unwrap();
   drop(a);
-  let mut linkers = Writer::new(root.journal(), "backfill-l");
+  let mut linkers = Writer::new(journal(&root), "backfill-l");
   // Alice's message truncated to its second: skipped.
   linkers
     .write(900, 1, fetched("linkers", 5_000, "Alice", "one two"))
@@ -388,14 +364,14 @@ fn truncated_timestamps_match_within_their_second() {
     .unwrap();
   drop(linkers);
 
-  let mut db = open(&root.database()).unwrap();
-  let stats = index(&mut db, &root.journal()).unwrap();
+  let mut db = open(&database(&root)).unwrap();
+  let stats = index(&mut db, &journal(&root)).unwrap();
   assert_eq!((stats.messages, stats.backfilled), (4, 3));
 
   // rustlesearch's precise copy of Bob's replaces linkers', taking the
   // casing linkers had; a native copy of Carol's replaces hers. Named to
   // sort first, so a rebuild indexes these in the other order.
-  let mut rustle = Writer::new(root.journal(), "backfill-0");
+  let mut rustle = Writer::new(journal(&root), "backfill-0");
   rustle
     .write(950, 1, fetched("rustlesearch", 7_420, "bob", "bob says"))
     .unwrap();
@@ -403,11 +379,11 @@ fn truncated_timestamps_match_within_their_second() {
     .write(950, 1, fetched("rustlesearch", 6_500, "bob", "first"))
     .unwrap();
   drop(rustle);
-  let mut b = Writer::new(root.journal(), "b");
+  let mut b = Writer::new(journal(&root), "b");
   b.write(1000, 1, Body::Open("wss://x".into())).unwrap();
   b.write(1001, 1, live("Carol", 8_999, "hi")).unwrap();
   drop(b);
-  index(&mut db, &root.journal()).unwrap();
+  index(&mut db, &journal(&root)).unwrap();
   let rows: Vec<(i64, String, String)> = messages(&db)
     .into_iter()
     .map(|(timestamp, nick, _, _, source)| (timestamp, nick, source))
@@ -431,33 +407,33 @@ fn truncated_timestamps_match_within_their_second() {
   // Rebuilding agrees.
   let incremental = messages(&db);
   drop(db);
-  let mut db = rebuild(&root.database()).unwrap();
-  index(&mut db, &root.journal()).unwrap();
+  let mut db = rebuild(&database(&root)).unwrap();
+  index(&mut db, &journal(&root)).unwrap();
   assert_eq!(messages(&db), incremental);
 }
 
 #[test]
 fn follows_files_into_archives() {
   use ::logger::compact::compact_day;
-  let root = TempRoot::new();
+  let root = TempDir::new("logger-index");
   let live = |nick: &str, timestamp, data: &str| {
     frame(format!("MSG {}", message(timestamp, nick, data)))
   };
-  let mut a = Writer::new(root.journal(), "a");
+  let mut a = Writer::new(journal(&root), "a");
   a.write(100, 1, Body::Open("wss://x".into())).unwrap();
   a.write(101, 1, live("Alice", 101, "one")).unwrap();
   a.write(102, 1, live("Bob", 102, "two")).unwrap();
   drop(a);
-  let mut db = open(&root.database()).unwrap();
-  index(&mut db, &root.journal()).unwrap();
+  let mut db = open(&database(&root)).unwrap();
+  index(&mut db, &journal(&root)).unwrap();
   assert_eq!(messages(&db).len(), 2);
 
   // Compacting moves the day into an archive: indexed once more (nothing
   // new), its live checkpoint forgotten, then skipped without being read.
-  compact_day(&root.journal(), "1970-01-01", 3)
+  compact_day(&journal(&root), "1970-01-01", 3)
     .unwrap()
     .unwrap();
-  let archived = index(&mut db, &root.journal()).unwrap();
+  let archived = index(&mut db, &journal(&root)).unwrap();
   assert_eq!((archived.lines, archived.messages), (3, 0));
   let paths = |db: &Connection| -> Vec<(String, bool)> {
     db.prepare("SELECT path, digest IS NOT NULL FROM files ORDER BY path")
@@ -469,27 +445,27 @@ fn follows_files_into_archives() {
   };
   let archive_path = "archive/1970/01/1970-01-01.journal.zst".to_owned();
   assert_eq!(paths(&db), [(archive_path.clone(), true)]);
-  let idle = index(&mut db, &root.journal()).unwrap();
+  let idle = index(&mut db, &journal(&root)).unwrap();
   assert_eq!(idle.lines, 0);
 
   // A late file re-merges the archive: its digest changes, so it's read
   // again from the start, and the late message arrives.
-  let mut b = Writer::new(root.journal(), "b");
+  let mut b = Writer::new(journal(&root), "b");
   b.write(103, 1, Body::Open("wss://x".into())).unwrap();
   b.write(104, 1, live("Carol", 104, "three")).unwrap();
   drop(b);
-  compact_day(&root.journal(), "1970-01-01", 3)
+  compact_day(&journal(&root), "1970-01-01", 3)
     .unwrap()
     .unwrap();
-  let remerged = index(&mut db, &root.journal()).unwrap();
+  let remerged = index(&mut db, &journal(&root)).unwrap();
   assert_eq!((remerged.lines, remerged.messages), (5, 1));
   assert_eq!(paths(&db), [(archive_path, true)]);
 
   // Rebuilding from archives alone gives the same index.
   let incremental = messages(&db);
   drop(db);
-  let mut db = rebuild(&root.database()).unwrap();
-  index(&mut db, &root.journal()).unwrap();
+  let mut db = rebuild(&database(&root)).unwrap();
+  index(&mut db, &journal(&root)).unwrap();
   assert_eq!(messages(&db), incremental);
   assert_eq!(incremental.len(), 3);
 }

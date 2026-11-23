@@ -12,12 +12,7 @@ use {
   },
   ::std::{
     collections::HashMap,
-    fs,
-    path::PathBuf,
-    sync::{
-      Arc, Mutex,
-      atomic::{AtomicU32, Ordering},
-    },
+    sync::{Arc, Mutex},
   },
   ::tokio::net::TcpListener,
 };
@@ -100,25 +95,4 @@ async fn answer(
     .cloned()
     .unwrap_or((404, r#"{"message":"Not found"}"#.into()));
   (StatusCode::from_u16(status).unwrap(), body)
-}
-
-/// A directory of its own, removed when the test ends.
-pub struct TempDir(pub PathBuf);
-
-impl TempDir {
-  pub fn new(name: &str) -> Self {
-    static N: AtomicU32 = AtomicU32::new(0);
-    let n = N.fetch_add(1, Ordering::Relaxed);
-    let dir = ::std::env::temp_dir()
-      .join(format!("kick-mod-{name}-test-{}-{n}", ::std::process::id()));
-    let _ = fs::remove_dir_all(&dir);
-    fs::create_dir_all(&dir).unwrap();
-    Self(dir)
-  }
-}
-
-impl Drop for TempDir {
-  fn drop(&mut self) {
-    let _ = fs::remove_dir_all(&self.0);
-  }
 }

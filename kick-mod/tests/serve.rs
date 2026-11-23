@@ -4,6 +4,7 @@
 mod fake;
 
 use {
+  ::common::temp_dir::TempDir,
   ::kick_api::official::oauth::App,
   ::kick_mod::{account::Account, serve},
   ::reqwest::{
@@ -13,7 +14,7 @@ use {
   },
   ::std::fs,
   ::tokio::net::TcpListener,
-  fake::{Kick, TempDir},
+  fake::Kick,
 };
 
 /// The server, with its files in a directory removed when the test ends.
@@ -27,17 +28,17 @@ struct Server {
 
 impl Server {
   async fn start() -> Self {
-    let dir = TempDir::new("serve");
+    let dir = TempDir::new("kick-mod-serve");
     let kick = Kick::start().await;
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
     let mut app = App::new("app-id", "app-secret");
     app.base = kick.base.clone();
     let redirect = format!("http://localhost:{port}/oauth/callback");
-    let token = dir.0.join("token.json");
+    let token = dir.path().join("token.json");
     let http = ::reqwest::Client::new();
     let account = Account::new(http, app, &kick.base, redirect, token);
-    let channels = dir.0.join("channels.json");
+    let channels = dir.path().join("channels.json");
     ::tokio::spawn(serve::run(listener, channels, account.unwrap()));
     Self {
       base: format!("http://127.0.0.1:{port}"),
@@ -73,7 +74,7 @@ impl Server {
   }
 
   fn channels(&self) -> ::std::path::PathBuf {
-    self.dir.0.join("channels.json")
+    self.dir.path().join("channels.json")
   }
 }
 
@@ -174,13 +175,13 @@ async fn signs_in_and_out() {
   assert_eq!(server.redirect(&back).await, "/");
   let signed_in = r#"{"user":{"name":"moderator","user_id":7}}"#;
   assert_eq!(server.get("/api/me", &[]).await, (200, signed_in.into()));
-  assert!(server.dir.0.join("token.json").exists());
+  assert!(server.dir.path().join("token.json").exists());
 
   server.kick.answer("/oauth/revoke", 200, "OK");
   let out = server.http.post(format!("{}/api/sign-out", server.base));
   assert_eq!(out.send().await.unwrap().status().as_u16(), 204);
   assert_eq!(server.get("/api/me", &[]).await, (200, signed_out.into()));
-  assert!(!server.dir.0.join("token.json").exists());
+  assert!(!server.dir.path().join("token.json").exists());
 }
 
 #[tokio::test]
