@@ -123,7 +123,7 @@ impl Capture {
 }
 
 /// Completes on Ctrl-C, or on SIGTERM on Unix.
-async fn shutdown() {
+pub(super) async fn shutdown() {
   #[cfg(unix)]
   {
     use ::tokio::signal::unix::{SignalKind, signal};
