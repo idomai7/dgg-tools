@@ -93,17 +93,11 @@ impl ::std::fmt::Display for Error {
       Self::Sqlite(e) => write!(f, "sqlite: {e}"),
       Self::Schema(version) => write!(
         f,
-        "index has schema {}.{}, not {}.{}; \
-         run `{}`",
+        "index has schema {}.{}, not {}.{}; run `index --rebuild`",
         version.major,
         version.minor,
         SCHEMA_VERSION.major,
         SCHEMA_VERSION.minor,
-        if crate::migrate::FROM_SCHEMAS.contains(version) {
-          "migrate"
-        } else {
-          "index --rebuild"
-        },
       ),
     }
   }

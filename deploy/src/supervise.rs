@@ -5,8 +5,8 @@
 //!   handed off to a newer instance, so the supervisor stops everything and
 //!   exits too: starting a newer supervisor is how an upgrade happens.
 //! - `dgg-logger migrate` runs once, at start, alongside capture: it brings
-//!   the journal's archives and the index up to this build's formats, and
-//!   does nothing once they are. It waits for the locks below, so it runs
+//!   the journal and the index up to this build's formats, and does nothing
+//!   once they are (for now, there's nothing to migrate). It waits for the locks below, so it runs
 //!   once an older supervisor has exited. Only once it has succeeded do
 //!   index, compact and sync start; if it fails, they wait for the next
 //!   start.
