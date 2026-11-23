@@ -15,10 +15,9 @@ the [overall rules](README.md), and [deploy](deploy.md) for the mesh it runs on.
     other's. Their events have little in common anyway.
     - Each variant's majors get their own modules in `logger-journal`, like
       `record/v0.rs` today: Kick's are under `record/kick/`.
-    - Kick starts at `kick.0.0`. dgg's current `journal 0.1` files are dgg's,
-      read as they are until dgg's logger moves to `dgg.0.<minor>`.
+    - Kick starts at `kick.0.0`; dgg's is at `dgg.0.3`.
     - `kick.0.0` has dgg's record shape (`<receive-time> <instance>
-      <connection> <kind> <data>`, shared code in `record/line.rs`), with only
+      <connection> <kind> <data>`, shared code in `record/fields.rs`), with only
       `frame`, `binary`, `open` and `close`. A frame is Centrifugo's raw text:
       one or more JSON replies separated by LFs.
     - **Framing:** each of `kick.0.0`'s records ends at RS LF (RS is 0x1E), so
@@ -37,7 +36,6 @@ the [overall rules](README.md), and [deploy](deploy.md) for the mesh it runs on.
     - Informational: redundant information and notes, always written but safe to
       ignore. Readers skip keys they don't know, so new keys never change the
       format. Keys are `[a-z0-9_]+`; values can't hold a space.
-    - dgg's header is still written without a variant or fields.
     - `endpoint`: the websocket address for dgg, the socket URL for Kick. It's
       the same URL the `open` records hold: the one connected to, as given. So a
       file only ever holds connections to one endpoint, and connecting to a
@@ -52,181 +50,38 @@ the [overall rules](README.md), and [deploy](deploy.md) for the mesh it runs on.
   - **Layout:** each platform has its own journal root, so sync and compact
     never mix them. Under Kick's, each channel is a journal root of its own,
     laid out like dgg's: `<channel>/live/<day>/<instance>.journal`, and so on.
-  - **dgg moves to RS LF:** dgg's journals move to Kick's framing,
-    with records ending at RS LF, as `journal dgg.0.2`: dgg's variant named,
-    its minor going on from 0.1.
-    - A header without a variant stays dgg's LF-framed format. `journal 0.1`
-      stays readable for good.
+  - **dgg moved to RS LF:** dgg's journals, and every other line format the
+    logger writes, use Kick's framing: the header and each record or entry
+    end at RS LF. Done, and deployed on both hosts.
+    - **Versions:** `journal dgg.0.3`, `journal-archive dgg.0.2`,
+      `journal-manifest dgg.0.2`, `synced-archives dgg.0.2` and
+      `capture-status dgg.0.2`, each header naming its variant. Kick's are
+      at `kick.0.0`.
     - **Writers:** a day's file is appended to only if its header is the one
       the writer would write: the same version, and for Kick the same
       endpoint. Otherwise the day's next numbered file is started, so new
       records never land in an old file. (Capture's instances are new each
       run, but backfill's keep their names.)
-    - **Compaction:** follows each input's framing; inputs may mix 0.1 and
-      0.2, on the upgrade day or when a 0.1 archive is merged again.
-      Archives are always written in the new version. A 0.1 record is copied
-      byte for byte unless it holds an RS; then it's decoded and encoded
-      again, as `frame64` and the like. A record that doesn't decode is kept
-      byte for byte, as now; one that also holds an RS can't be, so the day
-      is refused and reported.
-    - **Archive manifests:** the monthly manifest is versioned like the
-      journals, with a variant and informational fields:
-      `journal-archive dgg.0.1`, and `journal-archive kick.0.0`. Its `lines`
-      becomes `records`: what an archive holds, after its header, counted by
-      its framing. `journal-archive 0.0` stays readable, and the migration
-      rewrites it.
-    - **Sync** counts an archive's records by its framing, to check them
-      against its manifest.
-    - **Sync's manifest** (`GET /manifest`) gets the same header, for the
-      journal root it lists: `journal-manifest dgg.0.1`, and
-      `journal-manifest kick.0.0` once Kick's journals are synced. Its
-      entries hold what they did: live files by size, archives by size and
-      SHA-256.
-    - **The other line formats follow, for consistency:** after its header,
-      ending at LF, each entry ends at RS LF, as the journal's records do.
-      None of their values can hold an RS.
-      - `journal-archive dgg.0.1` and `journal-manifest dgg.0.1`, not yet
-        deployed, are defined that way.
-      - `control/synced-archives` gains a header, `synced-archives dgg.0.1`;
-        without one it's 0.0, a line each, still read and rewritten by the
-        migration once the new one is checked to list the same.
-      - `capture-status` in two phases, since an instance hands off only to
-        one whose status it can read. This rollout reads `capture-status
-        dgg.0.1` as well as 0.0, from files and from other hosts' pushes,
-        and still writes 0.0. A later upgrade, once no instance reads only
-        0.0, writes `dgg.0.1`.
-    - **Rollout:** a logger without this can't read `dgg.0.2` journals or the
-      new manifests, so every host is upgraded together. There are two.
-    - **Migration:** existing `journal 0.1` journals are rewritten in the new
-      format by a migration.
-      1. It writes each file's new version alongside the old.
-      2. It validates: every record of the new file is parsed and compared
-         with the old file's, parsed by its own parser. Each must be
-         byte-for-byte identical: same records, same order, same fields and
-         data. A file that fails is reported, and nothing of it is removed.
-      3. Only once the validation has passed are the old files removed.
-
-      In detail (step C):
-      - **What it covers:** the archives, both the journal's and the
-        backfill journal's, and their monthly manifests. Live files aren't
-        rewritten: compaction converts them into archives anyway, within a
-        day or two, with the same checks. Rewriting them in place would also
-        break the index, whose checkpoints for live files are offsets without
-        a digest.
-      - **Converting a record:** shared by the migration and compaction, in
-        `logger-journal`. A record is copied byte for byte unless it holds an
-        RS; that one is decoded and encoded again. Either way the result is
-        decoded by the new parser and compared with the old parser's decoding
-        of the original: the same record, or for one that doesn't decode the
-        same error and the same bytes. Anything else fails.
-      - **Converting an archive:** decompressed, converted record by record
-        under a `journal dgg.0.2` header, compressed at compaction's default
-        level, so both hosts turn the same archive into the same bytes.
-      - **Validating it,** before anything is removed: the new file is
-        written next to the old (`<day>.journal.zst.new`), fsynced, and read
-        back. Both are read with `Reader`, each by its own framing, and
-        compared record by record: as many, in the same order, each equal as
-        above. Its size, bytes, records and SHA-256 are taken from the file
-        as read back.
-      - **Replacing it:** a month at a time. Once every archive of a month
-        has been validated, the index is upgraded for them (below), then each
-        is renamed over its old one, then the month's manifest is written
-        (`journal-archive dgg.0.1`) with the new entries. A month with a
-        failure is left as it was, and reported, and the rest carry on.
-      - **Rerunning it** is safe: an archive already in `dgg.0.2` isn't
-        converted again, only checked against its manifest entry, which is
-        rewritten from the file if a crash came between the rename and the
-        manifest. Leftover `.new` files are removed first. A conversion is
-        deterministic, so one redone after a crash gives the same bytes and
-        SHA-256 as the index was upgraded for.
-      - `dgg-logger migrate --dry-run` converts and validates without
-        replacing anything, and reports what it would do.
-      - **Taken archives:** `control/synced-archives` lists peers' archives by
-        their old SHA-256. Archives installed as they came convert to the
-        same bytes on both hosts, so they still match. One that was merged
-        with local files differs, so after both hosts migrate it's taken once
-        more and merged again; deduplication makes that harmless.
-      - **Upgrading the index,** rather than rebuilding it. Only two tables
-        hold offsets into journal files: `files` (an archive's checkpoint and
-        SHA-256) and `unparsed` (where a record that couldn't be indexed
-        starts). Messages hold none. Validating an archive pairs each old
-        record with its new one, so their offsets map exactly.
-        - For each archive of the month, in one transaction: if its `files`
-          row has the old SHA-256, its offset is mapped to the new file's
-          (a record's end, or the header's), its digest set to the new
-          SHA-256, and its `unparsed` rows' offsets mapped too (a record's
-          start). An offset that isn't a record's boundary fails the month.
-        - A row with any other digest, or none, is left alone: the index
-          reads that archive again anyway, as it would have.
-        - The transaction commits before the archives are renamed. A crash
-          between leaves rows naming new SHA-256s while the old archives are
-          still there; the index would read those again harmlessly, and the
-          rerun converts them to exactly those SHA-256s.
-        - Once every month has been migrated, the index's schema becomes
-          0.5: the same tables, its archive offsets into `dgg.0.2` files. An
-          index at 0.4 is refused, as now, so nothing indexes old offsets
-          into new archives. `index --rebuild` still works at any time.
-      - **In place, with nothing missed:** it runs during an ordinary
-        upgrade, a new supervisor started alongside the old one, so capture
-        never stops. There's one host, and no peers sync now.
-        - The new supervisor starts its `capture` at once, as always: it
-          only writes live files, already `dgg.0.2`. The old capture keeps
-          going until the handoff, its last live files `journal 0.1`, which
-          compaction converts later.
-        - `migrate` holds `index.lock`, `compact.lock` and `sync.lock` while
-          it runs, waiting for them like a supervisor does. So it starts
-          only once the old supervisor has exited, and nothing else indexes,
-          compacts or syncs meanwhile. Run by hand, it waits the same way.
-        - The new supervisor runs `migrate` before taking those locks
-          itself, and starts `index`, `compact` and `sync` once it has
-          succeeded. If it fails, they don't, and the failure is in the
-          supervisor's log and the status page; the next start tries again.
-          Once every manifest is `dgg.0.1` and the index is at 0.5, `migrate`
-          does nothing.
-        - During the overlap, the old supervisor's programs meet the new
-          capture's `dgg.0.2` live files: its index skips them as
-          unreadable (the new index reads them from the start), and its
-          compaction only touches closed days, which the new capture hasn't
-          written.
-        - Converting at level 19 is slow, so a large journal can take a
-          while; capture runs meanwhile, and indexing catches up after.
-      - **Rollout:** install the new build and start its supervisor, as for
-        any upgrade. `migrate --dry-run` can be run by hand first; it only
-        reads, so it takes no locks.
-    - **Steps,** each its own commit and review. A and B ship together:
-      without B, compaction splits the new files on LF.
-      1. **A, logger-journal:** RS LF framing by header, `dgg.0.2`, the
-         reader, the writers' crash repair and next-file rule, Kick's variant
-         on the same framing.
-      2. **B, logger:** compaction and sync following the framing, and the new
-         archive and sync manifests.
-         Both done; not deployed yet.
-      3. **C, the migration:** `dgg-logger migrate`, and the supervisor
-         running it. Done; not deployed yet.
-      4. **D:** the rollout, on the one host: install the new build, as
-         for any upgrade, and watch `migrate.log`. Done: both hosts are at
-         `dgg.0.3`, their indexes at schema 0.6.
-    - **Headers end at RS LF too:** so every record, the header included,
-      can be split on RS LF. The header still ends at the first LF, with the
-      RS before it, so a reader finds it before it knows the framing. Each
-      format says from which version its header ends at RS LF; older
-      versions are still read.
-      - New versions: `journal dgg.0.3`, `journal-archive dgg.0.2`,
-        `journal-manifest dgg.0.2` and `synced-archives dgg.0.2`. `kick.0.0`
-        (journal and manifest), never written, is redefined.
-      - `capture-status dgg.0.2` is read, but not yet written: phase 1
-        again, as for `dgg.0.1`, which was never written either. Both hosts
-        now run builds that read it, so the next upgrade can write it.
-      - `migrate` takes archives of `journal 0.1` or `dgg.0.2` to
-        `dgg.0.3`: from 0.2, only the header changes, every offset moving
-        a byte on. The index goes from schema 0.4 or 0.5 to 0.6.
-      - **Rollout,** done: first the host at `dgg.0.2`, then the other,
-        which went from `journal 0.1` to `dgg.0.3` at once. Both paths were run
-        with the real builds (the original, the deployed one, and this),
-        each checked against an index rebuilt from scratch.
-      - Found along the way, as every build has done: the index keeps
-        `unparsed` rows for live files compaction has deleted, as
-        `forget_gone` only forgets their `files` rows.
+    - **How it rolled out:** two upgrades, first to records ending at RS LF
+      (`journal dgg.0.2`), then to headers ending there too. A `dgg-logger
+      migrate`, run by the supervisor at start, rewrote each archive in
+      place, validating every record byte for byte against the old file's
+      before replacing it, and upgraded the index's offsets to match (schema
+      0.4 to 0.6) rather than rebuilding it. Capture never stopped.
+      - `capture-status` went in two phases, since an instance hands off
+        only to one whose status it can read: first read, then, once every
+        instance read it, written.
+      - Each path was checked with the real builds against an index rebuilt
+        from scratch. It turned up that the index kept `unparsed` rows for
+        live files compaction had deleted; it forgets them now.
+    - **Older versions are no longer read:** both hosts were migrated, so
+      the code for them, and the migration itself, are gone. A file of an
+      older version is refused. `migrate` is kept as a skeleton: the
+      supervisor still runs it at start, under the index, compact and sync
+      locks, and starts those only once it succeeds. For now it only checks
+      the index is at schema 0.6; the next format change that needs a
+      migration fills it in. Its log is `migrate.log`, key `6` in
+      `status --watch`.
 
 ## Design
 - **Journal layout:**
@@ -234,8 +89,8 @@ the [overall rules](README.md), and [deploy](deploy.md) for the mesh it runs on.
     instance per day. These are the hot files.
   - `data/journal/archive/YYYY/MM/YYYY-MM-DD.journal.zst` plus a `manifest`
     per month (`journal-archive dgg.0.2`). These are cold.
-  - `data/journal/control/<instance>.status`: heartbeats (`capture-status 0.0`;
-    see `logger/src/control.rs`).
+  - `data/journal/control/<instance>.status`: heartbeats (`capture-status
+    dgg.0.2`; see `logger/src/control.rs`).
   - `data/journal/backfill/YYYY-MM-DD/<instance>.journal`: what was fetched from
     other archives, one file per backfill run per day. It's filed by the day of
     the messages inside, not when they were fetched. Nothing here is canonical,
@@ -246,8 +101,8 @@ the [overall rules](README.md), and [deploy](deploy.md) for the mesh it runs on.
   the `logger-journal` crate: each major version has its own module
   (`logger-journal/src/record/v0.rs`) holding its structure, encoding and
   decoding, so several formats can coexist in the library.
-  - Each file starts with `journal dgg.<major>.<minor>` (currently `0.3`;
-    `journal 0.1` before variants), ending at RS LF (at LF up to 0.2).
+  - Each file starts with `journal dgg.<major>.<minor>` (currently `0.3`),
+    ending at RS LF.
   - Versioned like every format (see the [overall rules](README.md)).
   - Each record is `<receive-time> <instance> <connection> <kind> <data>`,
     separated by single spaces, with `data` verbatim to the end of the
@@ -290,7 +145,7 @@ the [overall rules](README.md), and [deploy](deploy.md) for the mesh it runs on.
     - Use a VPN or SSH tunnel between hosts: the bearer token isn't encrypted
       over plain HTTP.
 - **index:** journal into `data/index.sqlite` (schema in
-  `logger/schemas/index/v<major>.<minor>.sql`, currently 0.4, every past version
+  `logger/schemas/index/v<major>.<minor>.sql`, currently 0.6, every past version
   kept there; stored in `user_version` as `major << 16 | minor`).
   - The dedupe key is `(timestamp, nick, data)`. It was verified with
     `dgg-api/examples/history_check.rs`: `HISTORY` is a JSON array of the last
