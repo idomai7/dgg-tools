@@ -115,6 +115,7 @@ pub fn migrate(
   } else {
     None
   };
+  let would = if dry_run { "would be " } else { "" };
   let journal = data.join("journal");
   for (root, prefix) in [
     (journal.clone(), ""),
@@ -125,7 +126,7 @@ pub fn migrate(
       Ok(false) => {}
       Ok(true) => {
         report.taken += 1;
-        say(&format!("{name}: rewritten"));
+        say(&format!("{name}: {would}rewritten"));
       }
       Err(why) => {
         say(&format!("{name}: left as it was: {why}"));
@@ -146,14 +147,14 @@ pub fn migrate(
           report.converted += done.converted;
           report.manifests += u64::from(done.manifest);
           if done.converted > 0 || done.manifest {
+            let manifest = if done.manifest {
+              format!(", manifest {would}written")
+            } else {
+              String::new()
+            };
             say(&format!(
-              "{name}: {} archives converted{}",
-              done.converted,
-              if done.manifest {
-                ", manifest written"
-              } else {
-                ""
-              }
+              "{name}: {} {would}converted{manifest}",
+              count(done.converted, "archive", "archives")
             ));
           }
         }
@@ -167,17 +168,30 @@ pub fn migrate(
   if let Some(dir) = scratch {
     let _ = fs::remove_dir_all(dir);
   }
-  if let Some((db, version)) = &index
-    && *version == FROM_SCHEMA
-    && report.failed.is_empty()
-    && !dry_run
-  {
-    db.pragma_update(None, "user_version", user_version(SCHEMA_VERSION))
-      .map_err(io::Error::other)?;
-    say(&format!(
-      "index: schema {}.{} now",
-      SCHEMA_VERSION.major, SCHEMA_VERSION.minor
-    ));
+  let schema = |v: Version| format!("{}.{}", v.major, v.minor);
+  match &index {
+    None => say("index: none to upgrade"),
+    Some((_, version)) if *version != FROM_SCHEMA => {
+      say(&format!(
+        "index: schema {}, as it should be",
+        schema(*version)
+      ));
+    }
+    Some(_) if !report.failed.is_empty() => say(&format!(
+      "index: left at schema {}, until nothing's left as it was",
+      schema(FROM_SCHEMA)
+    )),
+    Some((db, _)) => {
+      if !dry_run {
+        db.pragma_update(None, "user_version", user_version(SCHEMA_VERSION))
+          .map_err(io::Error::other)?;
+      }
+      say(&format!(
+        "index: schema {} {would}upgraded to {}",
+        schema(FROM_SCHEMA),
+        schema(SCHEMA_VERSION)
+      ));
+    }
   }
   Ok(report)
 }
@@ -209,6 +223,11 @@ fn migrate_taken(root: &Path, dry_run: bool) -> Result<bool, String> {
     atomic_file::replace(&path, new).map_err(|e| e.to_string())?;
   }
   Ok(true)
+}
+
+/// `n` with `one` or `many` after it, as `n` is 1 or not.
+pub fn count(n: u64, one: &str, many: &str) -> String {
+  format!("{n} {}", if n == 1 { one } else { many })
 }
 
 /// Waits for each of [`LOCKS`] in `data`, and holds them.

@@ -1,7 +1,7 @@
 //! Migrate the journal's archives to records ending at RS LF.
 
 use {
-  crate::migrate::migrate,
+  crate::migrate::{count, migrate},
   ::clap::Args,
   ::std::{path::Path, process::ExitCode},
 };
@@ -33,9 +33,10 @@ impl Migrate {
     };
     let would = if self.dry_run { "would be " } else { "" };
     eprintln!(
-      "{} archives {would}converted, {} manifests {would}written, \
-       {} synced-archives {would}rewritten",
-      report.converted, report.manifests, report.taken
+      "{} {would}converted, {} {would}written, {} {would}rewritten",
+      count(report.converted, "archive", "archives"),
+      count(report.manifests, "manifest", "manifests"),
+      count(report.taken, "synced-archives", "synced-archives"),
     );
     if report.failed.is_empty() {
       ExitCode::SUCCESS
