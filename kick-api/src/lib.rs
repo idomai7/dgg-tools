@@ -5,7 +5,7 @@
 //!   frames into Centrifugo's client protocol, feature `protocol` what Kick
 //!   publishes into its events, and feature `client` reads the frames.
 //! - `channel` (feature `channel`): the unofficial channel lookup, the only
-//!   place a channel's chatroom id is found.
+//!   place a channel's chatroom id is found. Feature `lookup` asks it.
 //! - `official` (feature `official`): Kick's official public API and
 //!   signing in to it.
 //! - `web` (feature `web`): `web.kick.com`'s unofficial API, a channel's

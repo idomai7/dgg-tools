@@ -2,7 +2,8 @@
 //!
 //! Kick's official API has no chatroom ids, and chat is read by chatroom.
 //! Cloudflare refuses some HTTP clients here (reqwest among them), so this
-//! only decodes the answer, and fetching it is left to the tool.
+//! decodes the answer, and feature `lookup`'s [`look_up`] asks with curl,
+//! which it lets through.
 
 use ::serde::Deserialize;
 
@@ -32,4 +33,21 @@ pub struct Chatroom {
 /// Decodes a lookup's answer.
 pub fn parse(json: &str) -> Result<Channel, ::serde_json::Error> {
   ::serde_json::from_str(json)
+}
+
+/// Asks the lookup for `slug` with curl, anonymously, waiting at most 20
+/// seconds. A failure says why, with what was answered.
+#[cfg(feature = "lookup")]
+pub fn look_up(slug: &str) -> Result<Channel, String> {
+  let output = ::std::process::Command::new("curl")
+    .args(["-sS", "-m", "20", "-H", "Accept: application/json"])
+    .arg(url(slug))
+    .output()
+    .map_err(|e| format!("running curl: {e}"))?;
+  if !output.status.success() {
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    return Err(format!("curl: {}", stderr.trim()));
+  }
+  let body = String::from_utf8_lossy(&output.stdout);
+  parse(&body).map_err(|e| format!("{e}: {}", body.trim()))
 }

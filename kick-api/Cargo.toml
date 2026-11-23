@@ -8,6 +8,8 @@ description = "Kick's APIs, shared by the Kick tools"
 [features]
 # Decoding the unofficial channel lookup, channel.
 channel = ["dep:serde", "dep:serde_json"]
+# Asking the unofficial channel lookup, with curl: channel::look_up.
+lookup = ["channel"]
 # Decoding realtime frames into Centrifugo's client protocol,
 # realtime::centrifugo.
 centrifugo = ["dep:serde", "dep:serde_json"]
