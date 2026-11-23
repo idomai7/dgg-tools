@@ -27,7 +27,24 @@
     color: var(--ink);
     font: 14px/1.4 system-ui, sans-serif;
   }
-  h1 { font-size: 1.1rem; margin: 0 0 1rem; }
+  header {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 1rem;
+    align-items: baseline;
+    margin: 0 0 1rem;
+  }
+  h1 { font-size: 1.1rem; margin: 0; }
+  a { color: inherit; }
+  button {
+    font: inherit;
+    color: inherit;
+    background: none;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 0.1rem 0.5rem;
+    cursor: pointer;
+  }
   table { border-collapse: collapse; }
   th, td {
     padding: 0.3rem 0.8rem 0.3rem 0;
@@ -39,10 +56,39 @@
 </style>
 </head>
 <body>
-<h1>kick-mod</h1>
+<header>
+  <h1>kick-mod</h1>
+  <span id="account" class="faint">…</span>
+</header>
 <div id="channels" class="faint">Loading the channels…</div>
 <script>
   const shown = document.getElementById("channels");
+  const account = document.getElementById("account");
+
+  async function showAccount() {
+    const answer = await fetch("/api/me");
+    if (!answer.ok) {
+      account.textContent = `Kick didn't say who's signed in: ${await answer.text()}`;
+      return;
+    }
+    const { user } = await answer.json();
+    if (!user) {
+      const link = document.createElement("a");
+      link.href = "/sign-in";
+      link.textContent = "Sign in with Kick";
+      account.className = "";
+      account.replaceChildren(link);
+      return;
+    }
+    const out = document.createElement("button");
+    out.textContent = "Sign out";
+    out.onclick = async () => {
+      await fetch("/api/sign-out", { method: "POST" });
+      showAccount();
+    };
+    account.className = "";
+    account.replaceChildren(`Signed in as ${user.name ?? user.user_id} `, out);
+  }
 
   async function show() {
     const answer = await fetch("/api/channels");
@@ -73,6 +119,9 @@
     shown.replaceChildren(table);
   }
 
+  showAccount().catch((error) => {
+    account.textContent = `Kick didn't say who's signed in: ${error}`;
+  });
   show().catch((error) => {
     shown.textContent = `The channels didn't load: ${error}`;
   });

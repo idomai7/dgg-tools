@@ -2,8 +2,12 @@
 
 use {
   ::clap::{Parser, Subcommand},
-  ::kick_api::{channel, official::Api},
+  ::kick_api::{
+    channel,
+    official::{Api, api},
+  },
   ::kick_mod::{
+    account::{self, Account},
     channels::{self, Channels},
     config::{self, Config},
     serve,
@@ -24,13 +28,18 @@ struct Args {
   /// The channels kick-mod knows.
   #[arg(long, global = true, default_value = channels::DEFAULT_PATH)]
   channels: PathBuf,
+  /// The signed-in moderator's token.
+  #[arg(long, global = true, default_value = account::DEFAULT_TOKEN_PATH)]
+  token: PathBuf,
   #[command(subcommand)]
   command: Command,
 }
 
 #[derive(Subcommand)]
 enum Command {
-  /// Serve the page.
+  /// Serve the page. Signing in there redirects back to
+  /// http://localhost:<port>/oauth/callback, so the app has to have that
+  /// redirect URI, with the port it's served on.
   Serve,
   /// Look up channels' ids, the broadcaster's and the chatroom's, and
   /// record them in the channels file. Kick's official API has no chatroom
@@ -50,7 +59,7 @@ async fn main() -> ExitCode {
   let _ = ::rustls::crypto::ring::default_provider().install_default();
   let args = Args::parse();
   let done = match args.command {
-    Command::Serve => run(&args.config, args.channels).await,
+    Command::Serve => run(&args.config, args.channels, args.token).await,
     Command::Ids { slugs } => ids(&args.config, &args.channels, &slugs).await,
   };
   match done {
@@ -62,10 +71,18 @@ async fn main() -> ExitCode {
   }
 }
 
-async fn run(config: &Path, channels: PathBuf) -> Result<(), String> {
+async fn run(
+  config: &Path,
+  channels: PathBuf,
+  token: PathBuf,
+) -> Result<(), String> {
   let config = Config::load(config)?;
   let known = channels::load(&channels)?;
   let listen = config.server.listen;
+  let redirect = format!("http://localhost:{}/oauth/callback", listen.port());
+  let http = ::reqwest::Client::new();
+  let account =
+    Account::new(http, config.app(), api::DEFAULT_BASE, redirect, token)?;
   let listener = TcpListener::bind(listen)
     .await
     .map_err(|e| format!("listening on {listen}: {e}"))?;
@@ -74,7 +91,7 @@ async fn run(config: &Path, channels: PathBuf) -> Result<(), String> {
     known.len(),
     listen.port()
   );
-  serve::run(listener, channels)
+  serve::run(listener, channels, account)
     .await
     .map_err(|e| format!("serving: {e}"))
 }

@@ -1,6 +1,11 @@
 //! The page, served on a loopback address.
 //!
 //! - `GET /`: the page.
+//! - `GET /sign-in`: off to Kick to sign in, which sends the moderator
+//!   back to `GET /oauth/callback`, then to the page.
+//! - `GET /api/me`: `{"user": {"user_id", "name"}}` for the signed-in
+//!   moderator, as Kick has them now, or `{"user": null}`.
+//! - `POST /api/sign-out`: signs them out.
 //! - `GET /api/channels`: the channels, as `channels.json` has them now.
 //!
 //! There's no login yet, so it's served only on a loopback address (see
@@ -10,37 +15,56 @@
 //! the server's own too, so a website can't act through it.
 
 use {
-  crate::channels,
+  crate::{account::Account, channels},
   ::axum::{
     Json, Router,
-    extract::{Request, State},
+    extract::{RawQuery, Request, State},
     http::{
       HeaderMap, StatusCode,
       header::{HOST, ORIGIN},
     },
     middleware::{self, Next},
-    response::{Html, IntoResponse, Response},
-    routing::get,
+    response::{Html, IntoResponse, Redirect, Response},
+    routing::{get, post},
   },
+  ::serde_json::json,
   ::std::{io, net::SocketAddr, path::PathBuf, sync::Arc},
   ::tokio::net::TcpListener,
 };
 
 const PAGE: &str = include_str!("../page/index.html");
 
+/// What the routes share.
+struct Shared {
+  channels: PathBuf,
+  account: Account,
+}
+
 /// Serves the page on `listener` until it fails, with the channels in
 /// `channels`.
-pub async fn run(listener: TcpListener, channels: PathBuf) -> io::Result<()> {
-  let router = router(listener.local_addr()?, channels);
+pub async fn run(
+  listener: TcpListener,
+  channels: PathBuf,
+  account: Account,
+) -> io::Result<()> {
+  let router = router(listener.local_addr()?, channels, account);
   ::axum::serve(listener, router).await
 }
 
 /// The routes, served at `address`, with the channels in `channels`.
-pub fn router(address: SocketAddr, channels: PathBuf) -> Router {
+pub fn router(
+  address: SocketAddr,
+  channels: PathBuf,
+  account: Account,
+) -> Router {
   Router::new()
     .route("/", get(page))
+    .route("/sign-in", get(sign_in))
+    .route("/oauth/callback", get(callback))
+    .route("/api/me", get(me))
+    .route("/api/sign-out", post(sign_out))
     .route("/api/channels", get(list_channels))
-    .with_state(Arc::new(channels))
+    .with_state(Arc::new(Shared { channels, account }))
     .layer(middleware::from_fn_with_state(
       Arc::new(Allowed::at(address)),
       check,
@@ -63,6 +87,16 @@ impl Allowed {
     let origins = hosts.iter().map(|host| format!("http://{host}")).collect();
     Self { hosts, origins }
   }
+
+  /// Whether the `Host` is one of the server's, and the `Origin`, if any.
+  fn admits(&self, headers: &HeaderMap) -> bool {
+    let header = |name| headers.get(name)?.to_str().ok();
+    let among = |value: &str, all: &[String]| {
+      all.iter().any(|a| a.eq_ignore_ascii_case(value))
+    };
+    header(HOST).is_some_and(|host| among(host, &self.hosts))
+      && header(ORIGIN).is_none_or(|origin| among(origin, &self.origins))
+  }
 }
 
 async fn check(
@@ -77,25 +111,58 @@ async fn check(
   }
 }
 
-impl Allowed {
-  /// Whether the `Host` is one of the server's, and the `Origin`, if any.
-  fn admits(&self, headers: &HeaderMap) -> bool {
-    let header = |name| headers.get(name)?.to_str().ok();
-    let among = |value: &str, all: &[String]| {
-      all.iter().any(|a| a.eq_ignore_ascii_case(value))
-    };
-    header(HOST).is_some_and(|host| among(host, &self.hosts))
-      && header(ORIGIN).is_none_or(|origin| among(origin, &self.origins))
-  }
-}
-
 async fn page() -> Html<&'static str> {
   Html(PAGE)
 }
 
-async fn list_channels(State(path): State<Arc<PathBuf>>) -> Response {
-  match channels::load(&path) {
+async fn sign_in(State(shared): State<Arc<Shared>>) -> Redirect {
+  Redirect::to(&shared.account.start())
+}
+
+async fn callback(
+  State(shared): State<Arc<Shared>>,
+  RawQuery(query): RawQuery,
+) -> Response {
+  match shared.account.finish(&query.unwrap_or_default()).await {
+    Ok(_) => Redirect::to("/").into_response(),
+    Err(e) => {
+      let page = format!(
+        "<!doctype html><title>kick-mod</title><p>Not signed in: {}</p>\
+         <p><a href=\"/\">Back</a></p>",
+        escape(&e)
+      );
+      (StatusCode::BAD_REQUEST, Html(page)).into_response()
+    }
+  }
+}
+
+async fn me(State(shared): State<Arc<Shared>>) -> Response {
+  match shared.account.me().await {
+    Ok(user) => {
+      let user = user.map(|u| json!({"user_id": u.user_id, "name": u.name}));
+      Json(json!({ "user": user })).into_response()
+    }
+    Err(e) => (StatusCode::BAD_GATEWAY, format!("Kick: {e}")).into_response(),
+  }
+}
+
+async fn sign_out(State(shared): State<Arc<Shared>>) -> StatusCode {
+  shared.account.sign_out().await;
+  StatusCode::NO_CONTENT
+}
+
+async fn list_channels(State(shared): State<Arc<Shared>>) -> Response {
+  match channels::load(&shared.channels) {
     Ok(channels) => Json(channels).into_response(),
     Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
   }
+}
+
+/// `text`, safe in HTML.
+fn escape(text: &str) -> String {
+  text
+    .replace('&', "&amp;")
+    .replace('<', "&lt;")
+    .replace('>', "&gt;")
+    .replace('"', "&quot;")
 }
