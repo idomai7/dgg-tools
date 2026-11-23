@@ -32,9 +32,10 @@ The layout is flat: each crate is a direct child of the root.
 - `kick-api/`: Kick's APIs, kept lightweight for any tool to depend on. So far,
   decoding the unofficial channel lookup, and decoding realtime frames into
   Centrifugo's client protocol.
-- `rustlesearch-api/` and `linkers-api/` (planned): rustlesearch.dev's and
-  linkers.ooo's APIs, which backfill reads; they're in `logger/src/backfill/`
-  until then.
+- `rustlesearch-api/`: rustlesearch.dev's API, which backfill reads: decoding
+  its searches and rate limit, and with feature `http`, fetching them.
+- `linkers-api/` (planned): linkers.ooo's API, which backfill reads; it's in
+  `logger/src/backfill/` until then.
 - `kick-mod/`: a chat client and moderation tools for Kick channels. So far,
   `kick-mod ids`, which looks up channels' ids with curl.
 - `logger-journal/`: the logger's journal file format, with a writer and a

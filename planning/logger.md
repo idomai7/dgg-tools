@@ -262,14 +262,16 @@ The logger, codenamed ledgerline: `logger-journal` and `logger`, run as
     - Smoke-tested on 20 minutes across linkers.ooo's archive boundary: 3
       requests, 1,140 `linkers` and 274 `linkers-rustlesearch` messages. A
       re-run found nothing left to fetch.
-  - **API crates (planned):** rustlesearch.dev and linkers.ooo get their own
-    crates, `rustlesearch-api` and `linkers-api` (see the
-    [overall rules](README.md)), out of `logger/src/backfill/`. Backfill keeps
-    its `Source`s, turning their pages into its own, and the journaling.
+  - **API crates:** rustlesearch.dev and linkers.ooo get their own crates,
+    `rustlesearch-api` and `linkers-api` (see the [overall rules](README.md)),
+    out of `logger/src/backfill/`. Backfill keeps its `Source`s, turning their
+    answers into its pages, and the journaling.
+    - Steps, each a pause for review: `rustlesearch-api` (done), then
+      `linkers-api`.
     - `linkers-api` types every message type linkers.ooo logs (`BAN`, `MUTE`,
       `SUBSCRIPTION` and the rest), not only `MSG`, for the archive tools.
-    - Requests name the logger `ledgerline/<version>`, not
-      `dgg-tools-logger/<build>` as now.
+    - Requests name the logger `ledgerline/<version>`; linkers.ooo's still
+      say `dgg-tools-logger/<build>` until its step.
   - A run holds `backfill/control/<instance>.lock` while it writes, so `compact`
     leaves its files alone until it's done.
   - `serve` and `sync` carry `backfill/live/` and `backfill/archive/` like
