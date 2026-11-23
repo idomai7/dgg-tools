@@ -46,6 +46,6 @@ pub mod writer;
 
 pub use {
   reader::{Entry, ReadError, Reader},
-  record::{DecodeError, Header, Record, Variant, Version},
+  record::{DecodeError, Format, Header, Record, Variant, Version},
   writer::Writer,
 };

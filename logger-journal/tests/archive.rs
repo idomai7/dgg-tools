@@ -1,7 +1,7 @@
 use {
   ::common::temp_dir::TempDir,
   ::logger_journal::{
-    Reader, Record,
+    Reader, Record, Variant,
     archive::{self, Archive},
     layout::{archive_file, archive_month_dir},
     record::v0::Body,
@@ -9,12 +9,12 @@ use {
   ::std::{fs, path::Path},
 };
 
-fn entry(day: &str, lines: u64) -> Archive {
+fn entry(day: &str, records: u64) -> Archive {
   Archive {
     day: day.into(),
     compressed: 10,
     bytes: 20,
-    lines,
+    records,
     sha256: "ab".repeat(32),
   }
 }
@@ -34,28 +34,40 @@ fn paths() {
 
 #[test]
 fn manifest_format() {
-  let text = archive::encode(&[entry("2026-11-09", 2), entry("2026-11-08", 1)]);
+  let entries = [entry("2026-11-09", 2), entry("2026-11-08", 1)];
+  let text = archive::encode(Variant::Dgg, &entries);
   let sha = "ab".repeat(32);
-  assert_eq!(
-    text,
-    format!(
-      "journal-archive 0.0\n2026-11-08 10 20 1 {sha}\n\
-       2026-11-09 10 20 2 {sha}\n"
-    )
-  );
+  let rows = format!("2026-11-08 10 20 1 {sha}\n2026-11-09 10 20 2 {sha}\n");
+  assert_eq!(text, format!("journal-archive dgg.0.1\n{rows}"));
+  let sorted = vec![entry("2026-11-08", 1), entry("2026-11-09", 2)];
   let decoded = archive::decode(&text).unwrap();
-  assert_eq!(decoded, [entry("2026-11-08", 1), entry("2026-11-09", 2)]);
-  // An entry this version doesn't know is skipped.
-  let extra =
-    format!("journal-archive 0.0\nsomething new\n2026-11-08 10 20 1 {sha}\n");
-  assert_eq!(archive::decode(&extra).unwrap(), [entry("2026-11-08", 1)]);
+  assert_eq!(decoded, (Variant::Dgg, sorted.clone()));
+  let kick = archive::encode(Variant::Kick, &entries);
+  assert_eq!(kick, format!("journal-archive kick.0.0\n{rows}"));
+  assert_eq!(archive::decode(&kick).unwrap(), (Variant::Kick, sorted));
+  // An entry this version doesn't know is skipped, as are informational
+  // fields.
+  let extra = format!(
+    "journal-archive dgg.0.1 ; note=x\nsomething new\n2026-11-08 10 20 1 {sha}\n"
+  );
+  let first = vec![entry("2026-11-08", 1)];
+  assert_eq!(
+    archive::decode(&extra).unwrap(),
+    (Variant::Dgg, first.clone())
+  );
+  // The version before variants, counting lines, which were records then.
+  let legacy = format!("journal-archive 0.0\n2026-11-08 10 20 1 {sha}\n");
+  assert_eq!(archive::decode(&legacy).unwrap(), (Variant::Dgg, first));
   for bad in [
-    // Within major 0, only the exact version is read.
+    // Within major 0, only the exact versions are read.
+    "journal-archive dgg.0.2\n".to_owned(),
+    "journal-archive kick.0.1\n".to_owned(),
+    "journal-archive dgg.1.0\n".to_owned(),
+    // Each version's header has one form.
     "journal-archive 0.1\n".to_owned(),
-    "journal-archive 1.0\n".to_owned(),
-    "journal-archive 2.0\n".to_owned(),
-    format!("journal-archive 0.0\n2026-11-08 10 x 1 {sha}\n"),
-    "journal-archive 0.0\n2026-11-08 10 20 1 ABCD\n".to_owned(),
+    "journal-archive dgg.0.0\n".to_owned(),
+    format!("journal-archive dgg.0.1\n2026-11-08 10 x 1 {sha}\n"),
+    "journal-archive dgg.0.1\n2026-11-08 10 20 1 ABCD\n".to_owned(),
   ] {
     assert_eq!(archive::decode(&bad), None, "{bad:?}");
   }
@@ -65,14 +77,19 @@ fn manifest_format() {
 fn recording_replaces_and_lists() {
   let root = TempDir::new("logger-journal-archive");
   assert_eq!(archive::all(root.path()).unwrap(), []);
-  archive::record(root.path(), &entry("2026-12-01", 1)).unwrap();
-  archive::record(root.path(), &entry("2026-11-08", 1)).unwrap();
-  archive::record(root.path(), &entry("2026-11-08", 5)).unwrap();
-  archive::record(root.path(), &entry("2025-01-31", 1)).unwrap();
+  let record = |archive| archive::record(root.path(), Variant::Dgg, &archive);
+  record(entry("2026-12-01", 1)).unwrap();
+  record(entry("2026-11-08", 1)).unwrap();
+  record(entry("2026-11-08", 5)).unwrap();
+  record(entry("2025-01-31", 1)).unwrap();
+  // Not into another variant's.
+  let kick =
+    archive::record(root.path(), Variant::Kick, &entry("2026-11-09", 1));
+  assert!(kick.is_err());
   let days: Vec<_> = archive::all(root.path())
     .unwrap()
     .into_iter()
-    .map(|archive| (archive.day, archive.lines))
+    .map(|archive| (archive.day, archive.records))
     .collect();
   assert_eq!(
     days,

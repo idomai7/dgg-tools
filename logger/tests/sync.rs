@@ -84,26 +84,28 @@ fn manifest_format() {
   assert_eq!(
     text,
     format!(
-      "journal-manifest 0.0\nlive/2026-11-08/a-1.journal 42\n\
+      "journal-manifest dgg.0.1\nlive/2026-11-08/a-1.journal 42\n\
        archive/2026/11/2026-11-07.journal.zst 9 {sha}\n"
     )
   );
   assert_eq!(manifest::decode(&text), Some(files.clone()));
   // An entry kind this version doesn't know is skipped.
-  let body = text.strip_prefix("journal-manifest 0.0\n").unwrap();
-  let extra = format!("journal-manifest 0.0\narchive/2026/11 9\n{body}");
+  let body = text.strip_prefix("journal-manifest dgg.0.1\n").unwrap();
+  let extra =
+    format!("journal-manifest dgg.0.1 ; note=x\narchive/2026/11 9\n{body}");
   assert_eq!(manifest::decode(&extra), Some(files));
   // An archive needs a whole SHA-256.
   let short =
-    "journal-manifest 0.0\narchive/2026/11/2026-11-07.journal.zst 9 ab\n";
+    "journal-manifest dgg.0.1\narchive/2026/11/2026-11-07.journal.zst 9 ab\n";
   assert_eq!(manifest::decode(short), None);
   for bad in [
-    // Within major 0, only the exact version is read.
-    "journal-manifest 0.1\nlive/2026-11-08/a-1.journal 42\n",
-    "journal-manifest 1.0\nlive/2026-11-08/a-1.journal 42\n",
-    "journal-manifest 2.0\n",
-    "journal-manifest 0.0\nlive/2026-11-08/a-1.journal x\n",
-    "journal-manifest 0.0",
+    // Within major 0, only the exact variant and version are read.
+    "journal-manifest 0.0\nlive/2026-11-08/a-1.journal 42\n",
+    "journal-manifest dgg.0.2\nlive/2026-11-08/a-1.journal 42\n",
+    "journal-manifest dgg.1.0\nlive/2026-11-08/a-1.journal 42\n",
+    "journal-manifest kick.0.1\n",
+    "journal-manifest dgg.0.1\nlive/2026-11-08/a-1.journal x\n",
+    "journal-manifest dgg.0.1",
   ] {
     assert_eq!(manifest::decode(bad), None, "{bad:?}");
   }
@@ -130,10 +132,10 @@ async fn file_endpoint() {
   let whole = get(path, None).await.unwrap();
   assert_eq!(whole.status().as_u16(), 200);
   let whole = whole.text().await.unwrap();
-  assert_eq!(whole, "journal 0.1\n0 a 1 frame MSG 1\n");
-  let tail = get(path, Some("bytes=12-")).await.unwrap();
+  assert_eq!(whole, "journal dgg.0.2\n0 a 1 frame MSG 1\u{1e}\n");
+  let tail = get(path, Some("bytes=16-")).await.unwrap();
   assert_eq!(tail.status().as_u16(), 206);
-  assert_eq!(tail.text().await.unwrap(), "0 a 1 frame MSG 1\n");
+  assert_eq!(tail.text().await.unwrap(), "0 a 1 frame MSG 1\u{1e}\n");
   let code = |response: ::reqwest::Response| response.status().as_u16();
   assert_eq!(code(get(path, Some("bytes=999-")).await.unwrap()), 416);
   assert_eq!(code(get(path, Some("bytes=1-5")).await.unwrap()), 416);
@@ -330,7 +332,7 @@ async fn takes_archives_without_overwriting() {
   assert_eq!(fs::read_dir(&day).unwrap().count(), 1);
   compact(local.path());
   assert_eq!(
-    ::logger_journal::archive::all(local.path()).unwrap()[0].lines,
+    ::logger_journal::archive::all(local.path()).unwrap()[0].records,
     2
   );
   let taken = fs::read_to_string(local.path().join(TAKEN)).unwrap();
@@ -466,7 +468,7 @@ async fn takes_no_more_than_the_manifest_says() {
     sync(&peer, local.path()).await
   };
   let manifest = |text: String| {
-    let text = format!("journal-manifest 0.0\n{text}");
+    let text = format!("journal-manifest dgg.0.1\n{text}");
     ::axum::Router::new().route("/manifest", get(move || async { text }))
   };
 
@@ -534,4 +536,27 @@ fn refuses_a_decompression_bomb() {
     unpack(&download, None, 16 << 20).unwrap(),
     ((8 << 20) + 12, 0)
   );
+}
+
+#[test]
+fn counts_records_by_framing() {
+  let root = TempDir::new("logger-sync");
+  fs::create_dir_all(root.path()).unwrap();
+  let count = |journal: &[u8]| {
+    let path = root.path().join("archive.zst");
+    fs::write(&path, ::zstd::encode_all(journal, 3).unwrap()).unwrap();
+    unpack(&path, None, 16 << 20).unwrap()
+  };
+  // Records spanning lines, and an RS LF across where reads may split.
+  let header = b"journal dgg.0.2\n";
+  let mut journal = header.to_vec();
+  journal.extend(b"0 a 1 frame A\nB\n\x1e\n");
+  let filler = (64 << 10) - journal.len() - 1;
+  journal.extend(b"0 a 1 frame ");
+  journal.resize(journal.len() + filler - 12, b'x');
+  journal.extend(b"\x1e\n0 a 1 frame C\x1e\n");
+  assert_eq!(count(&journal), (journal.len() as u64, 3));
+  // Before, a record a line.
+  let legacy = b"journal 0.1\n0 a 1 frame A\n0 a 1 frame B\n";
+  assert_eq!(count(legacy), (legacy.len() as u64, 2));
 }

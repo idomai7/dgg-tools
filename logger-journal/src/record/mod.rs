@@ -13,6 +13,33 @@ pub use line::{Framing, RS};
 
 /// Format name at the start of every file's header line.
 pub const MAGIC: &str = "journal";
+
+/// A format with a [`Header`] line: the journal, and the manifests that
+/// describe journals.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Format {
+  /// The name its header lines start with.
+  pub magic: &'static str,
+  /// dgg's last version whose header named no variant, from before
+  /// variants.
+  pub last_unnamed: Version,
+}
+
+impl Format {
+  /// Whether the header of `variant` at `version` names no variant.
+  fn unnamed(self, variant: Variant, version: Version) -> bool {
+    variant == Variant::Dgg
+      && (version.major, version.minor)
+        <= (self.last_unnamed.major, self.last_unnamed.minor)
+  }
+}
+
+/// The journal: `journal dgg.0.2`, `journal kick.0.0`, and before variants
+/// `journal 0.1`.
+pub const JOURNAL: Format = Format {
+  magic: MAGIC,
+  last_unnamed: v0::LEGACY,
+};
 /// The versions of dgg's format this crate has a decoder for.
 pub const READABLE: &[Version] = &[v0::LEGACY, v0::VERSION];
 
@@ -43,11 +70,6 @@ impl Variant {
       Self::Dgg => "dgg",
       Self::Kick => "kick",
     }
-  }
-
-  /// Whether `version`'s header names no variant: dgg's up to 0.1.
-  fn unnamed(self, version: Version) -> bool {
-    self == Self::Dgg && (version.major, version.minor) <= (0, 1)
   }
 }
 
@@ -114,6 +136,9 @@ impl Version {
 /// and notes, safe to ignore: readers skip keys they don't know, so a new key
 /// never changes the format. Keys are `[a-z0-9_]+`, and values are
 /// [tokens](v0::valid_token).
+///
+/// The manifests describing journals have headers of the same form, with
+/// their own [`Format`]s: see [`Header::parse_as`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Header {
   pub variant: Variant,
@@ -157,20 +182,26 @@ impl Header {
   /// How the file's records end: at LF for dgg's up to 0.1, at RS LF
   /// otherwise.
   pub fn framing(&self) -> Framing {
-    if self.variant.unnamed(self.version) {
+    if JOURNAL.unnamed(self.variant, self.version) {
       Framing::Lf
     } else {
       Framing::RsLf
     }
   }
 
-  /// The header line, without its newline.
+  /// The journal's header line, without its newline.
   pub fn line(&self) -> String {
+    self.line_as(JOURNAL)
+  }
+
+  /// The header line in `format`, without its newline.
+  pub fn line_as(&self, format: Format) -> String {
     let Version { major, minor } = self.version;
-    let mut line = if self.variant.unnamed(self.version) {
-      format!("{MAGIC} {major}.{minor}")
+    let magic = format.magic;
+    let mut line = if format.unnamed(self.variant, self.version) {
+      format!("{magic} {major}.{minor}")
     } else {
-      format!("{MAGIC} {}.{major}.{minor}", self.variant.name())
+      format!("{magic} {}.{major}.{minor}", self.variant.name())
     };
     if !self.info.is_empty() {
       line.push_str(" ;");
@@ -181,10 +212,16 @@ impl Header {
     line
   }
 
-  /// Parses a header line, without its newline.
+  /// Parses a journal's header line, without its newline.
   pub fn parse(line: &[u8]) -> Option<Self> {
+    Self::parse_as(JOURNAL, line)
+  }
+
+  /// Parses a header line in `format`, without its newline. Whether its
+  /// version is one the reader knows is left to it.
+  pub fn parse_as(format: Format, line: &[u8]) -> Option<Self> {
     let line = ::std::str::from_utf8(line).ok()?;
-    let rest = line.strip_prefix(MAGIC)?.strip_prefix(' ')?;
+    let rest = line.strip_prefix(format.magic)?.strip_prefix(' ')?;
     let (required, info) = match rest.split_once(" ;") {
       Some((required, info)) => (required, Some(info.strip_prefix(' ')?)),
       None => (rest, None),
@@ -204,7 +241,7 @@ impl Header {
       minor: minor.parse().ok()?,
     };
     // Each version's header has one form.
-    if named == variant.unnamed(version) {
+    if named == format.unnamed(variant, version) {
       return None;
     }
     let mut header = Self::new(variant, version);

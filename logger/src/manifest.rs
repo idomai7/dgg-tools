@@ -1,24 +1,32 @@
 //! The journal files a host has, for `sync` to compare against its own.
 //!
 //! ```text
-//! journal-manifest 0.0
+//! journal-manifest dgg.0.1
 //! live/<YYYY-MM-DD>/<instance>.journal <size in bytes>
 //! backfill/live/<YYYY-MM-DD>/<instance>.journal <size in bytes>
 //! archive/<YYYY>/<MM>/<YYYY-MM-DD>.journal.zst <size in bytes> <sha-256>
 //! backfill/archive/<YYYY>/<MM>/<YYYY-MM-DD>.journal.zst <size> <sha-256>
 //! ```
 //!
-//! One line per file after the format name and `<major>.<minor>` version:
-//! the live files, then the backfill journal's, then the archives of both,
+//! One line per file after the header, versioned like the journal's (see
+//! [`Header`]): the variant of the journal root it lists, and its version,
+//! optionally followed by informational fields. Then the live files, then
+//! the backfill journal's, then the archives of both,
 //! as their monthly manifests describe them. Paths are relative to the
 //! journal root, `/`-separated, and checked with [`valid_live_path`] and
 //! [`archive_path`]. (Older readers skip the lines with paths they don't
 //! accept.)
 //!
 //! While the major is 0 (pre-release) any minor may break, so readers accept
-//! only the exact header they write. From 1.0 on, readers will ignore lines
-//! they don't recognise, so a minor bump may add kinds of entry; anything
-//! else will be a major bump.
+//! only the exact variant and version they write. From 1.0 on, readers will
+//! ignore lines they don't recognise, so a minor bump may add kinds of
+//! entry; anything else will be a major bump.
+//!
+//! Versions of dgg's:
+//!
+//! - `0.0`: `journal-manifest 0.0`, naming no variant.
+//! - `0.1`: names the variant. A live file may be numbered,
+//!   `<instance>.<n>.journal`, as its instance's id allows.
 
 use {
   ::logger_journal::{
@@ -26,13 +34,19 @@ use {
     layout::{
       ARCHIVE_SUFFIX, EXTENSION, backfill_files, backfill_root, live_files,
     },
-    record::v0::valid_instance,
+    record::{Format, Header, Variant, Version, v0::valid_instance},
   },
   ::std::{fs, io, path::Path},
 };
 
-/// The header line this crate writes and reads.
-pub const HEADER: &str = "journal-manifest 0.0";
+/// The manifest's format.
+pub const FORMAT: Format = Format {
+  magic: "journal-manifest",
+  last_unnamed: Version { major: 0, minor: 0 },
+};
+
+/// The version of dgg's manifest this crate writes and reads.
+pub const VERSION: Version = Version { major: 0, minor: 1 };
 
 /// One file and its size.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -125,8 +139,10 @@ pub fn list(journal_root: &Path) -> io::Result<Vec<File>> {
   Ok(files)
 }
 
+/// A manifest of `files`, of dgg's journal.
 pub fn encode(files: &[File]) -> String {
-  let mut text = format!("{HEADER}\n");
+  let header = Header::new(Variant::Dgg, VERSION).line_as(FORMAT);
+  let mut text = format!("{header}\n");
   for file in files {
     text += &format!("{} {}", file.path, file.size);
     if let Some(sha256) = &file.sha256 {
@@ -140,7 +156,8 @@ pub fn encode(files: &[File]) -> String {
 /// Parses a manifest, or `None` if it isn't one this crate can read.
 pub fn decode(text: &str) -> Option<Vec<File>> {
   let mut lines = text.strip_suffix('\n')?.split('\n');
-  if lines.next()? != HEADER {
+  let header = Header::parse_as(FORMAT, lines.next()?.as_bytes())?;
+  if header.variant != Variant::Dgg || header.version != VERSION {
     return None;
   }
   let mut files = Vec::new();

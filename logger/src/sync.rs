@@ -5,8 +5,8 @@
 //! prefix of the remote file. Each round fetches the [manifest](crate::
 //! manifest) and, for every remote file longer than its local copy, just
 //! the missing bytes, appended and fsynced. An interrupted round leaves a
-//! shorter prefix, which the next round extends. A line still being written
-//! remotely is copied as far as it goes; readers wait for its newline. A
+//! shorter prefix, which the next round extends. A record still being
+//! written remotely is copied as far as it goes; readers wait for its end. A
 //! remote file shorter than its local copy has been rewritten, so it's
 //! reported and left alone.
 //!
@@ -32,7 +32,7 @@ use {
   ::logger_journal::{
     archive::{self, Archive},
     layout::{EXTENSION, archive_file, backfill_root, live_day_dir},
-    record::Version,
+    record::{Framing, Header, RS, Variant},
   },
   ::sha2::{Digest, Sha256},
   ::std::{
@@ -314,37 +314,28 @@ fn has_live(root: &Path, day: &str) -> io::Result<bool> {
 }
 
 /// Decompresses the archive at `path` into `out`, if given; its size and
-/// lines (after the header). Fails if it isn't a readable journal, or
-/// decompresses to over `limit` bytes.
+/// records (after the header, counted by its framing). Fails if it isn't a
+/// readable dgg journal, or decompresses to over `limit` bytes.
 pub fn unpack(
   path: &Path,
   mut out: Option<&mut File>,
   limit: u64,
 ) -> io::Result<(u64, u64)> {
+  let unreadable = || invalid("archive isn't a readable dgg journal");
   let mut decoder = ::zstd::Decoder::new(File::open(path)?)?;
   let mut buffer = vec![0; 64 << 10];
-  let (mut bytes, mut newlines) = (0_u64, 0_u64);
-  let mut header = Vec::new();
+  let (mut bytes, mut records) = (0_u64, 0_u64);
+  let mut head = Vec::new();
+  let mut framing = None;
+  // The byte before, for an RS LF across chunks.
+  let mut last = 0;
   loop {
     let read = decoder.read(&mut buffer)?;
     if read == 0 {
       break;
     }
     let chunk = &buffer[..read];
-    if newlines == 0 {
-      header.extend_from_slice(chunk);
-      if let Some(end) = header.iter().position(|&b| b == b'\n') {
-        let readable = Version::parse_header(&header[..end])
-          .is_some_and(|version| version.readable());
-        if !readable {
-          return Err(invalid("archive isn't a readable journal"));
-        }
-      } else if header.len() > 1024 {
-        return Err(invalid("archive isn't a readable journal"));
-      }
-    }
     bytes += read as u64;
-    newlines += chunk.iter().filter(|&&b| b == b'\n').count() as u64;
     if bytes > limit {
       return Err(invalid(&format!(
         "archive decompresses to over {limit} bytes"
@@ -353,12 +344,36 @@ pub fn unpack(
     if let Some(out) = out.as_deref_mut() {
       out.write_all(chunk)?;
     }
+    let body = match framing {
+      Some(_) => chunk,
+      None => {
+        head.extend_from_slice(chunk);
+        let Some(end) = head.iter().position(|&b| b == b'\n') else {
+          if head.len() > 1024 {
+            return Err(unreadable());
+          }
+          continue;
+        };
+        let header = Header::parse(&head[..end])
+          .filter(|h| h.variant == Variant::Dgg && h.readable())
+          .ok_or_else(unreadable)?;
+        framing = Some(header.framing());
+        // What of the head follows the header, kept apart from `chunk`.
+        head.drain(..=end);
+        &head[..]
+      }
+    };
+    for &b in body {
+      if b == b'\n' && (framing == Some(Framing::Lf) || last == RS) {
+        records += 1;
+      }
+      last = b;
+    }
   }
-  if newlines == 0 {
-    return Err(invalid("archive isn't a readable journal"));
+  if framing.is_none() {
+    return Err(unreadable());
   }
-  // Every line ends in a newline, the header's too.
-  Ok((bytes, newlines - 1))
+  Ok((bytes, records))
 }
 
 /// Takes `download`, the peer's archive of `day`, checked against the
@@ -377,17 +392,18 @@ fn take(
     || archive_file(root, day).exists();
   let installed = !archived && !has_live(root, day)?;
   if installed {
-    let (bytes, lines) = unpack(download, None, MAX_FILE)?;
+    let (bytes, records) = unpack(download, None, MAX_FILE)?;
     let path = archive_file(root, day);
     fs::create_dir_all(path.parent().unwrap())?;
     fs::rename(download, path)?;
     archive::record(
       root,
+      Variant::Dgg,
       &Archive {
         day: day.into(),
         compressed: size,
         bytes,
-        lines,
+        records,
         sha256: sha256.into(),
       },
     )?;

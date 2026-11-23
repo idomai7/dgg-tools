@@ -72,11 +72,12 @@ fn merges_a_day_into_a_verified_archive() {
     ),
     (3, 0, false, 2, 1)
   );
-  // Sorted by receive time; equal times keep their order (a before b).
+  // Sorted by receive time; equal times keep their order (a before b). In
+  // the newest version, each record ending at RS LF.
   assert_eq!(
     archived(&root),
-    "journal 0.1\n10 a 1 frame MSG 1\n20 b 1 frame MSG 2\n\
-     30 a 1 frame MSG 3\n30 b 1 open u\n"
+    "journal dgg.0.2\n10 a 1 frame MSG 1\u{1e}\n20 b 1 frame MSG 2\u{1e}\n\
+     30 a 1 frame MSG 3\u{1e}\n30 b 1 open u\u{1e}\n"
   );
   // The manifest describes it exactly.
   let compressed = fs::read(archive_file(root.path(), DAY)).unwrap();
@@ -89,7 +90,7 @@ fn merges_a_day_into_a_verified_archive() {
   let entry = &recorded[0];
   assert_eq!(entry.compressed, compressed.len() as u64);
   assert_eq!(entry.bytes, archived(&root).len() as u64);
-  assert_eq!((entry.lines, entry.sha256.as_str()), (4, digest.as_str()));
+  assert_eq!((entry.records, entry.sha256.as_str()), (4, digest.as_str()));
   // The live files and their day directory are gone; the archive reads.
   assert!(!live_day_dir(root.path(), DAY).exists());
   let path = archive_file(root.path(), DAY);
@@ -119,9 +120,10 @@ fn merges_late_files_into_an_existing_archive() {
   assert_eq!((done.files, done.duplicates), (2, 2));
   assert_eq!(
     archived(&root),
-    "journal 0.1\n10 a 1 frame MSG 1\n20 b 1 frame MSG 2\n30 a 1 frame MSG 3\n"
+    "journal dgg.0.2\n10 a 1 frame MSG 1\u{1e}\n20 b 1 frame MSG 2\u{1e}\n\
+     30 a 1 frame MSG 3\u{1e}\n"
   );
-  assert_eq!(archive::read_month(root.path(), DAY).unwrap()[0].lines, 3);
+  assert_eq!(archive::read_month(root.path(), DAY).unwrap()[0].records, 3);
   // Nothing left to do.
   assert_eq!(compact_day(root.path(), DAY, 3).unwrap(), None);
 }
@@ -155,15 +157,45 @@ fn keeps_lines_repeated_within_one_file() {
   // dgg really does send the same frame twice in one millisecond.
   let twice =
     "journal 0.1\n10 a 1 frame UPDATEUSER {}\n10 a 1 frame UPDATEUSER {}\n";
+  let archive = "journal dgg.0.2\n10 a 1 frame UPDATEUSER {}\u{1e}\n\
+                 10 a 1 frame UPDATEUSER {}\u{1e}\n";
   live(&root, "a", twice);
   let done = compact_day(root.path(), DAY, 3).unwrap().unwrap();
   assert_eq!(done.duplicates, 0);
-  assert_eq!(archived(&root), twice);
-  // Merging the same file in again doesn't add a third and fourth copy.
+  assert_eq!(archived(&root), archive);
+  // Merging the same file in again doesn't add a third and fourth copy, from
+  // the old version or the new.
   live(&root, "a", twice);
+  live(&root, "b", archive);
   let again = compact_day(root.path(), DAY, 3).unwrap().unwrap();
-  assert_eq!(again.duplicates, 2);
-  assert_eq!(archived(&root), twice);
+  assert_eq!(again.duplicates, 4);
+  assert_eq!(archived(&root), archive);
+}
+
+#[test]
+fn converts_records_of_a_line_each() {
+  let root = TempDir::new("logger-compact");
+  // 0.1: an LF in data went base64, an RS didn't.
+  live(
+    &root,
+    "a",
+    "journal 0.1\n10 a 1 frame64 QQpC\n20 a 1 frame A\u{1e}B\n",
+  );
+  live(&root, "b", "journal dgg.0.2\n15 b 1 frame C\nD\u{1e}\n");
+  compact_day(root.path(), DAY, 3).unwrap().unwrap();
+  // Copied byte for byte, but for the RS, now base64.
+  assert_eq!(
+    archived(&root),
+    "journal dgg.0.2\n10 a 1 frame64 QQpC\u{1e}\n15 b 1 frame C\nD\u{1e}\n\
+     20 a 1 frame64 QR5C\u{1e}\n"
+  );
+
+  // A record that doesn't decode can't keep its RS: the day is refused.
+  let root = TempDir::new("logger-compact");
+  live(&root, "a", "journal 0.1\n10 a 1 frame64 !\u{1e}\n");
+  let error = compact_day(root.path(), DAY, 3).unwrap_err();
+  assert!(error.to_string().contains("holds an RS"), "{error}");
+  assert!(!archive_file(root.path(), DAY).exists());
 }
 
 #[test]
@@ -179,6 +211,9 @@ fn leaves_the_files_of_a_running_backfill() {
 ",
   )
   .unwrap();
+  // The running one also has a file from before the format changed, so it
+  // writes to the day's next file, which is just as busy.
+  fs::write(dir.join("backfill-running.journal"), "journal 0.1\n").unwrap();
   let mut running = Writer::backfill(root.path(), "backfill-running").unwrap();
   let range = Body::FetchRange {
     source: "x".into(),
@@ -186,18 +221,21 @@ fn leaves_the_files_of_a_running_backfill() {
     to: 10,
   };
   running.write_on(5, 10, 1, range).unwrap();
+  running.write_on(5, 11, 1, Body::Frame("x".into())).unwrap();
   running.sync().unwrap();
+  assert!(dir.join("backfill-running.2.journal").exists());
 
   // Only the finished run's file is compacted.
   let done = compact_day(&backfill, DAY, 3).unwrap().unwrap();
-  assert_eq!((done.files, done.busy, done.archive.lines), (1, 1, 1));
+  assert_eq!((done.files, done.busy, done.archive.records), (1, 2, 1));
   assert!(dir.join("backfill-running.journal").exists());
+  assert!(dir.join("backfill-running.2.journal").exists());
 
   // Once the run is over, its file is merged in, and its lock is gone.
   drop(running);
   assert!(!lock_file(&backfill, "backfill-running").exists());
   let done = compact_day(&backfill, DAY, 3).unwrap().unwrap();
-  assert_eq!((done.files, done.busy, done.remerged), (1, 0, true));
-  assert_eq!(done.archive.lines, 2);
+  assert_eq!((done.files, done.busy, done.remerged), (2, 0, true));
+  assert_eq!(done.archive.records, 3);
   assert!(!dir.exists());
 }

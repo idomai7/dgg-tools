@@ -1,26 +1,40 @@
 //! Archived days and the monthly manifests describing them.
 //!
-//! An archive is an ordinary journal file (header and lines), zstd-
-//! compressed, holding every line of one UTC day. Each month's directory
+//! An archive is an ordinary journal file (header and records), zstd-
+//! compressed, holding every record of one UTC day. Each month's directory
 //! (`archive/YYYY/MM`) has a `manifest` listing its archives, so readers
 //! learn what's archived from about a dozen small files a year instead of
 //! opening every archive:
 //!
 //! ```text
-//! journal-archive 0.0
-//! <YYYY-MM-DD> <compressed bytes> <bytes> <lines> <sha-256 of the archive>
+//! journal-archive dgg.0.1
+//! <YYYY-MM-DD> <compressed bytes> <bytes> <records> <sha-256 of the archive>
 //! ```
 //!
-//! `bytes` and `lines` are of the decompressed journal; the SHA-256 is of
-//! the compressed file, lowercase hex.
+//! `bytes` and `records` are of the decompressed journal, `records` counted
+//! by its framing, after its header; the SHA-256 is of the compressed file,
+//! lowercase hex.
 //!
-//! While the major is 0 (pre-release) any minor may break, so readers accept
-//! only the exact header they write. From 1.0 on, readers will ignore lines
-//! they don't recognise, so a minor bump may add kinds of entry; anything
-//! else will be a major bump.
+//! The header is versioned like the journal's (see
+//! [`Header`](crate::Header)): each variant on its own, `journal-archive
+//! dgg.0.1` and `journal-archive kick.0.0`, optionally with informational
+//! fields. While the major is 0 (pre-release) any minor may break, so readers
+//! accept only the versions they know. From 1.0 on, readers will ignore
+//! lines they don't recognise, so a minor bump may add kinds of entry;
+//! anything else will be a major bump.
+//!
+//! Versions of dgg's:
+//!
+//! - `0.0`: `journal-archive 0.0`, naming no variant, its third count called
+//!   `lines`: an archive's records were its lines then. Still read, and
+//!   written again as 0.1 when its month's manifest is next recorded.
+//! - `0.1`: names the variant; counts records.
 
 use {
-  crate::layout::{archive_dir, archive_file, archive_month_dir},
+  crate::{
+    layout::{archive_dir, archive_file, archive_month_dir},
+    record::{Format, Header, Variant, Version},
+  },
   ::common::{atomic_file, fs::MissingOk},
   ::std::{
     fs, io,
@@ -28,8 +42,25 @@ use {
   },
 };
 
-/// The header line this crate writes and reads.
-pub const HEADER: &str = "journal-archive 0.0";
+/// The manifest's format.
+pub const FORMAT: Format = Format {
+  magic: "journal-archive",
+  last_unnamed: Version { major: 0, minor: 0 },
+};
+
+/// The version of `variant`'s manifest this crate writes.
+pub fn version(variant: Variant) -> Version {
+  match variant {
+    Variant::Dgg => Version { major: 0, minor: 1 },
+    Variant::Kick => Version { major: 0, minor: 0 },
+  }
+}
+
+/// Whether this crate reads `variant`'s manifest at `version`.
+fn readable(variant: Variant, version: Version) -> bool {
+  version == self::version(variant)
+    || (variant == Variant::Dgg && version == Version { major: 0, minor: 0 })
+}
 
 /// The manifest's file name in each month directory.
 pub const MANIFEST: &str = "manifest";
@@ -43,8 +74,8 @@ pub struct Archive {
   pub compressed: u64,
   /// Size of the decompressed journal.
   pub bytes: u64,
-  /// Lines in the decompressed journal, header excluded.
-  pub lines: u64,
+  /// Records in the decompressed journal, header excluded.
+  pub records: u64,
   /// SHA-256 of the compressed file, lowercase hex.
   pub sha256: String,
 }
@@ -69,28 +100,31 @@ fn digits(text: &str) -> bool {
   !text.is_empty() && text.bytes().all(|b| b.is_ascii_digit())
 }
 
-/// A manifest's contents, days in order.
-pub fn encode(archives: &[Archive]) -> String {
+/// A manifest of `variant`'s archives, days in order.
+pub fn encode(variant: Variant, archives: &[Archive]) -> String {
   let mut archives = archives.to_vec();
   archives.sort_by(|a, b| a.day.cmp(&b.day));
-  let mut text = format!("{HEADER}\n");
+  let header = Header::new(variant, version(variant)).line_as(FORMAT);
+  let mut text = format!("{header}\n");
   for archive in archives {
     text += &format!(
       "{} {} {} {} {}\n",
       archive.day,
       archive.compressed,
       archive.bytes,
-      archive.lines,
+      archive.records,
       archive.sha256
     );
   }
   text
 }
 
-/// Parses a manifest, or `None` if it isn't one this crate can read.
-pub fn decode(text: &str) -> Option<Vec<Archive>> {
+/// Parses a manifest: its variant and archives, or `None` if it isn't one
+/// this crate can read.
+pub fn decode(text: &str) -> Option<(Variant, Vec<Archive>)> {
   let mut lines = text.strip_suffix('\n')?.split('\n');
-  if lines.next()? != HEADER {
+  let header = Header::parse_as(FORMAT, lines.next()?.as_bytes())?;
+  if !readable(header.variant, header.version) {
     return None;
   }
   let mut archives = Vec::new();
@@ -113,11 +147,11 @@ pub fn decode(text: &str) -> Option<Vec<Archive>> {
       day: day.into(),
       compressed: compressed.parse().ok()?,
       bytes: bytes.parse().ok()?,
-      lines: count.parse().ok()?,
+      records: count.parse().ok()?,
       sha256: sha256.into(),
     });
   }
-  Some(archives)
+  Some((header.variant, archives))
 }
 
 /// The manifest of the month containing `day`.
@@ -128,29 +162,43 @@ pub fn manifest_path(root: &Path, day: &str) -> PathBuf {
 /// The archives listed for the month containing `day`; none if the month
 /// has no manifest.
 pub fn read_month(root: &Path, day: &str) -> io::Result<Vec<Archive>> {
-  read_manifest(&manifest_path(root, day))
+  Ok(read_manifest(&manifest_path(root, day))?.map_or_else(Vec::new, |m| m.1))
 }
 
-fn read_manifest(path: &Path) -> io::Result<Vec<Archive>> {
+/// A manifest's variant and archives; `None` if there's none at `path`.
+fn read_manifest(path: &Path) -> io::Result<Option<(Variant, Vec<Archive>)>> {
   let Some(text) = fs::read_to_string(path).missing_ok()? else {
-    return Ok(Vec::new());
+    return Ok(None);
   };
-  decode(&text).ok_or_else(|| {
-    io::Error::new(
-      io::ErrorKind::InvalidData,
-      format!("{}: not a readable archive manifest", path.display()),
-    )
-  })
+  let invalid = |why: &str| {
+    let why = format!("{}: {why}", path.display());
+    io::Error::new(io::ErrorKind::InvalidData, why)
+  };
+  decode(&text)
+    .map(Some)
+    .ok_or_else(|| invalid("not a readable archive manifest"))
 }
 
-/// Records `archive` in its month's manifest, replacing any entry for the
-/// same day. The manifest is written atomically.
-pub fn record(root: &Path, archive: &Archive) -> io::Result<()> {
+/// Records `archive`, of `variant`'s journal, in its month's manifest,
+/// replacing any entry for the same day. The manifest is written
+/// atomically, in this crate's version. Fails if it's another variant's.
+pub fn record(
+  root: &Path,
+  variant: Variant,
+  archive: &Archive,
+) -> io::Result<()> {
   let path = manifest_path(root, &archive.day);
-  let mut archives = read_manifest(&path)?;
+  let mut archives = match read_manifest(&path)? {
+    Some((found, _)) if found != variant => {
+      let why = format!("{}: another variant's manifest", path.display());
+      return Err(io::Error::new(io::ErrorKind::InvalidData, why));
+    }
+    Some((_, archives)) => archives,
+    None => Vec::new(),
+  };
   archives.retain(|other| other.day != archive.day);
   archives.push(archive.clone());
-  atomic_file::replace(&path, encode(&archives))
+  atomic_file::replace(&path, encode(variant, &archives))
 }
 
 /// Every archive under journal `root`, oldest first, read from the monthly
@@ -159,7 +207,9 @@ pub fn all(root: &Path) -> io::Result<Vec<Archive>> {
   let mut archives = Vec::new();
   for year in sorted_dirs(&archive_dir(root))? {
     for month in sorted_dirs(&year)? {
-      archives.extend(read_manifest(&month.join(MANIFEST))?);
+      if let Some((_, listed)) = read_manifest(&month.join(MANIFEST))? {
+        archives.extend(listed);
+      }
     }
   }
   archives.sort_by(|a, b| a.day.cmp(&b.day));

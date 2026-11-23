@@ -3,11 +3,18 @@
 //! A day is closed once it ended (UTC) more than a grace period ago, so no
 //! capture is still writing to it. Its live files, and its existing archive
 //! if it was compacted before (a late `sync` can bring more files), are
-//! merged line for line, byte for byte: sorted by receive time, keeping the
-//! order of lines with equal times. The only lines dropped are copies made
-//! by merging the same file twice (each distinct line is kept as often as
-//! any one input has it), and torn tails left by crashes, which can't ever
-//! be read.
+//! merged record for record, byte for byte: sorted by receive time, keeping
+//! the order of records with equal times. The only records dropped are
+//! copies made by merging the same file twice (each distinct record is kept
+//! as often as any one input has it), and torn tails left by crashes, which
+//! can't ever be read.
+//!
+//! Each input is split by its own framing, and the archive is written in the
+//! newest version, `journal dgg.0.2`, its records ending at RS LF. Inputs of
+//! `journal 0.1`, a record per line, are converted: each record is copied
+//! byte for byte, unless it holds an RS; that one is decoded and encoded
+//! again, its text as base64. A record that doesn't decode is kept byte for
+//! byte too, but can't be if it holds an RS: then the day is refused.
 //!
 //! The archive is written to a temporary file, fsynced, read back and
 //! checked against what was meant to be written, and only then renamed
@@ -30,7 +37,7 @@ use {
   ::logger_journal::{
     archive::{self, Archive, valid_day},
     layout::{EXTENSION, archive_file, live_day_dir, live_dir},
-    record::{Version, v0},
+    record::{Framing, Header, RS, Variant, v0},
     writer::writing,
   },
   ::sha2::{Digest, Sha256},
@@ -55,8 +62,8 @@ pub struct Day {
   pub busy: u64,
   /// Whether an existing archive for the day was merged in.
   pub remerged: bool,
-  /// Copies of lines dropped because they came from merging the same file
-  /// twice.
+  /// Copies of records dropped because they came from merging the same
+  /// file twice.
   pub duplicates: u64,
   /// Torn tails dropped.
   pub torn: u64,
@@ -89,9 +96,9 @@ pub fn closed_days(
   Ok(days)
 }
 
-/// One input's lines, and how much of it was read.
+/// One input's records, without their ends, in the newest version, and how
+/// much of it was read.
 struct Input {
-  version: Version,
   lines: Vec<Vec<u8>>,
   torn: bool,
   /// For live files: the path and how many bytes were read.
@@ -105,35 +112,72 @@ fn invalid(path: &Path, why: &str) -> io::Error {
   )
 }
 
-/// Splits a journal's bytes into its version and its lines.
-fn parse(
-  path: &Path,
-  bytes: &[u8],
-) -> io::Result<(Version, Vec<Vec<u8>>, bool)> {
+/// Splits a journal's bytes into its records, in the newest version (see
+/// the [module docs](self)), and whether it has a torn tail.
+fn parse(path: &Path, bytes: &[u8]) -> io::Result<(Vec<Vec<u8>>, bool)> {
   let Some(header_end) = bytes.iter().position(|&b| b == b'\n') else {
     return Err(invalid(path, "no complete header"));
   };
-  let version = Version::parse_header(&bytes[..header_end])
+  let header = Header::parse(&bytes[..header_end])
     .ok_or_else(|| invalid(path, "not a journal"))?;
-  if !version.readable() {
+  if header.variant != Variant::Dgg {
+    return Err(invalid(path, "not dgg's journal"));
+  }
+  if !header.readable() {
     return Err(invalid(path, "journal of an unreadable version"));
   }
-  let body = &bytes[header_end + 1..];
-  let mut lines: Vec<Vec<u8>> =
-    body.split(|&b| b == b'\n').map(<[u8]>::to_vec).collect();
-  // What follows the last newline: empty, or a torn line.
-  let tail = lines.pop().unwrap_or_default();
-  lines.retain(|line| !line.is_empty());
-  Ok((version, lines, !tail.is_empty()))
+  let framing = header.framing();
+  let (records, tail) = framing.split(&bytes[header_end + 1..]);
+  let records = records
+    .into_iter()
+    .filter(|record| !record.is_empty())
+    .map(|record| convert(path, framing, record))
+    .collect::<io::Result<_>>()?;
+  Ok((records, !tail.is_empty()))
 }
 
-/// A line's receive time, the first field; unreadable ones sort last.
+/// `record`, from a file with `framing`, as the newest version holds it.
+fn convert(
+  path: &Path,
+  framing: Framing,
+  record: &[u8],
+) -> io::Result<Vec<u8>> {
+  if framing == Framing::RsLf || !record.contains(&RS) {
+    return Ok(record.to_vec());
+  }
+  let Ok(decoded) = v0::Record::decode_framed(framing, record) else {
+    return Err(invalid(path, "a record that doesn't decode holds an RS"));
+  };
+  let mut encoded = Vec::new();
+  decoded.encode(&mut encoded);
+  encoded.truncate(encoded.len() - Framing::RsLf.end().len());
+  Ok(encoded)
+}
+
+/// A record's receive time, the first field; unreadable ones sort last.
 fn receive_time(line: &[u8]) -> i64 {
   let end = line.iter().position(|&b| b == b' ').unwrap_or(line.len());
   ::std::str::from_utf8(&line[..end])
     .ok()
     .and_then(|field| field.parse().ok())
     .unwrap_or(i64::MAX)
+}
+
+/// Whether a backfill run still writes the live file at `path`: its
+/// instance's, `<instance>.journal`, or `<instance>.<n>.journal` after a
+/// change of format.
+fn busy_file(journal_root: &Path, path: &Path) -> io::Result<bool> {
+  let stem = path.file_stem().unwrap().to_string_lossy();
+  let numbered = stem
+    .rsplit_once('.')
+    .filter(|(_, n)| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()));
+  if writing(journal_root, &stem)? {
+    return Ok(true);
+  }
+  match numbered {
+    Some((instance, _)) => writing(journal_root, instance),
+    None => Ok(false),
+  }
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -153,9 +197,8 @@ pub fn compact_day(
   let remerged = archive_path.exists();
   if remerged {
     let bytes = ::zstd::decode_all(File::open(&archive_path)?)?;
-    let (version, lines, torn) = parse(&archive_path, &bytes)?;
+    let (lines, torn) = parse(&archive_path, &bytes)?;
     inputs.push(Input {
-      version,
       lines,
       torn,
       live: None,
@@ -175,8 +218,7 @@ pub fn compact_day(
     {
       continue;
     }
-    let instance = path.file_stem().unwrap().to_string_lossy();
-    if writing(journal_root, &instance)? {
+    if busy_file(journal_root, &path)? {
       busy += 1;
     } else {
       live.push(path);
@@ -188,9 +230,8 @@ pub fn compact_day(
   live.sort();
   for path in live {
     let bytes = fs::read(&path)?;
-    let (version, lines, torn) = parse(&path, &bytes)?;
+    let (lines, torn) = parse(&path, &bytes)?;
     inputs.push(Input {
-      version,
       lines,
       torn,
       live: Some((path, bytes.len() as u64)),
@@ -212,12 +253,6 @@ pub fn compact_day(
       *most = (*most).max(count);
     }
   }
-  let minor = inputs
-    .iter()
-    .map(|input| input.version.minor)
-    .chain([v0::VERSION.minor])
-    .max()
-    .unwrap();
   let mut lines: Vec<&[u8]> = inputs
     .iter()
     .flat_map(|input| input.lines.iter().map(Vec::as_slice))
@@ -230,14 +265,11 @@ pub fn compact_day(
     *left = left.saturating_sub(1);
     kept
   });
-  let version = Version {
-    major: v0::VERSION.major,
-    minor,
-  };
-  let mut journal = format!("{}\n", version.header()).into_bytes();
+  let header = Header::new(Variant::Dgg, v0::VERSION);
+  let mut journal = format!("{}\n", header.line()).into_bytes();
   for line in &lines {
     journal.extend_from_slice(line);
-    journal.push(b'\n');
+    journal.extend_from_slice(header.framing().end());
   }
 
   // Write, verify, then put in place.
@@ -260,10 +292,10 @@ pub fn compact_day(
     day: day.into(),
     compressed: compressed.len() as u64,
     bytes: journal.len() as u64,
-    lines: lines.len() as u64,
+    records: lines.len() as u64,
     sha256: hex(&Sha256::digest(&compressed)),
   };
-  archive::record(journal_root, &archive)?;
+  archive::record(journal_root, Variant::Dgg, &archive)?;
 
   // Only now delete the live files, unless they grew meanwhile.
   let (mut files, mut grown) = (0, 0);
