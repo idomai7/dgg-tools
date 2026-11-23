@@ -6,10 +6,7 @@ use {
     DecodeError, Entry, Header, ReadError, Reader, Record, Variant, Version,
     Writer,
     layout::{backfill_files, live_dir, live_file, live_files},
-    record::{
-      Framing,
-      v0::{self, Body},
-    },
+    record::v0::{self, Body},
   },
   ::std::{
     fs::{self, OpenOptions},
@@ -143,7 +140,7 @@ fn header_is_checked() {
   // Older minors are no longer read.
   let v02 = Version { major: 0, minor: 2 };
   assert!(matches!(
-    with("journal dgg.0.2"),
+    with("journal dgg.0.2\u{1e}"),
     Err(ReadError::Version(Variant::Dgg, v)) if v == v02
   ));
   // Within major 0 another minor may have broken anything: refused.
@@ -158,12 +155,12 @@ fn header_is_checked() {
     with("journal dgg.2.0\u{1e}"),
     Err(ReadError::Version(Variant::Dgg, v)) if v == v2
   ));
-  // Each version's header has one form, and one end.
+  // Every header names its variant and ends at RS LF; older versions'
+  // headers, which didn't, aren't read as headers at all.
   for header in [
-    "journal 0.2",
-    "journal dgg.0.1",
     "journal dgg.0.3",
-    "journal dgg.0.2\u{1e}",
+    "journal dgg.0.2",
+    "journal 0.1",
     "journal 0.1\u{1e}",
   ] {
     assert!(matches!(with(header), Err(ReadError::Header { .. })));
@@ -244,7 +241,7 @@ fn older_files_are_never_appended_to() {
   fs::write(&day, "journal 0.1\n0 a 1 frame64 QQpC\n0 a 1 frame B\n").unwrap();
   assert!(matches!(
     Reader::open(&day, 0),
-    Err(ReadError::Version(Variant::Dgg, _))
+    Err(ReadError::Header { .. })
   ));
 
   // The writer starts the day's next file, in the new format.
@@ -272,7 +269,6 @@ fn older_files_are_never_appended_to() {
   assert_eq!(live_files(root.path()).unwrap().len(), 2);
   let header = Header::new(Variant::Dgg, v0::VERSION);
   assert_eq!(header.text(), "journal dgg.0.3\u{1e}\n");
-  assert_eq!(header.framing(), Framing::RsLf);
 }
 
 #[test]

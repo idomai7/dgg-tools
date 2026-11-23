@@ -33,7 +33,7 @@ use {
   ::logger_journal::{
     archive::{self, Archive, valid_day},
     layout::{EXTENSION, archive_file, live_day_dir, live_dir},
-    record::{Header, Variant, v0},
+    record::{END, Header, Variant, split, v0},
     writer::writing,
   },
   ::sha2::{Digest, Sha256},
@@ -125,7 +125,7 @@ fn parse(path: &Path, bytes: &[u8]) -> io::Result<(Vec<Vec<u8>>, bool)> {
   if header.version != v0::VERSION {
     return Err(invalid(path, "journal of an older version"));
   }
-  let (records, tail) = header.framing().split(&bytes[header_end + 1..]);
+  let (records, tail) = split(&bytes[header_end + 1..]);
   let records = records
     .into_iter()
     .filter(|record| !record.is_empty())
@@ -252,7 +252,7 @@ pub fn compact_day(
   let mut journal = header.text().into_bytes();
   for record in &records {
     journal.extend_from_slice(record);
-    journal.extend_from_slice(header.framing().end());
+    journal.extend_from_slice(END);
   }
 
   // Write, verify, then put in place.

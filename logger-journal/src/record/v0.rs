@@ -43,10 +43,7 @@
 
 pub use super::fields::{valid_instance, valid_token};
 use {
-  super::{
-    DecodeError, Version, digits,
-    fields::{self, Framing},
-  },
+  super::{DecodeError, Version, digits, fields},
   ::std::borrow::Cow,
 };
 
@@ -125,7 +122,6 @@ impl Record {
     let binary = matches!(self.body, Body::Binary(_));
     fields::encode(
       out,
-      Framing::RsLf,
       self.receive_time,
       &self.instance,
       self.connection,
@@ -137,7 +133,7 @@ impl Record {
 
   /// Decodes one record, without its RS LF.
   pub fn decode(record: &[u8]) -> Result<Self, DecodeError> {
-    let fields = fields::decode(Framing::RsLf, record)?;
+    let fields = fields::decode(record)?;
     let data = fields.data;
     let body = match fields.kind {
       "frame" => Body::Frame(data.into()),

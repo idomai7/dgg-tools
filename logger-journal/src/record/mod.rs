@@ -10,52 +10,21 @@ mod fields;
 pub mod kick;
 pub mod v0;
 
-pub use fields::{Framing, RS};
+pub use fields::{END, RS, split};
 
 /// Format name at the start of every file's header line.
 pub const MAGIC: &str = "journal";
 
-/// A format with a [`Header`] line: the journal, and the manifests that
-/// describe journals.
+/// A format with a [`Header`] line: the journal, and the files that
+/// describe journals and their capture.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Format {
   /// The name its header lines start with.
   pub magic: &'static str,
-  /// dgg's last version whose header named no variant, from before
-  /// variants.
-  pub last_unnamed: Version,
-  /// For each variant, the first version whose header ends at RS LF, as its
-  /// entries do; before it, the header ends at LF.
-  pub rs_header: &'static [(Variant, Version)],
 }
 
-impl Format {
-  /// Whether the header of `variant` at `version` ends at RS LF.
-  fn rs_header(self, variant: Variant, version: Version) -> bool {
-    self.rs_header.iter().any(|&(of, from)| {
-      of == variant
-        && (version.major, version.minor) >= (from.major, from.minor)
-    })
-  }
-
-  /// Whether the header of `variant` at `version` names no variant.
-  fn unnamed(self, variant: Variant, version: Version) -> bool {
-    variant == Variant::Dgg
-      && (version.major, version.minor)
-        <= (self.last_unnamed.major, self.last_unnamed.minor)
-  }
-}
-
-/// The journal: `journal dgg.0.3`, `journal kick.0.0`, and before variants
-/// `journal 0.1`.
-pub const JOURNAL: Format = Format {
-  magic: MAGIC,
-  last_unnamed: Version { major: 0, minor: 1 },
-  rs_header: &[
-    (Variant::Dgg, Version { major: 0, minor: 3 }),
-    (Variant::Kick, Version { major: 0, minor: 0 }),
-  ],
-};
+/// The journal: `journal dgg.0.3` and `journal kick.0.0`.
+pub const JOURNAL: Format = Format { magic: MAGIC };
 /// The versions of dgg's format this crate has a decoder for.
 pub const READABLE: &[Version] = &[v0::VERSION];
 
@@ -116,10 +85,10 @@ impl Version {
   }
 }
 
-/// A file's header line: `journal <variant>.<version>` (or for dgg up to
-/// 0.1, `journal <version>`), then optionally ` ;` and informational
-/// `key=value` fields, separated by single spaces. It ends at LF, whatever
-/// the file's [`Framing`]. For example:
+/// A file's header line: `journal <variant>.<version>`, then optionally ` ;`
+/// and informational `key=value` fields, separated by single spaces. It ends
+/// at RS LF ([`END`]), as records do, so a reader finds it at the first LF.
+/// For example:
 ///
 /// ```text
 /// journal kick.0.0 ; endpoint=wss://example.com/connection channel=destiny
@@ -173,22 +142,6 @@ impl Header {
     self.version.readable_in(self.variant)
   }
 
-  /// How the journal file's records end: at LF for dgg's up to 0.1, at RS
-  /// LF otherwise.
-  pub fn framing(&self) -> Framing {
-    self.framing_as(JOURNAL)
-  }
-
-  /// How a file in `format` ends its entries after this header: at LF for
-  /// a version from before variants, at RS LF otherwise.
-  pub fn framing_as(&self, format: Format) -> Framing {
-    if format.unnamed(self.variant, self.version) {
-      Framing::Lf
-    } else {
-      Framing::RsLf
-    }
-  }
-
   /// The journal's header line, without its end.
   pub fn line(&self) -> String {
     self.line_as(JOURNAL)
@@ -199,26 +152,17 @@ impl Header {
     self.text_as(JOURNAL)
   }
 
-  /// The header line in `format`, with its end: RS LF from the format's
-  /// [`rs_header`](Format::rs_header) versions on, LF before.
+  /// The header line in `format`, with its end, RS LF.
   pub fn text_as(&self, format: Format) -> String {
-    let end = if format.rs_header(self.variant, self.version) {
-      "\u{1e}\n"
-    } else {
-      "\n"
-    };
-    self.line_as(format) + end
+    self.line_as(format) + "\u{1e}\n"
   }
 
   /// The header line in `format`, without its end.
   pub fn line_as(&self, format: Format) -> String {
     let Version { major, minor } = self.version;
     let magic = format.magic;
-    let mut line = if format.unnamed(self.variant, self.version) {
-      format!("{magic} {major}.{minor}")
-    } else {
-      format!("{magic} {}.{major}.{minor}", self.variant.name())
-    };
+    let variant = self.variant.name();
+    let mut line = format!("{magic} {variant}.{major}.{minor}");
     if !self.info.is_empty() {
       line.push_str(" ;");
       for (key, value) in &self.info {
@@ -228,19 +172,15 @@ impl Header {
     line
   }
 
-  /// Parses a journal's header line, without its newline.
+  /// Parses a journal's header line, up to its LF: with its RS.
   pub fn parse(line: &[u8]) -> Option<Self> {
     Self::parse_as(JOURNAL, line)
   }
 
-  /// Parses a header line in `format`, up to its LF: with the RS before it
-  /// that its version's header ends with, if it does. Whether its version
-  /// is one the reader knows is left to it.
+  /// Parses a header line in `format`, up to its LF: with its RS. Whether
+  /// its version is one the reader knows is left to it.
   pub fn parse_as(format: Format, line: &[u8]) -> Option<Self> {
-    let (line, rs) = match line.strip_suffix(&[RS]) {
-      Some(line) => (line, true),
-      None => (line, false),
-    };
+    let line = line.strip_suffix(&[RS])?;
     let line = ::std::str::from_utf8(line).ok()?;
     let rest = line.strip_prefix(format.magic)?.strip_prefix(' ')?;
     let (required, info) = match rest.split_once(" ;") {
@@ -248,10 +188,9 @@ impl Header {
       None => (rest, None),
     };
     let parts: Vec<&str> = required.split('.').collect();
-    let (variant, named, major, minor) = match parts[..] {
-      [major, minor] => (Variant::Dgg, false, major, minor),
-      ["dgg", major, minor] => (Variant::Dgg, true, major, minor),
-      ["kick", major, minor] => (Variant::Kick, true, major, minor),
+    let (variant, major, minor) = match parts[..] {
+      ["dgg", major, minor] => (Variant::Dgg, major, minor),
+      ["kick", major, minor] => (Variant::Kick, major, minor),
       _ => return None,
     };
     if !digits(major) || !digits(minor) {
@@ -261,12 +200,6 @@ impl Header {
       major: major.parse().ok()?,
       minor: minor.parse().ok()?,
     };
-    // Each version's header has one form, and one end.
-    if named == format.unnamed(variant, version)
-      || rs != format.rs_header(variant, version)
-    {
-      return None;
-    }
     let mut header = Self::new(variant, version);
     for field in info.into_iter().flat_map(|info| info.split(' ')) {
       let (key, value) = field.split_once('=')?;

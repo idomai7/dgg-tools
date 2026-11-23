@@ -12,7 +12,7 @@ use {
   crate::{
     layout::{backfill_root, lock_file, numbered_live_file},
     record::{
-      Framing, Header, Variant,
+      END, Header, Variant,
       v0::{self, Body},
     },
   },
@@ -196,7 +196,7 @@ fn open_day(
   {
     n += 1;
   }
-  open_append(&path(n), &text, header.framing())
+  open_append(&path(n), &text)
 }
 
 /// `file`'s first line, up to and with its LF.
@@ -208,13 +208,9 @@ fn first_line(file: &File) -> io::Result<Vec<u8>> {
 
 /// Opens `path` to append to, creating it if needed. A new file gets
 /// `header`, with its end, in one write. An existing one with a torn tail
-/// after its header gets the end of a record (`framing`'s), so the next
-/// record starts clean.
-fn open_append(
-  path: &Path,
-  header: &str,
-  framing: Framing,
-) -> io::Result<File> {
+/// after its header gets the end of a record, so the next record starts
+/// clean.
+fn open_append(path: &Path, header: &str) -> io::Result<File> {
   fs::create_dir_all(path.parent().unwrap())?;
   let mut file = OpenOptions::new()
     .create(true)
@@ -226,7 +222,7 @@ fn open_append(
     file.write_all(header.as_bytes())?;
     return Ok(file);
   }
-  let end = framing.end();
+  let end = END;
   let mut tail = vec![0; end.len().min(len as usize)];
   file.seek(SeekFrom::End(-(tail.len() as i64)))?;
   file.read_exact(&mut tail)?;

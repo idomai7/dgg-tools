@@ -6,10 +6,7 @@ use {
   ::logger_journal::{
     DecodeError, Header, Reader, Record, Variant, Version,
     layout::{channel_root, live_files},
-    record::{
-      Framing,
-      kick::v0::{self, Body},
-    },
+    record::kick::v0::{self, Body},
     writer::kick::Writer,
   },
   ::std::{fs, path::Path},
@@ -35,18 +32,12 @@ fn header() {
   assert_eq!(header.get("other"), None);
   assert!(header.readable());
 
-  // dgg's names its variant from 0.2 on, and keys a reader doesn't know are
-  // kept for it to skip.
-  let dgg = Header::new(Variant::Dgg, Version { major: 0, minor: 2 });
-  assert_eq!(dgg.line(), "journal dgg.0.2");
-  assert_eq!(Header::parse(b"journal dgg.0.2"), Some(dgg.clone()));
-  let noted = Header::parse(b"journal dgg.0.2 ; new_key=1").unwrap();
+  // Keys a reader doesn't know are kept for it to skip.
+  let dgg = Header::new(Variant::Dgg, Version { major: 0, minor: 3 });
+  assert_eq!(dgg.line(), "journal dgg.0.3");
+  assert_eq!(Header::parse(b"journal dgg.0.3\x1e"), Some(dgg.clone()));
+  let noted = Header::parse(b"journal dgg.0.3 ; new_key=1\x1e").unwrap();
   assert_eq!(noted, dgg.with("new_key", "1"));
-  let legacy = Header::new(Variant::Dgg, Version { major: 0, minor: 1 });
-  assert_eq!(legacy.line(), "journal 0.1");
-  assert_eq!(Header::parse(b"journal 0.1"), Some(legacy.clone()));
-  assert_eq!(legacy.framing(), Framing::Lf);
-  assert_eq!(header.framing(), Framing::RsLf);
 
   let kick =
     |major, minor| Header::new(Variant::Kick, Version { major, minor });
@@ -61,9 +52,10 @@ fn header() {
     "journal kick.0.0 ; Channel=one",
     "journal kick.0.0 ; channel=one  endpoint=x",
     "journal kick.0.0 channel=one",
-    "journal 0.2",
-    "journal dgg.0.1",
+    // Before variants, dgg's named none; no longer read.
+    "journal 0.1",
   ] {
+    let bad = format!("{bad}\u{1e}");
     assert_eq!(Header::parse(bad.as_bytes()), None, "{bad:?}");
   }
 }

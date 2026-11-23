@@ -13,7 +13,7 @@
 //!
 //! The header and each entry end at RS LF, as the journal's records do.
 //! `bytes` and `records` are of the decompressed journal, `records` counted
-//! by its framing, after its header; the SHA-256 is of the compressed file,
+//! after its header; the SHA-256 is of the compressed file,
 //! lowercase hex.
 //!
 //! The header is versioned like the journal's (see
@@ -37,7 +37,7 @@
 use {
   crate::{
     layout::{archive_dir, archive_file, archive_month_dir},
-    record::{Format, Header, Variant, Version},
+    record::{Format, Header, Variant, Version, split},
   },
   ::common::{atomic_file, fs::MissingOk},
   ::std::{
@@ -49,11 +49,6 @@ use {
 /// The manifest's format.
 pub const FORMAT: Format = Format {
   magic: "journal-archive",
-  last_unnamed: Version { major: 0, minor: 0 },
-  rs_header: &[
-    (Variant::Dgg, Version { major: 0, minor: 2 }),
-    (Variant::Kick, Version { major: 0, minor: 0 }),
-  ],
 };
 
 /// The version of `variant`'s manifest this crate writes.
@@ -128,7 +123,7 @@ pub fn decode(text: &str) -> Option<(Variant, Vec<Archive>)> {
   if header.version != version(header.variant) {
     return None;
   }
-  let (entries, tail) = header.framing_as(FORMAT).split(body.as_bytes());
+  let (entries, tail) = split(body.as_bytes());
   if !tail.is_empty() {
     return None;
   }

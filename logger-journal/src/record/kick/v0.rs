@@ -30,10 +30,7 @@
 //! - `0.0`: `frame`, `binary`, `open` and `close`.
 
 use {
-  super::super::{
-    DecodeError, Version,
-    fields::{self, Framing},
-  },
+  super::super::{DecodeError, Version, fields},
   ::std::borrow::Cow,
 };
 
@@ -76,7 +73,6 @@ impl Record {
     let binary = matches!(self.body, Body::Binary(_));
     fields::encode(
       out,
-      Framing::RsLf,
       self.receive_time,
       &self.instance,
       self.connection,
@@ -88,7 +84,7 @@ impl Record {
 
   /// Decodes one record, without its RS LF.
   pub fn decode(record: &[u8]) -> Result<Self, DecodeError> {
-    let fields = fields::decode(Framing::RsLf, record)?;
+    let fields = fields::decode(record)?;
     let body = match fields.kind {
       "frame" => Body::Frame(fields.data.into()),
       "open" => Body::Open(fields.data.into()),

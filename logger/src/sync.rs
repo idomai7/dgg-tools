@@ -32,7 +32,7 @@ use {
   ::logger_journal::{
     archive::{self, Archive},
     layout::{EXTENSION, archive_file, backfill_root, live_day_dir},
-    record::{Framing, Header, RS, Variant},
+    record::{Header, RS, Variant},
   },
   ::sha2::{Digest, Sha256},
   ::std::{
@@ -300,7 +300,7 @@ fn has_live(root: &Path, day: &str) -> io::Result<bool> {
 }
 
 /// Decompresses the archive at `path` into `out`, if given; its size and
-/// records (after the header, counted by its framing). Fails if it isn't a
+/// records (after the header, counted by their ends). Fails if it isn't a
 /// readable dgg journal, or decompresses to over `limit` bytes.
 pub fn unpack(
   path: &Path,
@@ -312,7 +312,7 @@ pub fn unpack(
   let mut buffer = vec![0; 64 << 10];
   let (mut bytes, mut records) = (0_u64, 0_u64);
   let mut head = Vec::new();
-  let mut framing = None;
+  let mut header = false;
   // The byte before, for an RS LF across chunks.
   let mut last = 0;
   loop {
@@ -330,33 +330,32 @@ pub fn unpack(
     if let Some(out) = out.as_deref_mut() {
       out.write_all(chunk)?;
     }
-    let body = match framing {
-      Some(_) => chunk,
-      None => {
-        head.extend_from_slice(chunk);
-        let Some(end) = head.iter().position(|&b| b == b'\n') else {
-          if head.len() > 1024 {
-            return Err(unreadable());
-          }
-          continue;
-        };
-        let header = Header::parse(&head[..end])
-          .filter(|h| h.variant == Variant::Dgg && h.readable())
-          .ok_or_else(unreadable)?;
-        framing = Some(header.framing());
-        // What of the head follows the header, kept apart from `chunk`.
-        head.drain(..=end);
-        &head[..]
-      }
+    let body = if header {
+      chunk
+    } else {
+      head.extend_from_slice(chunk);
+      let Some(end) = head.iter().position(|&b| b == b'\n') else {
+        if head.len() > 1024 {
+          return Err(unreadable());
+        }
+        continue;
+      };
+      Header::parse(&head[..end])
+        .filter(|h| h.variant == Variant::Dgg && h.readable())
+        .ok_or_else(unreadable)?;
+      header = true;
+      // What of the head follows the header, kept apart from `chunk`.
+      head.drain(..=end);
+      &head[..]
     };
     for &b in body {
-      if b == b'\n' && (framing == Some(Framing::Lf) || last == RS) {
+      if b == b'\n' && last == RS {
         records += 1;
       }
       last = b;
     }
   }
-  if framing.is_none() {
+  if !header {
     return Err(unreadable());
   }
   Ok((bytes, records))

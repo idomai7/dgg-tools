@@ -44,7 +44,8 @@
 use {
   ::common::{atomic_file, fs::MissingOk},
   ::logger_journal::{
-    Format, Header, Variant, Version, record::v0::valid_instance,
+    Format, Header, Variant, Version,
+    record::{split, v0::valid_instance},
   },
   ::std::{
     fs, io,
@@ -57,8 +58,6 @@ use {
 /// Its format.
 pub const FORMAT: Format = Format {
   magic: "capture-status",
-  last_unnamed: Version { major: 0, minor: 0 },
-  rs_header: &[(Variant::Dgg, Version { major: 0, minor: 2 })],
 };
 
 /// The version this crate writes and reads.
@@ -106,7 +105,7 @@ impl Status {
     if header.variant != Variant::Dgg || header.version != VERSION {
       return None;
     }
-    let (entries, tail) = header.framing_as(FORMAT).split(body.as_bytes());
+    let (entries, tail) = split(body.as_bytes());
     if !tail.is_empty() {
       return None;
     }

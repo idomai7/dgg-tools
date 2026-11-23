@@ -3,7 +3,7 @@
 use {
   crate::{
     layout::ARCHIVE_SUFFIX,
-    record::{DecodeError, Header, Record, Variant, Version},
+    record::{DecodeError, END, Header, Record, Variant, Version},
   },
   ::std::{
     fs::File,
@@ -42,7 +42,7 @@ impl From<io::Error> for ReadError {
 /// Reads complete records from an offset on, decoding them with the decoder
 /// for the file's header variant and version.
 ///
-/// A trailing record without its end (see [`Header::framing`]) is still
+/// A trailing record without its end ([`END`]) is still
 /// being written (or was torn by a crash), so iteration stops before it;
 /// read again from the last `next` to pick it up later.
 ///
@@ -128,7 +128,7 @@ impl Iterator for Reader {
 
   fn next(&mut self) -> Option<Self::Item> {
     let header = self.header.as_ref()?;
-    let end = header.framing().end();
+    let end = END;
     while !self.done {
       self.record.clear();
       // A record may span lines: read them until its end.

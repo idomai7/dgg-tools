@@ -36,7 +36,7 @@ use {
     layout::{
       ARCHIVE_SUFFIX, EXTENSION, backfill_files, backfill_root, live_files,
     },
-    record::{Format, Header, Variant, Version, v0::valid_instance},
+    record::{Format, Header, Variant, Version, split, v0::valid_instance},
   },
   ::std::{fs, io, path::Path},
 };
@@ -44,11 +44,6 @@ use {
 /// The manifest's format.
 pub const FORMAT: Format = Format {
   magic: "journal-manifest",
-  last_unnamed: Version { major: 0, minor: 0 },
-  rs_header: &[
-    (Variant::Dgg, Version { major: 0, minor: 2 }),
-    (Variant::Kick, Version { major: 0, minor: 0 }),
-  ],
 };
 
 /// The version of dgg's manifest this crate writes and reads.
@@ -165,7 +160,7 @@ pub fn decode(text: &str) -> Option<Vec<File>> {
   if header.variant != Variant::Dgg || header.version != VERSION {
     return None;
   }
-  let (entries, tail) = header.framing_as(FORMAT).split(body.as_bytes());
+  let (entries, tail) = split(body.as_bytes());
   if !tail.is_empty() {
     return None;
   }

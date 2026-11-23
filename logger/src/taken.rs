@@ -21,7 +21,7 @@
 use {
   ::common::{atomic_file, fs::MissingOk},
   ::logger_journal::{
-    Format, Header, Variant, Version, archive::valid_day, record::Framing,
+    Format, Header, Variant, Version, archive::valid_day, record::split,
   },
   ::std::{fs, io, path::Path},
 };
@@ -32,8 +32,6 @@ pub const PATH: &str = "control/synced-archives";
 /// Its format.
 pub const FORMAT: Format = Format {
   magic: "synced-archives",
-  last_unnamed: Version { major: 0, minor: 0 },
-  rs_header: &[(Variant::Dgg, Version { major: 0, minor: 2 })],
 };
 
 /// The version this crate writes and reads.
@@ -64,7 +62,7 @@ pub fn decode(text: &str) -> Option<Vec<Taken>> {
   if header.variant != Variant::Dgg || header.version != VERSION {
     return None;
   }
-  let (entries, tail) = Framing::RsLf.split(body.as_bytes());
+  let (entries, tail) = split(body.as_bytes());
   if !tail.is_empty() {
     return None;
   }
