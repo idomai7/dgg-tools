@@ -11,7 +11,8 @@ directory:
 | `gaps` | Lists when no capture was connected | when you want |
 | `backfill` | Fetches missed messages from public logs | after an outage |
 | `sync`, `serve` | Copy the journal between hosts | when moving hosts, or every 15 minutes from a peer |
-| `kick-ids` | Records Kick channels' ids in `kick-channels`, for Kick capture (still to come) | when adding a channel |
+| `kick-ids` | Records Kick channels' ids in `kick-channels`, for `kick-capture` | when adding a channel |
+| `kick-capture` | Connects to Kick chat, each channel in `kick-channels`, and writes everything to the journal | by hand, for now |
 | `install`, `uninstall`, `status`, `supervise` | Run, install and inspect the rest | when you want |
 
 `dgg-supervisor` keeps capture and index running, restarts them after
@@ -34,6 +35,7 @@ An install lives in one folder:
       archive\             finished days, compressed
       backfill\            messages fetched from other logs, kept apart
       control\             each running capture's status
+      kick\<slug>\         each Kick channel's journal, laid out the same
     index.sqlite           the searchable index; can be rebuilt from the journal
   logs\                    capture.log, index.log, compact.log, supervisor.log,
                            sync.log

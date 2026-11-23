@@ -154,6 +154,7 @@ enum Command {
   Gaps(WithData<cli::Gaps>),
   Cert(cli::Cert),
   KickIds(WithRoot<cli::KickIds>),
+  KickCapture(WithData<cli::KickCapture>),
 }
 
 // One of the logger's own commands, with the data directory it works on
@@ -353,6 +354,7 @@ fn main() -> ExitCode {
     Command::Backfill(command) => command.run(cli::Backfill::run),
     Command::Gaps(command) => command.run(cli::Gaps::run),
     Command::Cert(command) => command.run(),
+    Command::KickCapture(command) => command.run(cli::KickCapture::run),
     Command::KickIds(command) => command.run(|command, root| {
       command.run(&root.join(::logger::kick::channels::FILE))
     }),
