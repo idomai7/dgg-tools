@@ -122,9 +122,10 @@ async fn run(config: &Path, files: Files) -> Result<(), String> {
     chat: Chat::start(
       &known,
       &Options::default(),
-      &Journal::new(journal, ::common::time::now_ms()),
+      &Journal::new(&journal, ::common::time::now_ms()),
     ),
     channels,
+    journal,
     modlog,
     account,
   };

@@ -10,6 +10,8 @@
 //! - `GET /api/events`: live chat, as server-sent events: each channel's
 //!   status first, then every [`Update`] as JSON. An event `missed`, with
 //!   a count, says the page fell behind and that many were dropped.
+//! - `GET /api/history?channel=<slug>&user=<id>`: the user's
+//!   [history](History) in the channel.
 //! - `POST /api/actions`: an [action](Asked), as the signed-in moderator,
 //!   logged in the [mod log](modlog). `204` when Kick did it; otherwise why
 //!   not, as text.
@@ -26,11 +28,12 @@ use {
     actions::Asked,
     channels,
     chat::{Chat, Update},
+    history::{self, History},
     modlog::{self, Answer, Entry, Moderator},
   },
   ::axum::{
     Json, Router,
-    extract::{RawQuery, Request, State},
+    extract::{Query, RawQuery, Request, State},
     http::{
       HeaderMap, StatusCode,
       header::{HOST, ORIGIN},
@@ -42,11 +45,13 @@ use {
     },
     routing::{get, post},
   },
+  ::common::fs::MissingOk,
   ::futures_util::{Stream, StreamExt, stream},
+  ::serde::Deserialize,
   ::serde_json::json,
   ::std::{
     convert::Infallible,
-    io,
+    fs, io,
     net::SocketAddr,
     path::PathBuf,
     sync::{Arc, Mutex},
@@ -60,6 +65,8 @@ const PAGE: &str = include_str!("../page/index.html");
 pub struct Served {
   /// `channels.json`.
   pub channels: PathBuf,
+  /// Kick's journal root, a directory per channel.
+  pub journal: PathBuf,
   /// `modlog.jsonl`.
   pub modlog: PathBuf,
   pub account: Account,
@@ -90,6 +97,7 @@ pub fn router(address: SocketAddr, served: Served) -> Router {
     .route("/api/sign-out", post(sign_out))
     .route("/api/channels", get(list_channels))
     .route("/api/events", get(events))
+    .route("/api/history", get(lookup))
     .route("/api/actions", post(act))
     .with_state(Arc::new(Shared {
       served,
@@ -281,6 +289,35 @@ async fn act(
       }
       (StatusCode::BAD_GATEWAY, refused).into_response()
     }
+  }
+}
+
+/// Whose history, in which channel.
+#[derive(Deserialize)]
+struct Lookup {
+  channel: String,
+  user: u64,
+}
+
+async fn lookup(
+  State(shared): State<Arc<Shared>>,
+  Query(lookup): Query<Lookup>,
+) -> Response {
+  let read = ::tokio::task::spawn_blocking(move || {
+    let served = &shared.served;
+    let modlog = {
+      // So a line being appended isn't read half-written.
+      let _logging = shared.logging.lock().unwrap();
+      fs::read_to_string(&served.modlog).missing_ok()
+    };
+    let modlog = modlog
+      .map_err(|e| format!("{}: {e}", served.modlog.display()))?
+      .unwrap_or_default();
+    history::read(&served.journal, &modlog, &lookup.channel, lookup.user)
+  });
+  match read.await.expect("reading history doesn't panic") {
+    Ok(history) => Json::<History>(history).into_response(),
+    Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
   }
 }
 

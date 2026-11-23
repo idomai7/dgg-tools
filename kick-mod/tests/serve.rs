@@ -66,6 +66,7 @@ impl Server {
         &Journal::new(dir.path().join("journal"), 5),
       ),
       channels,
+      journal: dir.path().join("journal"),
       modlog: dir.path().join("modlog.jsonl"),
       account: account.unwrap(),
     };
@@ -657,4 +658,58 @@ async fn refuses_what_it_cant_do() {
     .json(&json!({"channel": "one", "action": "ban", "user": user}));
   let status = from_elsewhere.send().await.unwrap().status().as_u16();
   assert_eq!(status, 403);
+}
+
+#[tokio::test]
+async fn looks_up_a_users_history() {
+  let server = Server::start().await;
+  let data = json!({
+    "id": "m1",
+    "content": "hello",
+    "sender": {"id": 9, "username": "someone"},
+  });
+  let push = json!({
+    "push": {
+      "channel": ROOM,
+      "pub": {
+        "data": {
+          "event": r"App\Events\ChatMessageEvent",
+          "data": data.to_string(),
+        },
+      },
+    },
+  });
+  let journal = format!(
+    "journal kick.0.0 ; channel=one\u{1e}\n\
+     1709251200001 kick-mod-1 1 frame {push}\u{1e}\n"
+  );
+  let file = "journal/one/live/2024-03-01/kick-mod-1.journal";
+  server.dir.write(file, journal);
+  let user = json!({"id": 9, "username": "someone"});
+  let asked = json!({"channel": "one", "action": "ban", "user": user});
+  let entry = json!({
+    "at": 1709251200002_i64,
+    "by": {"user_id": 7, "name": "moderator"},
+    "broadcaster_user_id": 456,
+    "message_id": null,
+    "reason": null,
+    "answer": {"result": "done"},
+  });
+  let mut entry = entry.as_object().unwrap().clone();
+  entry.extend(asked.as_object().unwrap().clone());
+  server
+    .dir
+    .write("modlog.jsonl", format!("{}\n", Value::from(entry)));
+
+  let (status, body) = server.get("/api/history?channel=one&user=9", &[]).await;
+  assert_eq!(status, 200, "{body}");
+  let history: Value = ::serde_json::from_str(&body).unwrap();
+  assert_eq!(history["username"], "someone");
+  assert_eq!(history["messages"][0]["content"], "hello");
+  assert_eq!(history["messages"][0]["received"], 1709251200001_i64);
+  assert_eq!(history["actions"][0]["action"], "ban");
+  assert_eq!(history["events"], json!([]));
+
+  let (status, _) = server.get("/api/history?channel=one", &[]).await;
+  assert_eq!(status, 400);
 }

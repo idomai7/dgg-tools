@@ -369,7 +369,7 @@ impl Drop for Chat {
 }
 
 /// Whether `slug` is safe as a directory's name, as Kick's slugs are.
-fn journalable(slug: &str) -> bool {
+pub fn journalable(slug: &str) -> bool {
   !slug.is_empty()
     && slug
       .bytes()
