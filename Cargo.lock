@@ -1655,6 +1655,7 @@ dependencies = [
  "axum",
  "axum-server",
  "clap",
+ "common",
  "dgg-api",
  "futures-util",
  "gethostname",
@@ -1680,6 +1681,7 @@ name = "logger-journal"
 version = "0.1.0"
 dependencies = [
  "base64",
+ "common",
  "zstd",
 ]
 
