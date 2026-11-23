@@ -239,7 +239,12 @@ The logger, codenamed ledgerline: `logger-journal` and `logger`, run as
       logged-in `lk_session` cookie (`--linkers-session` / `LINKERS_SESSION`,
       valid 7 days) removes the limit.
     - Also logs `BAN`, `MUTE`, `SUBSCRIPTION`, `GIFTSUB`, `MASSGIFT` and
-      `DONATION`, which could feed the archive tools.
+      `DONATION`, which could feed the archive tools. Every kind has the same
+      fields (checked 2026-11-24). A ban or mute's `user` is the moderator,
+      and its text `<nick> banned by <moderator>`; the others' `user` is
+      `Subscriber`, and their text chat's announcement.
+    - Its limit's headers are `X-RateLimit-Limit`, `-Remaining` and `-Reset`
+      (unix seconds).
     - Tested live: it agreed with a 9-minute native capture on all 266 messages
       (same second and nick); 5 requests filled a 38-minute gap.
   - **Matching:** a backfilled message matches a native one on timestamp plus
@@ -262,16 +267,14 @@ The logger, codenamed ledgerline: `logger-journal` and `logger`, run as
     - Smoke-tested on 20 minutes across linkers.ooo's archive boundary: 3
       requests, 1,140 `linkers` and 274 `linkers-rustlesearch` messages. A
       re-run found nothing left to fetch.
-  - **API crates:** rustlesearch.dev and linkers.ooo get their own crates,
+  - **API crates:** rustlesearch.dev and linkers.ooo have their own crates,
     `rustlesearch-api` and `linkers-api` (see the [overall rules](README.md)),
-    out of `logger/src/backfill/`. Backfill keeps its `Source`s, turning their
-    answers into its pages, and the journaling.
-    - Steps, each a pause for review: `rustlesearch-api` (done), then
-      `linkers-api`.
-    - `linkers-api` types every message type linkers.ooo logs (`BAN`, `MUTE`,
-      `SUBSCRIPTION` and the rest), not only `MSG`, for the archive tools.
-    - Requests name the logger `ledgerline/<version>`; linkers.ooo's still
-      say `dgg-tools-logger/<build>` until its step.
+    split out of `logger/src/backfill/`. Backfill keeps its `Source`s, turning
+    their answers into its pages, and the journaling.
+    - `linkers-api` decodes every kind of message linkers.ooo logs, not only
+      `MSG`, for the archive tools; an unknown kind is kept by name. It
+      doesn't parse their text.
+    - Requests name the logger `ledgerline/<version>`.
   - A run holds `backfill/control/<instance>.lock` while it writes, so `compact`
     leaves its files alone until it's done.
   - `serve` and `sync` carry `backfill/live/` and `backfill/archive/` like
