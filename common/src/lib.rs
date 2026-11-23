@@ -2,5 +2,7 @@
 //! little beyond `std`.
 //!
 //! - [`atomic_file`]: replacing a file whole.
+//! - [`time`]: unix milliseconds, days, and RFC 3339.
 
 pub mod atomic_file;
+pub mod time;
