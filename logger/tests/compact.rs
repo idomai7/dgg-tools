@@ -48,13 +48,13 @@ fn merges_a_day_into_a_verified_archive() {
     "a",
     "journal 0.1\n10 a 1 frame MSG 1\n30 a 1 frame MSG 3\n",
   );
-  // b interleaves with a, and ends with a line torn by a crash.
+  // b interleaves with a, and ends with a record torn by a crash.
   live(
     &root,
     "b",
     "journal 0.1\n20 b 1 frame MSG 2\n30 b 1 open u\n40 b 1 fr",
   );
-  // A copy of a's file: every line an exact duplicate.
+  // A copy of a's file: every record an exact duplicate.
   live(
     &root,
     "c",
@@ -152,7 +152,7 @@ fn leaves_unreadable_days_alone() {
 }
 
 #[test]
-fn keeps_lines_repeated_within_one_file() {
+fn keeps_records_repeated_within_one_file() {
   let root = TempDir::new("logger-compact");
   // dgg really does send the same frame twice in one millisecond.
   let twice =

@@ -105,7 +105,7 @@ pub fn closed_days(
 /// One input's records, without their ends, in the newest version, and how
 /// much of it was read.
 struct Input {
-  lines: Vec<Vec<u8>>,
+  records: Vec<Vec<u8>>,
   torn: bool,
   /// For live files: the path and how many bytes were read.
   live: Option<(PathBuf, u64)>,
@@ -146,9 +146,12 @@ fn parse(path: &Path, bytes: &[u8]) -> io::Result<(Vec<Vec<u8>>, bool)> {
 }
 
 /// A record's receive time, the first field; unreadable ones sort last.
-fn receive_time(line: &[u8]) -> i64 {
-  let end = line.iter().position(|&b| b == b' ').unwrap_or(line.len());
-  ::std::str::from_utf8(&line[..end])
+fn receive_time(record: &[u8]) -> i64 {
+  let end = record
+    .iter()
+    .position(|&b| b == b' ')
+    .unwrap_or(record.len());
+  ::std::str::from_utf8(&record[..end])
     .ok()
     .and_then(|field| field.parse().ok())
     .unwrap_or(i64::MAX)
@@ -188,9 +191,9 @@ pub fn compact_day(
   let remerged = archive_path.exists();
   if remerged {
     let bytes = ::zstd::decode_all(File::open(&archive_path)?)?;
-    let (lines, torn) = parse(&archive_path, &bytes)?;
+    let (records, torn) = parse(&archive_path, &bytes)?;
     inputs.push(Input {
-      lines,
+      records,
       torn,
       live: None,
     });
@@ -221,45 +224,45 @@ pub fn compact_day(
   live.sort();
   for path in live {
     let bytes = fs::read(&path)?;
-    let (lines, torn) = parse(&path, &bytes)?;
+    let (records, torn) = parse(&path, &bytes)?;
     inputs.push(Input {
-      lines,
+      records,
       torn,
       live: Some((path, bytes.len() as u64)),
     });
   }
 
-  // Merge: by receive time, stably. A line repeated within one input is
+  // Merge: by receive time, stably. A record repeated within one input is
   // real (dgg can send the same frame twice in a millisecond), so each
-  // distinct line is kept as many times as the input with the most copies
+  // distinct record is kept as many times as the input with the most copies
   // has it; extra copies only come from merging the same file twice.
   let mut keep: HashMap<&[u8], usize> = HashMap::new();
   for input in &inputs {
     let mut counts: HashMap<&[u8], usize> = HashMap::new();
-    for line in &input.lines {
-      *counts.entry(line).or_default() += 1;
+    for record in &input.records {
+      *counts.entry(record).or_default() += 1;
     }
-    for (line, count) in counts {
-      let most = keep.entry(line).or_default();
+    for (record, count) in counts {
+      let most = keep.entry(record).or_default();
       *most = (*most).max(count);
     }
   }
-  let mut lines: Vec<&[u8]> = inputs
+  let mut records: Vec<&[u8]> = inputs
     .iter()
-    .flat_map(|input| input.lines.iter().map(Vec::as_slice))
+    .flat_map(|input| input.records.iter().map(Vec::as_slice))
     .collect();
-  lines.sort_by_key(|line| receive_time(line));
-  let total = lines.len();
-  lines.retain(|line| {
-    let left = keep.get_mut(line).unwrap();
+  records.sort_by_key(|record| receive_time(record));
+  let total = records.len();
+  records.retain(|record| {
+    let left = keep.get_mut(record).unwrap();
     let kept = *left > 0;
     *left = left.saturating_sub(1);
     kept
   });
   let header = Header::new(Variant::Dgg, v0::VERSION);
   let mut journal = format!("{}\n", header.line()).into_bytes();
-  for line in &lines {
-    journal.extend_from_slice(line);
+  for record in &records {
+    journal.extend_from_slice(record);
     journal.extend_from_slice(header.framing().end());
   }
 
@@ -283,7 +286,7 @@ pub fn compact_day(
     day: day.into(),
     compressed: compressed.len() as u64,
     bytes: journal.len() as u64,
-    records: lines.len() as u64,
+    records: records.len() as u64,
     sha256: hex(&Sha256::digest(&compressed)),
   };
   archive::record(journal_root, Variant::Dgg, &archive)?;
@@ -305,7 +308,7 @@ pub fn compact_day(
     grown,
     busy,
     remerged,
-    duplicates: (total - lines.len()) as u64,
+    duplicates: (total - records.len()) as u64,
     torn: inputs.iter().filter(|input| input.torn).count() as u64,
     archive,
   }))

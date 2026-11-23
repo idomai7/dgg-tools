@@ -79,7 +79,7 @@ impl Compact {
             } else {
               ""
             },
-            note(done.duplicates, "duplicate lines dropped"),
+            note(done.duplicates, "duplicate records dropped"),
             note(done.torn, "torn tails dropped"),
             note(done.grown, "files kept: they grew meanwhile"),
             note(done.busy, "files kept: their backfill is still running"),
