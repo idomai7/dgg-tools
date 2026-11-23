@@ -113,8 +113,24 @@ Each is a pause for review.
      write that fails stops that channel's journal until a restart, said on
      stderr.
    - Quitting kick-mod writes no close: the file just ends.
+6. **User history lookup:** clicking a username in a channel's column opens a
+   panel with that user's history in that channel, by their user id (it stays
+   when they rename). Oldest first, one timeline:
+   - From the channel's journal (its live files, and archives if any): their
+     messages, those later deleted marked so (by Kick's AI moderation, too),
+     and the bans, timeouts and unbans on them, with by whom. Frames are read
+     into events by the same code as live chat.
+   - From the mod log: the actions taken on them in that channel through
+     kick-mod, refused ones too, with the reason and Kick's answer.
+   - `GET /api/history?channel=<slug>&user=<id>`: the messages, capped at the
+     newest 500, the events and the actions. The name shown is the newest seen.
+   - Each request reads the files again, with no index: kick-mod's journals
+     are small, only what it heard while running. The file being written is
+     read up to its last complete record. An index can come if it's slow.
+   - The panel shows what was there when it opened; it isn't updated live.
+     It has a close button.
+   - Not yet: looking up a typed name, across channels.
 
 Later, each its own step:
-- User history lookup, which reads the journal.
 - Automod rules.
 - The login, and per-moderator config.
