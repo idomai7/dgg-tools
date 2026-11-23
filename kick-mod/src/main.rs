@@ -6,6 +6,7 @@ use {
     channel,
     official::{Api, api},
     realtime::Options,
+    web::Web,
   },
   ::kick_mod::{
     account::{self, Account},
@@ -18,9 +19,13 @@ use {
   ::std::{
     path::{Path, PathBuf},
     process::ExitCode,
+    sync::Arc,
   },
   ::tokio::{net::TcpListener, process::Command as Process},
 };
+
+/// Names kick-mod to Kick's unofficial API, as it asks.
+const USER_AGENT: &str = concat!("kick-mod/", env!("CARGO_PKG_VERSION"));
 
 #[derive(Parser)]
 #[command(name = "kick-mod")]
@@ -108,8 +113,13 @@ async fn run(config: &Path, files: Files) -> Result<(), String> {
   let listen = config.server.listen;
   let redirect = format!("http://localhost:{}/oauth/callback", listen.port());
   let http = ::reqwest::Client::new();
-  let account =
-    Account::new(http, config.app(), api::DEFAULT_BASE, redirect, token)?;
+  let account = Account::new(
+    http.clone(),
+    config.app(),
+    api::DEFAULT_BASE,
+    redirect,
+    token,
+  )?;
   let listener = TcpListener::bind(listen)
     .await
     .map_err(|e| format!("listening on {listen}: {e}"))?;
@@ -123,6 +133,7 @@ async fn run(config: &Path, files: Files) -> Result<(), String> {
       &known,
       &Options::default(),
       &Journal::new(&journal, ::common::time::now_ms()),
+      Some(Arc::new(Web::new(http.clone(), USER_AGENT))),
     ),
     channels,
     journal,

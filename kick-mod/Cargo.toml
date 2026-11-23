@@ -12,6 +12,7 @@ kick-api = { workspace = true, features = [
   "client",
   "official",
   "protocol",
+  "web",
 ] }
 
 axum.workspace = true

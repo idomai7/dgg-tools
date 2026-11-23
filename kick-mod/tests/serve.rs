@@ -5,7 +5,7 @@ mod fake;
 
 use {
   ::common::temp_dir::TempDir,
-  ::kick_api::{official::oauth::App, realtime::Options},
+  ::kick_api::{official::oauth::App, realtime::Options, web::Web},
   ::kick_mod::{
     account::Account,
     actions::{Action, Asked, Target},
@@ -25,7 +25,7 @@ use {
     redirect::Policy,
   },
   ::serde_json::{Value, json},
-  ::std::{fs, time::Duration},
+  ::std::{fs, sync::Arc, time::Duration},
   ::tokio::{net::TcpListener, time::timeout},
   fake::{Centrifugo, Kick},
 };
@@ -64,6 +64,10 @@ impl Server {
         &channels::load(&channels).unwrap(),
         &options,
         &Journal::new(dir.path().join("journal"), 5),
+        Some(Arc::new(
+          Web::new(::reqwest::Client::new(), "kick-mod-tests")
+            .with_base(&kick.base),
+        )),
       ),
       channels,
       journal: dir.path().join("journal"),
@@ -716,4 +720,147 @@ async fn looks_up_a_users_history() {
 
   let (status, _) = server.get("/api/history?channel=one", &[]).await;
   assert_eq!(status, 400);
+}
+
+/// A history message, sent `ago` ms before now.
+fn history_message(id: &str, ago: i64) -> Value {
+  let at = ::common::time::rfc3339(::common::time::now_ms() - ago);
+  json!({
+    "id": id,
+    "chat_id": 1001,
+    "user_id": 7,
+    "content": format!("said {id}"),
+    "type": "message",
+    "metadata": "{}",
+    "sender": {"id": 7, "username": "someone", "slug": "someone"},
+    "created_at": at,
+    "thread_parent_id": null,
+  })
+}
+
+/// Kick's history page of `messages`, newest first.
+fn history_page(messages: &[Value], cursor: &str) -> String {
+  json!({
+    "data": {"messages": messages, "cursor": cursor, "pinned_message": null},
+    "message": "OK",
+  })
+  .to_string()
+}
+
+const WITH_ID: &str = r#"{
+  "one": {"broadcaster_user_id": 1, "channel_id": 1001, "chatroom_id": 1000}
+}"#;
+
+#[tokio::test]
+async fn fills_a_blip_from_the_history() {
+  let centrifugo = Centrifugo::start().await;
+  let server = Server::start_with(WITH_ID, centrifugo.options()).await;
+  // m1 was received; m2 was sent while down; m0 long before.
+  let page = history_page(
+    &[
+      history_message("m2", 0),
+      history_message("m1", 0),
+      history_message("m0", 3_600_000),
+    ],
+    "1000",
+  );
+  server.kick.answer("/chat/1001/history", 200, &page);
+  let mut events = server.events().await;
+  assert_eq!(events.status("one").await, "connecting");
+  let mut ws = centrifugo.accept(ROOM).await;
+  assert_eq!(events.status("one").await, "live");
+  // The first subscribe isn't a gap.
+  assert!(server.kick.paths().is_empty());
+  // As the socket has it: its metadata isn't a string.
+  let mut m1 = history_message("m1", 0);
+  m1["metadata"] = Value::Null;
+  fake::publish(&mut ws, ROOM, "ChatMessageEvent", m1).await;
+  assert_eq!(events.next().await["id"], "m1");
+
+  drop(ws);
+  assert_eq!(events.status("one").await, "reconnecting");
+  let _ws = centrifugo.accept(ROOM).await;
+  assert_eq!(events.status("one").await, "live");
+  let filled = events.next().await;
+  assert_eq!(filled["kind"], "filled");
+  assert_eq!(filled["partial"], false);
+  assert_eq!(filled["error"], Value::Null);
+  let messages = filled["messages"].as_array().unwrap();
+  assert_eq!(messages.len(), 1, "{messages:?}");
+  assert_eq!(messages[0]["kind"], "message");
+  assert_eq!(messages[0]["id"], "m2");
+  assert_eq!(messages[0]["content"], "said m2");
+  // One page did: it reached back past the drop.
+  let requests = server.kick.requests();
+  assert_eq!(requests.len(), 1);
+  assert_eq!(requests[0].query, "");
+
+  // The page was journaled, raw, on the connection that came back.
+  let journal = server.dir.path().join("journal").join("one");
+  let records: Vec<v0::Record> = live_files(&journal)
+    .unwrap()
+    .iter()
+    .flat_map(|file| Reader::open(file, 0).unwrap())
+    .map(|entry| match entry.unwrap().record {
+      Record::Kick0(record) => record,
+      record => panic!("not Kick's: {record:?}"),
+    })
+    .collect();
+  let history: Vec<_> = records
+    .iter()
+    .filter_map(|r| match &r.body {
+      Body::History { cursor, page } => Some((r.connection, cursor, page)),
+      _ => None,
+    })
+    .collect();
+  assert_eq!(history, [(2, &None, &page)]);
+}
+
+#[tokio::test]
+async fn fills_at_most_ten_pages() {
+  let centrifugo = Centrifugo::start().await;
+  let server = Server::start_with(WITH_ID, centrifugo.options()).await;
+  // Every page is newer than the drop: it never reaches back.
+  let page = history_page(&[history_message("m9", -60_000)], "1000");
+  server.kick.answer("/chat/1001/history", 200, &page);
+  let mut events = server.events().await;
+  assert_eq!(events.status("one").await, "connecting");
+  let ws = centrifugo.accept(ROOM).await;
+  assert_eq!(events.status("one").await, "live");
+  drop(ws);
+  assert_eq!(events.status("one").await, "reconnecting");
+  let _ws = centrifugo.accept(ROOM).await;
+  assert_eq!(events.status("one").await, "live");
+  let filled = events.next().await;
+  assert_eq!(filled["partial"], true);
+  assert_eq!(filled["messages"].as_array().unwrap().len(), 1);
+  let queries: Vec<_> = server
+    .kick
+    .requests()
+    .into_iter()
+    .map(|r| r.query)
+    .collect();
+  assert_eq!(queries.len(), 10);
+  assert_eq!(queries[0], "");
+  assert!(queries[1..].iter().all(|query| query == "cursor=1000"));
+}
+
+#[tokio::test]
+async fn says_why_a_fill_failed() {
+  let centrifugo = Centrifugo::start().await;
+  let server = Server::start_with(WITH_ID, centrifugo.options()).await;
+  let blocked = r#"{"error": "Request blocked by security policy."}"#;
+  server.kick.answer("/chat/1001/history", 403, blocked);
+  let mut events = server.events().await;
+  assert_eq!(events.status("one").await, "connecting");
+  let ws = centrifugo.accept(ROOM).await;
+  assert_eq!(events.status("one").await, "live");
+  drop(ws);
+  assert_eq!(events.status("one").await, "reconnecting");
+  let _ws = centrifugo.accept(ROOM).await;
+  assert_eq!(events.status("one").await, "live");
+  let filled = events.next().await;
+  assert_eq!(filled["partial"], true);
+  assert_eq!(filled["messages"], json!([]));
+  assert!(filled["error"].as_str().unwrap().contains("403"));
 }

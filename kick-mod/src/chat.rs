@@ -6,35 +6,60 @@
 //! connection failing leaves the others. Kick keeps no history there:
 //! what's sent while a connection is down is lost.
 //!
+//! So when a connection comes back after a drop, the gap's messages are
+//! [filled](fill) from Kick's chat history, if the channel's id is known:
+//! back to the last thing heard before the drop, at most [`MAX_PAGES`]
+//! pages. Only messages come back; deletions, bans and the rest in the gap
+//! stay missing.
+//!
 //! What each connection receives is journaled as it arrives, raw, in the
 //! logger's journal format (Kick's variant): under [`Journal::root`], each
 //! channel's in a journal root of its own, as
-//! `<slug>/live/<day>/<instance>.journal`.
+//! `<slug>/live/<day>/<instance>.journal`. The history pages a gap was
+//! filled from are journaled too, raw, on the connection that came back.
 
 use {
   crate::channels::Channels,
   ::common::time::now_ms,
-  ::kick_api::realtime::{
-    Client, Event, Frame, Item, Options,
-    centrifugo::{push, reply},
-    event::User,
+  ::kick_api::{
+    realtime::{
+      Client, Event, Frame, Item, Options,
+      centrifugo::{push, reply},
+      event::User,
+    },
+    web::{self, Web},
   },
   ::logger_journal::{
     layout::channel_root,
-    record::kick::v0::Body,
+    record::kick::v0::{Body, valid_cursor},
     writer::{SYNC_INTERVAL, kick::Writer},
   },
   ::serde::Serialize,
   ::std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashSet, VecDeque},
     path::PathBuf,
     sync::{Arc, Mutex},
   },
-  ::tokio::{sync::broadcast, task::JoinHandle, time::interval},
+  ::tokio::{
+    sync::{broadcast, mpsc},
+    task::JoinHandle,
+    time::interval,
+  },
 };
 
 /// How far a page may fall behind before it misses updates.
 const BACKLOG: usize = 1024;
+
+/// The most pages of history a gap is filled from: 250 messages.
+pub const MAX_PAGES: usize = 10;
+
+/// How long before the last thing heard a gap is filled from (ms): Kick's
+/// times are whole seconds, and its clock isn't ours.
+const MARGIN: i64 = 5_000;
+
+/// How many messages' ids are kept, to tell a filled message from one
+/// received.
+const SEEN: usize = 4096;
 
 pub const DEFAULT_JOURNAL: &str = "data/kick-mod/journal";
 
@@ -103,6 +128,15 @@ pub enum What {
     by: Option<String>,
   },
   Cleared,
+  /// Messages sent while the connection was down, recovered from Kick's
+  /// chat history: each a [`What::Message`], oldest first. `partial` if
+  /// the gap went back further than was fetched, or fetching failed, with
+  /// `error` why.
+  Filled {
+    messages: Vec<What>,
+    partial: bool,
+    error: Option<String>,
+  },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -147,22 +181,12 @@ impl What {
   /// What the page shows of `event`, if anything.
   pub fn from_event(event: Event) -> Option<Self> {
     Some(match event {
-      Event::ChatMessageEvent(message) => {
-        let identity = message.sender.identity;
-        Self::Message {
-          id: message.id,
-          at: message.created_at,
-          sender: Sender {
-            id: message.sender.id,
-            username: message.sender.username,
-            color: identity.as_ref().and_then(|i| i.color.clone()),
-            badges: identity
-              .map(|i| i.badges.into_iter().map(|b| b.r#type).collect())
-              .unwrap_or_default(),
-          },
-          content: message.content,
-        }
-      }
+      Event::ChatMessageEvent(message) => Self::message(
+        message.id,
+        message.created_at,
+        message.sender,
+        message.content,
+      ),
       Event::MessageDeletedEvent(deleted) => Self::Deleted {
         id: deleted.message.id,
         ai: deleted.ai_moderated.unwrap_or(false),
@@ -181,6 +205,29 @@ impl What {
       Event::ChatroomClearEvent(_) => Self::Cleared,
       _ => return None,
     })
+  }
+
+  /// A message, from Kick's fields of it.
+  fn message(
+    id: String,
+    at: Option<i64>,
+    sender: User,
+    content: String,
+  ) -> Self {
+    let identity = sender.identity;
+    Self::Message {
+      id,
+      at,
+      sender: Sender {
+        id: sender.id,
+        username: sender.username,
+        color: identity.as_ref().and_then(|i| i.color.clone()),
+        badges: identity
+          .map(|i| i.badges.into_iter().map(|b| b.r#type).collect())
+          .unwrap_or_default(),
+      },
+      content,
+    }
   }
 
   /// The connection's state after `item`, if it changed it.
@@ -300,11 +347,13 @@ pub struct Chat {
 
 impl Chat {
   /// Connects to each of `channels` with a chatroom id, with `options`
-  /// for each but its channels, journaling each in `journal`.
+  /// for each but its channels, journaling each in `journal`. Gaps are
+  /// filled through `web`, for the channels whose id is known.
   pub fn start(
     channels: &Channels,
     options: &Options,
     journal: &Journal,
+    web: Option<Arc<Web>>,
   ) -> Self {
     let hub = Arc::new(Hub {
       updates: broadcast::channel(BACKLOG).0,
@@ -337,7 +386,8 @@ impl Chat {
         eprintln!("{slug}: not journaled, as it can't be a directory's name");
         None
       };
-      let listen = listen(slug.clone(), client, hub.clone(), writer);
+      let filler = web.clone().zip(channel.channel_id);
+      let listen = listen(slug.clone(), client, hub.clone(), writer, filler);
       tasks.push(::tokio::spawn(listen));
     }
     Self { hub, tasks }
@@ -376,18 +426,144 @@ pub fn journalable(slug: &str) -> bool {
       .all(|b| b.is_ascii_alphanumeric() || b"-_".contains(&b))
 }
 
+/// What a gap's fill fetched.
+#[derive(Debug)]
+struct Fill {
+  /// The connection that came back.
+  connection: u64,
+  /// The gap's start, in Kick's time (unix ms), margin included.
+  since: i64,
+  /// Each page as served, with the cursor it was asked with.
+  pages: Vec<(Option<String>, String)>,
+  /// The pages' messages, newest first.
+  messages: Vec<web::Message>,
+  /// Whether the pages reach back to `since`.
+  complete: bool,
+  error: Option<String>,
+}
+
+/// Fetches the channel `channel_id`'s history back to `since` (unix ms),
+/// at most [`MAX_PAGES`] pages, for the gap before `connection`.
+async fn fill(
+  web: Arc<Web>,
+  channel_id: u64,
+  connection: u64,
+  since: i64,
+) -> Fill {
+  let mut fill = Fill {
+    connection,
+    since,
+    pages: Vec::new(),
+    messages: Vec::new(),
+    complete: false,
+    error: None,
+  };
+  let mut cursor = None;
+  while fill.pages.len() < MAX_PAGES {
+    let text = match web.history_text(channel_id, cursor.as_deref()).await {
+      Ok(text) => text,
+      Err(e) => {
+        fill.error = Some(e.to_string());
+        break;
+      }
+    };
+    let page = web::parse(&text);
+    fill.pages.push((cursor, text));
+    let page = match page {
+      Ok(page) => page,
+      Err(e) => {
+        fill.error = Some(e.to_string());
+        break;
+      }
+    };
+    let oldest = page.messages.iter().filter_map(|m| m.created_at).min();
+    fill.messages.extend(page.messages);
+    // An empty page, or one past the gap's start, is the last needed.
+    if oldest.is_none_or(|oldest| oldest <= since) {
+      fill.complete = true;
+      break;
+    }
+    match page.cursor {
+      Some(next) if valid_cursor(&next) => cursor = Some(next),
+      // The start of the history.
+      None => {
+        fill.complete = true;
+        break;
+      }
+      Some(next) => {
+        fill.error = Some(format!("not a cursor: {next:?}"));
+        break;
+      }
+    }
+  }
+  fill
+}
+
+/// The ids of the messages seen lately, the newest [`SEEN`].
+#[derive(Default)]
+struct Seen {
+  ids: HashSet<String>,
+  order: VecDeque<String>,
+}
+
+impl Seen {
+  /// Notes `id`: whether it's new.
+  fn insert(&mut self, id: &str) -> bool {
+    if !self.ids.insert(id.into()) {
+      return false;
+    }
+    self.order.push_back(id.into());
+    if self.order.len() > SEEN
+      && let Some(oldest) = self.order.pop_front()
+    {
+      self.ids.remove(&oldest);
+    }
+    true
+  }
+}
+
+/// A channel's connection's state between items.
+#[derive(Default)]
+struct Listening {
+  /// The connection that's open, for a stop to close.
+  open: Option<u64>,
+  /// The connection last opened, for a fill to be journaled on.
+  connection: Option<u64>,
+  /// When (unix ms) something was last heard while subscribed.
+  heard: Option<i64>,
+  /// When something was last heard before a drop, until it's filled.
+  gap: Option<i64>,
+  seen: Seen,
+}
+
 async fn listen(
   slug: String,
   mut client: Client,
   hub: Arc<Hub>,
   mut journal: Option<Writer>,
+  filler: Option<(Arc<Web>, u64)>,
 ) {
   let mut sync = interval(SYNC_INTERVAL);
-  // The connection that's open, for a stop to close.
-  let mut open = None;
+  let mut state = Listening::default();
+  let (filled, mut fills) = mpsc::unbounded_channel::<Fill>();
+  let write = |journal: &mut Option<Writer>, connection, body| {
+    if let Some(writer) = journal
+      && let Err(e) = writer.write(now_ms(), connection, body)
+    {
+      eprintln!("{slug}: no longer journaled: {e}");
+      *journal = None;
+    }
+  };
   loop {
     let item = ::tokio::select! {
       item = client.next() => item,
+      Some(mut fill) = fills.recv() => {
+        for (cursor, page) in ::std::mem::take(&mut fill.pages) {
+          write(&mut journal, fill.connection, Body::History { cursor, page });
+        }
+        hub.publish(&slug, filled_in(fill, &mut state.seen));
+        continue;
+      }
       _ = sync.tick() => {
         if let Some(writer) = &mut journal
           && let Err(e) = writer.sync()
@@ -399,16 +575,43 @@ async fn listen(
       }
     };
     let Some(item) = item else { break };
-    if let Some((connection, body)) = journaled(&item, &mut open)
-      && let Some(writer) = &mut journal
-      && let Err(e) = writer.write(now_ms(), connection, body)
-    {
-      eprintln!("{slug}: no longer journaled: {e}");
-      journal = None;
+    let now = now_ms();
+    if let Some((connection, body)) = journaled(&item, &mut state.open) {
+      write(&mut journal, connection, body);
+    }
+    match &item {
+      Item::Connected { connection, .. } => {
+        state.connection = Some(*connection)
+      }
+      Item::Frame(_) => state.heard = Some(now),
+      Item::Disconnected { .. }
+      | Item::Unsubscribed {
+        resubscribing: true,
+        ..
+      } => state.gap = state.gap.or(state.heard.take()),
+      Item::Subscribed { .. } => {
+        if let Some(heard) = state.gap.take()
+          && let Some((web, channel_id)) = &filler
+          && let Some(connection) = state.connection
+        {
+          let (web, channel_id) = (web.clone(), *channel_id);
+          let filled = filled.clone();
+          ::tokio::spawn(async move {
+            let fill = fill(web, channel_id, connection, heard - MARGIN).await;
+            // None waiting is fine: the channel's gone.
+            let _ = filled.send(fill);
+          });
+        }
+        state.heard = Some(now);
+      }
+      _ => {}
     }
     match &item {
       Item::Frame(frame) => {
         for what in events(frame).filter_map(What::from_event) {
+          if let What::Message { id, .. } = &what {
+            state.seen.insert(id);
+          }
           hub.publish(&slug, what);
         }
       }
@@ -418,5 +621,26 @@ async fn listen(
         }
       }
     }
+  }
+}
+
+/// What the page is told of `fill`: its messages from the gap, oldest
+/// first, but those already `seen`.
+fn filled_in(fill: Fill, seen: &mut Seen) -> What {
+  let mut messages: Vec<_> = fill
+    .messages
+    .into_iter()
+    .filter(|m| m.created_at.is_none_or(|at| at > fill.since))
+    .filter(|m| seen.insert(&m.id))
+    .collect();
+  messages.reverse();
+  messages.sort_by_key(|m| m.created_at);
+  What::Filled {
+    messages: messages
+      .into_iter()
+      .map(|m| What::message(m.id, m.created_at, m.sender, m.content))
+      .collect(),
+    partial: !fill.complete,
+    error: fill.error,
   }
 }
