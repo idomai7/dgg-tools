@@ -6,6 +6,7 @@ members = [
   "dgg-api",
   "kick-api",
   "kick-mod",
+  "linkers-api",
   "logger",
   "logger-journal",
   "rustlesearch-api",
@@ -20,6 +21,7 @@ edition = "2024"
 common = { path = "common" }
 dgg-api = { path = "dgg-api" }
 kick-api = { path = "kick-api" }
+linkers-api = { path = "linkers-api" }
 logger = { path = "logger" }
 logger-journal = { path = "logger-journal" }
 rustlesearch-api = { path = "rustlesearch-api" }
