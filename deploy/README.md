@@ -12,12 +12,17 @@ directory:
 | `backfill` | Fetches missed messages from public logs | after an outage |
 | `sync`, `serve` | Copy the journal between hosts | when moving hosts, or every 15 minutes from a peer |
 | `kick-ids` | Records Kick channels' ids in `kick-channels`, for `kick-capture` | when adding a channel |
-| `kick-capture` | Connects to Kick chat, each channel in `kick-channels`, and writes everything to the journal | by hand, for now |
+| `kick-capture` | Connects to Kick chat, each channel in `kick-channels`, and writes everything to the journal | all the time, once `kick-channels` has channels |
 | `install`, `uninstall`, `status`, `supervise` | Run, install and inspect the rest | when you want |
 
 `dgg-supervisor` keeps capture and index running, restarts them after
 failures, and runs compact (and sync, given a peer); it's `dgg-logger
-supervise` without a window, for the logon task and the service. In Task
+supervise` without a window, for the logon task and the service. It runs
+`kick-capture` too once `kick-channels` has channels (it looks every
+minute until then). A change to the list takes effect when the supervisor
+next starts. On an upgrade, Kick's capture stops a few seconds after the
+new install starts, leaving a short gap in Kick that nothing fills yet. In
+Task
 Manager, both show as "dgg-tools: ..."; the Details tab's Command line
 column tells the commands apart.
 
@@ -117,12 +122,14 @@ It finds the installed logger and shows:
 - the journal: today's files and their last write, days waiting for
   compact, archives, backfill;
 - the index, free disk space, the peer it syncs from (and how the last
-  round went), and the ends of the logs.
+  round went), and the ends of the logs;
+- Kick's captures and their health, and each channel's journal today, if
+  Kick is captured.
 
 `--watch` keeps it open, redrawing every 2 seconds (`--interval` to change)
 with how fast today's journal is growing and a log filling the rest of the
-window. Keys: `1`-`5` show the capture, index, compact, supervisor or
-sync log, `f` the latest frames of the newest capture (`f` again for the
+window. Keys: `1`-`7` show the capture, index, compact, supervisor,
+sync, migrate or kick-capture log, `f` the latest frames of the newest capture (`f` again for the
 next capture), `g` the gaps in capture as `gaps` reports them (`g` again
 to look again; it reads the index as `index` has brought it, without
 updating it), `r` redraws, `e` opens the data folder, `q` quits.
