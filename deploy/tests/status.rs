@@ -45,8 +45,8 @@ fn reports_captures_and_the_journal() {
   // Two frames, a connection opening, and a frame still being written.
   dir.write(
     format!("data/journal/live/{today}/a-3.journal"),
-    "journal 0.1\n1 a-3 1 open wss://x\n2 a-3 1 frame MSG {}\n\
-     3 a-3 1 frame NAMES {}\n4 a-3 1 frame JO",
+    "journal dgg.0.3\u{1e}\n1 a-3 1 open wss://x\u{1e}\n2 a-3 1 frame MSG {}\u{1e}\n\
+     3 a-3 1 frame NAMES {}\u{1e}\n4 a-3 1 frame JO",
   );
   dir.write(
     format!("data/journal/live/{today}/a-1.journal"),
@@ -113,8 +113,8 @@ fn reports_captures_and_the_journal() {
   // The frame being written was finished, and the connection closed.
   dir.write(
     format!("data/journal/live/{today}/a-3.journal"),
-    "journal 0.1\n1 a-3 1 open wss://x\n2 a-3 1 frame MSG {}\n\
-     3 a-3 1 frame NAMES {}\n4 a-3 1 frame JOIN {}\n5 a-3 1 close bye\n",
+    "journal dgg.0.3\u{1e}\n1 a-3 1 open wss://x\u{1e}\n2 a-3 1 frame MSG {}\u{1e}\n\
+     3 a-3 1 frame NAMES {}\u{1e}\n4 a-3 1 frame JOIN {}\u{1e}\n5 a-3 1 close bye\u{1e}\n",
   );
   let report = watcher.gather(&paths).unwrap();
   assert!(report.journal.growth.is_some_and(|rate| rate > 0.0));
@@ -237,13 +237,21 @@ fn tails_a_captures_frames() {
   assert!(capture_tail(&root, "a-1", 10).unwrap().is_empty());
   // 2026-11-09 12:00:00.000 UTC, then on.
   let at = 1_794_225_600_000_i64;
-  let mut text = format!("journal 0.1\n{at} a-1 1 open wss://x\n");
+  let mut text =
+    format!("journal dgg.0.3\u{1e}\n{at} a-1 1 open wss://x\u{1e}\n");
   for n in 1..=3 {
-    text += &format!("{} a-1 1 frame MSG {{\"n\":{n}}}\n", at + n);
+    text += &format!("{} a-1 1 frame MSG {{\"n\":{n}}}\u{1e}\n", at + n);
   }
-  text += &format!("{} a-1 1 close gone\n{} a-1 2 frame PI", at + 9, at + 10);
+  text += &format!(
+    "{} a-1 1 close gone\u{1e}\n{} a-1 2 frame PI",
+    at + 9,
+    at + 10
+  );
   dir.write("journal/live/2026-11-09/a-1.journal", &text);
-  dir.write("journal/live/2026-11-09/a-2.journal", "journal 0.1\n");
+  dir.write(
+    "journal/live/2026-11-09/a-2.journal",
+    "journal dgg.0.3\u{1e}\n",
+  );
   assert_eq!(
     capture_tail(&root, "a-1", 3).unwrap(),
     [
@@ -259,7 +267,10 @@ fn tails_a_captures_frames() {
   // A newer day's file is the one shown.
   dir.write(
     "journal/live/2026-11-10/a-1.journal",
-    format!("journal 0.1\n{} a-1 2 frame PING {{}}\n", at + 86_400_000),
+    format!(
+      "journal dgg.0.3\u{1e}\n{} a-1 2 frame PING {{}}\u{1e}\n",
+      at + 86_400_000
+    ),
   );
   assert_eq!(
     capture_tail(&root, "a-1", 10).unwrap(),
@@ -275,8 +286,8 @@ fn reports_gaps_without_writing_the_index() {
   // Connected 1 s to 2 s, then again from 5 s: one 3 s gap, not filled.
   dir.write(
     "journal/live/1970-01-01/a.journal",
-    "journal 0.1\n1000 a 1 open wss://x\n2000 a 1 close reset\n\
-     5000 a 2 open wss://x\n6000 a 2 close shutdown\n",
+    "journal dgg.0.3\u{1e}\n1000 a 1 open wss://x\u{1e}\n2000 a 1 close reset\u{1e}\n\
+     5000 a 2 open wss://x\u{1e}\n6000 a 2 close shutdown\u{1e}\n",
   );
   let mut db = ::logger::index::open(&index).unwrap();
   ::logger::index::index(&mut db, &dir.path().join("journal")).unwrap();

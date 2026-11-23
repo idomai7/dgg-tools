@@ -118,7 +118,8 @@ fn reader_reads_archives_and_resumes() {
   let root = TempDir::new("logger-journal-archive");
   let path = archive_file(root.path(), "1970-01-01");
   fs::create_dir_all(path.parent().unwrap()).unwrap();
-  let journal = "journal 0.1\n0 a 1 frame MSG 1\n5 b 1 frame MSG 2\n";
+  let journal = "journal dgg.0.3\u{1e}\n0 a 1 frame MSG 1\u{1e}\n\
+                 5 b 1 frame MSG 2\u{1e}\n";
   let compressed = ::zstd::encode_all(journal.as_bytes(), 3).unwrap();
   fs::write(&path, compressed).unwrap();
 
@@ -137,7 +138,7 @@ fn reader_reads_archives_and_resumes() {
       })
       .collect()
   };
-  assert_eq!(frames(0), [(12, "MSG 1".into()), (30, "MSG 2".into())]);
+  assert_eq!(frames(0), [(17, "MSG 1".into()), (36, "MSG 2".into())]);
   // Offsets are into the decompressed journal, and resuming works.
-  assert_eq!(frames(30), [(30, "MSG 2".into())]);
+  assert_eq!(frames(36), [(36, "MSG 2".into())]);
 }

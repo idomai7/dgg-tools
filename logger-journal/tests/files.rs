@@ -140,10 +140,12 @@ fn header_is_checked() {
   let mut reader = with("journal dgg.0.3\u{1e}").unwrap();
   assert_eq!(reader.version(), Some(Version { major: 0, minor: 3 }));
   assert_eq!(frame(reader.next().unwrap()), "MSG 1");
-  // 0.2's header ended at LF; its records at RS LF, as now.
-  let mut reader = with("journal dgg.0.2").unwrap();
-  assert_eq!(reader.version(), Some(Version { major: 0, minor: 2 }));
-  assert_eq!(frame(reader.next().unwrap()), "MSG 1");
+  // Older minors are no longer read.
+  let v02 = Version { major: 0, minor: 2 };
+  assert!(matches!(
+    with("journal dgg.0.2"),
+    Err(ReadError::Version(Variant::Dgg, v)) if v == v02
+  ));
   // Within major 0 another minor may have broken anything: refused.
   let v07 = Version { major: 0, minor: 7 };
   assert!(matches!(
@@ -234,16 +236,16 @@ fn records_may_span_lines() {
 }
 
 #[test]
-fn legacy_files_are_read_and_never_appended_to() {
+fn older_files_are_never_appended_to() {
   let root = TempDir::new("logger-journal-files");
   let day = live_file(root.path(), "1970-01-01", "a");
   fs::create_dir_all(day.parent().unwrap()).unwrap();
   // A file of 0.1: a record per line, an LF in data as base64.
   fs::write(&day, "journal 0.1\n0 a 1 frame64 QQpC\n0 a 1 frame B\n").unwrap();
-  let reader = Reader::open(&day, 0).unwrap();
-  assert_eq!(reader.header().unwrap().framing(), Framing::Lf);
-  let frames: Vec<_> = reader.map(frame).collect();
-  assert_eq!(frames, ["A\nB", "B"]);
+  assert!(matches!(
+    Reader::open(&day, 0),
+    Err(ReadError::Version(Variant::Dgg, _))
+  ));
 
   // The writer starts the day's next file, in the new format.
   let mut writer = Writer::new(root.path(), "a");

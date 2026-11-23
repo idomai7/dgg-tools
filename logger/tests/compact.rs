@@ -17,6 +17,16 @@ fn live(dir: &TempDir, name: &str, text: &str) {
   fs::write(dir.join(format!("{name}.journal")), text).unwrap();
 }
 
+/// A `journal dgg.0.3` of `records`, each ending at RS LF.
+fn journal(records: &[&str]) -> String {
+  let mut text = "journal dgg.0.3\u{1e}\n".to_owned();
+  for record in records {
+    text += record;
+    text += "\u{1e}\n";
+  }
+  text
+}
+
 fn archived(dir: &TempDir) -> String {
   let file = fs::File::open(archive_file(dir.path(), DAY)).unwrap();
   String::from_utf8(::zstd::decode_all(file).unwrap()).unwrap()
@@ -43,23 +53,13 @@ fn finds_closed_days() {
 #[test]
 fn merges_a_day_into_a_verified_archive() {
   let root = TempDir::new("logger-compact");
-  live(
-    &root,
-    "a",
-    "journal 0.1\n10 a 1 frame MSG 1\n30 a 1 frame MSG 3\n",
-  );
+  let a = journal(&["10 a 1 frame MSG 1", "30 a 1 frame MSG 3"]);
+  live(&root, "a", &a);
   // b interleaves with a, and ends with a record torn by a crash.
-  live(
-    &root,
-    "b",
-    "journal 0.1\n20 b 1 frame MSG 2\n30 b 1 open u\n40 b 1 fr",
-  );
+  let b = journal(&["20 b 1 frame MSG 2", "30 b 1 open u"]) + "40 b 1 fr";
+  live(&root, "b", &b);
   // A copy of a's file: every record an exact duplicate.
-  live(
-    &root,
-    "c",
-    "journal 0.1\n10 a 1 frame MSG 1\n30 a 1 frame MSG 3\n",
-  );
+  live(&root, "c", &a);
 
   let done = compact_day(root.path(), DAY, 3).unwrap().unwrap();
   assert_eq!(
@@ -72,12 +72,15 @@ fn merges_a_day_into_a_verified_archive() {
     ),
     (3, 0, false, 2, 1)
   );
-  // Sorted by receive time; equal times keep their order (a before b). In
-  // the newest version, each record ending at RS LF.
+  // Sorted by receive time; equal times keep their order (a before b).
   assert_eq!(
     archived(&root),
-    "journal dgg.0.3\u{1e}\n10 a 1 frame MSG 1\u{1e}\n20 b 1 frame MSG 2\u{1e}\n\
-     30 a 1 frame MSG 3\u{1e}\n30 b 1 open u\u{1e}\n"
+    journal(&[
+      "10 a 1 frame MSG 1",
+      "20 b 1 frame MSG 2",
+      "30 a 1 frame MSG 3",
+      "30 b 1 open u",
+    ])
   );
   // The manifest describes it exactly.
   let compressed = fs::read(archive_file(root.path(), DAY)).unwrap();
@@ -101,27 +104,23 @@ fn merges_a_day_into_a_verified_archive() {
 #[test]
 fn merges_late_files_into_an_existing_archive() {
   let root = TempDir::new("logger-compact");
-  live(
-    &root,
-    "a",
-    "journal 0.1\n10 a 1 frame MSG 1\n30 a 1 frame MSG 3\n",
-  );
+  let a = journal(&["10 a 1 frame MSG 1", "30 a 1 frame MSG 3"]);
+  live(&root, "a", &a);
   compact_day(root.path(), DAY, 3).unwrap().unwrap();
   // A late sync brings another instance's file for the same day, and a
   // second copy of a's.
-  live(&root, "b", "journal 0.1\n20 b 1 frame MSG 2\n");
-  live(
-    &root,
-    "a",
-    "journal 0.1\n10 a 1 frame MSG 1\n30 a 1 frame MSG 3\n",
-  );
+  live(&root, "b", &journal(&["20 b 1 frame MSG 2"]));
+  live(&root, "a", &a);
   let done = compact_day(root.path(), DAY, 3).unwrap().unwrap();
   assert!(done.remerged);
   assert_eq!((done.files, done.duplicates), (2, 2));
   assert_eq!(
     archived(&root),
-    "journal dgg.0.3\u{1e}\n10 a 1 frame MSG 1\u{1e}\n20 b 1 frame MSG 2\u{1e}\n\
-     30 a 1 frame MSG 3\u{1e}\n"
+    journal(&[
+      "10 a 1 frame MSG 1",
+      "20 b 1 frame MSG 2",
+      "30 a 1 frame MSG 3",
+    ])
   );
   assert_eq!(archive::read_month(root.path(), DAY).unwrap()[0].records, 3);
   // Nothing left to do.
@@ -130,19 +129,30 @@ fn merges_late_files_into_an_existing_archive() {
 
 #[test]
 fn refuses_unreadable_versions() {
-  let root = TempDir::new("logger-compact");
-  live(&root, "a", "journal 0.1\n10 a 1 frame MSG 1\n");
-  // Within major 0 another minor may mean anything.
-  live(&root, "b", "journal 0.7\n10 a 1 shiny new kind\n");
-  assert!(compact_day(root.path(), DAY, 3).is_err());
-  assert!(!archive_file(root.path(), DAY).exists());
+  for other in [
+    // Within major 0 another minor may mean anything.
+    "journal dgg.0.7\u{1e}\n10 a 1 shiny new kind\u{1e}\n",
+    // Older versions are no longer read: every host was migrated.
+    "journal dgg.0.2\n10 b 1 frame MSG 2\u{1e}\n",
+    "journal 0.1\n10 b 1 frame MSG 2\n",
+  ] {
+    let root = TempDir::new("logger-compact");
+    live(&root, "a", &journal(&["10 a 1 frame MSG 1"]));
+    live(&root, "b", other);
+    assert!(compact_day(root.path(), DAY, 3).is_err(), "{other:?}");
+    assert!(!archive_file(root.path(), DAY).exists());
+  }
 }
 
 #[test]
 fn leaves_unreadable_days_alone() {
   let root = TempDir::new("logger-compact");
-  live(&root, "a", "journal 0.1\n10 a 1 frame MSG 1\n");
-  live(&root, "b", "journal 2.0\n20 b 1 something\n");
+  live(&root, "a", &journal(&["10 a 1 frame MSG 1"]));
+  live(
+    &root,
+    "b",
+    "journal dgg.2.0\u{1e}\n20 b 1 something\u{1e}\n",
+  );
   assert!(compact_day(root.path(), DAY, 3).is_err());
   assert!(!archive_file(root.path(), DAY).exists());
   let left = fs::read_dir(live_day_dir(root.path(), DAY))
@@ -155,53 +165,17 @@ fn leaves_unreadable_days_alone() {
 fn keeps_records_repeated_within_one_file() {
   let root = TempDir::new("logger-compact");
   // dgg really does send the same frame twice in one millisecond.
-  let twice =
-    "journal 0.1\n10 a 1 frame UPDATEUSER {}\n10 a 1 frame UPDATEUSER {}\n";
-  let archive = "journal dgg.0.3\u{1e}\n10 a 1 frame UPDATEUSER {}\u{1e}\n\
-                 10 a 1 frame UPDATEUSER {}\u{1e}\n";
-  live(&root, "a", twice);
+  let twice = journal(&["10 a 1 frame UPDATEUSER {}"; 2]);
+  live(&root, "a", &twice);
   let done = compact_day(root.path(), DAY, 3).unwrap().unwrap();
   assert_eq!(done.duplicates, 0);
-  assert_eq!(archived(&root), archive);
-  // Merging the same file in again doesn't add a third and fourth copy, from
-  // the old version or the new.
-  live(&root, "a", twice);
-  live(&root, "b", archive);
+  assert_eq!(archived(&root), twice);
+  // Merging the same file in again, twice, doesn't add more copies.
+  live(&root, "a", &twice);
+  live(&root, "b", &twice);
   let again = compact_day(root.path(), DAY, 3).unwrap().unwrap();
   assert_eq!(again.duplicates, 4);
-  assert_eq!(archived(&root), archive);
-}
-
-#[test]
-fn converts_records_of_older_versions() {
-  let root = TempDir::new("logger-compact");
-  // 0.1: an LF in data went base64, an RS didn't.
-  live(
-    &root,
-    "a",
-    "journal 0.1\n10 a 1 frame64 QQpC\n20 a 1 frame A\u{1e}B\n",
-  );
-  live(
-    &root,
-    "b",
-    "journal dgg.0.3\u{1e}\n15 b 1 frame C\nD\u{1e}\n",
-  );
-  // 0.2: only its header ended at LF.
-  live(&root, "c", "journal dgg.0.2\n17 c 1 frame E\u{1e}\n");
-  compact_day(root.path(), DAY, 3).unwrap().unwrap();
-  // Copied byte for byte, but for the RS, now base64.
-  assert_eq!(
-    archived(&root),
-    "journal dgg.0.3\u{1e}\n10 a 1 frame64 QQpC\u{1e}\n15 b 1 frame C\nD\u{1e}\n\
-     17 c 1 frame E\u{1e}\n20 a 1 frame64 QR5C\u{1e}\n"
-  );
-
-  // A record that doesn't decode can't keep its RS: the day is refused.
-  let root = TempDir::new("logger-compact");
-  live(&root, "a", "journal 0.1\n10 a 1 frame64 !\u{1e}\n");
-  let error = compact_day(root.path(), DAY, 3).unwrap_err();
-  assert!(error.to_string().contains("holds an RS"), "{error}");
-  assert!(!archive_file(root.path(), DAY).exists());
+  assert_eq!(archived(&root), twice);
 }
 
 #[test]
@@ -212,14 +186,16 @@ fn leaves_the_files_of_a_running_backfill() {
   fs::create_dir_all(&dir).unwrap();
   fs::write(
     dir.join("backfill-done.journal"),
-    "journal 0.1
-5 backfill-done 1 fetchrange x 0 5
-",
+    journal(&["5 backfill-done 1 fetchrange x 0 5"]),
   )
   .unwrap();
-  // The running one also has a file from before the format changed, so it
-  // writes to the day's next file, which is just as busy.
-  fs::write(dir.join("backfill-running.journal"), "journal 0.1\n").unwrap();
+  // The running one also has a file with another header than it writes, so
+  // it writes to the day's next file, which is just as busy.
+  fs::write(
+    dir.join("backfill-running.journal"),
+    "journal dgg.0.3 ; note=x\u{1e}\n",
+  )
+  .unwrap();
   let mut running = Writer::backfill(root.path(), "backfill-running").unwrap();
   let range = Body::FetchRange {
     source: "x".into(),

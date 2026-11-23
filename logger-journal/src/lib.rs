@@ -21,7 +21,7 @@
 //! # Versions
 //!
 //! The first line of every file is its [`record::Header`]: `journal
-//! <major>.<minor>` for dgg, `journal kick.<major>.<minor>` for Kick, each
+//! dgg.<major>.<minor>` for dgg, `journal kick.<major>.<minor>` for Kick, each
 //! variant versioned on its own. The rest of the file is in that version's
 //! record format. Each major version has its own module under [`record`]
 //! describing its structure, encoding and decoding, so old and new formats
@@ -39,7 +39,6 @@
 //! readers without that major's module refuse the file.
 
 pub mod archive;
-pub mod convert;
 pub mod layout;
 pub mod reader;
 pub mod record;

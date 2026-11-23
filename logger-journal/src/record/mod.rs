@@ -3,7 +3,8 @@
 //! The header line every journal file starts with (see [`Header`]):
 //! `journal dgg.<major>.<minor>` for dgg, `journal kick.<major>.<minor>` for
 //! Kick, each optionally followed by ` ;` and informational fields. dgg's
-//! files up to 0.1 name no variant: `journal 0.1`.
+//! files up to 0.1 named no variant, `journal 0.1`; they're no longer
+//! read.
 
 mod fields;
 pub mod kick;
@@ -49,22 +50,21 @@ impl Format {
 /// `journal 0.1`.
 pub const JOURNAL: Format = Format {
   magic: MAGIC,
-  last_unnamed: v0::LEGACY,
+  last_unnamed: Version { major: 0, minor: 1 },
   rs_header: &[
     (Variant::Dgg, Version { major: 0, minor: 3 }),
     (Variant::Kick, Version { major: 0, minor: 0 }),
   ],
 };
 /// The versions of dgg's format this crate has a decoder for.
-pub const READABLE: &[Version] =
-  &[v0::LEGACY, Version { major: 0, minor: 2 }, v0::VERSION];
+pub const READABLE: &[Version] = &[v0::VERSION];
 
 /// Which platform's format a file is in. Each is versioned on its own, so one
 /// platform's changes never break the other's files.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Variant {
   /// dgg's, the first, `journal dgg.<major>.<minor>`, its majors under
-  /// [`v0`]. Up to 0.1 its header named no variant (`journal 0.1`).
+  /// [`v0`].
   Dgg,
   /// Kick's, `journal kick.<major>.<minor>`, its majors under [`kick`].
   Kick,
@@ -112,28 +112,6 @@ impl Version {
   pub fn readable_in(self, variant: Variant) -> bool {
     variant.readable().iter().any(|known| {
       known.major == self.major && (self.major > 0 || known.minor == self.minor)
-    })
-  }
-
-  /// The dgg header line as it was up to 0.1, naming no variant, without its
-  /// newline. See [`Header::line`] for any variant's.
-  pub fn header(self) -> String {
-    format!("{MAGIC} {}.{}", self.major, self.minor)
-  }
-
-  /// Parses a dgg header line as it was up to 0.1, naming no variant and
-  /// without informational fields, and without its newline. See
-  /// [`Header::parse`] for any variant's.
-  pub fn parse_header(line: &[u8]) -> Option<Self> {
-    let line = ::std::str::from_utf8(line).ok()?;
-    let version = line.strip_prefix(MAGIC)?.strip_prefix(' ')?;
-    let (major, minor) = version.split_once('.')?;
-    if !digits(major) || !digits(minor) {
-      return None;
-    }
-    Some(Self {
-      major: major.parse().ok()?,
-      minor: minor.parse().ok()?,
     })
   }
 }
@@ -330,11 +308,8 @@ pub enum DecodeError {
 impl Record {
   /// Decodes one record, without its end, from a file with `header`.
   pub fn decode(header: &Header, record: &[u8]) -> Result<Self, DecodeError> {
-    let framing = header.framing();
     match (header.variant, header.version.major) {
-      (Variant::Dgg, 0) => {
-        v0::Record::decode_framed(framing, record).map(Self::V0)
-      }
+      (Variant::Dgg, 0) => v0::Record::decode(record).map(Self::V0),
       (Variant::Kick, 0) => kick::v0::Record::decode(record).map(Self::Kick0),
       (_, major) => Err(DecodeError::NoDecoder(major)),
     }

@@ -531,12 +531,7 @@ fn refuses_a_decompression_bomb() {
   // Zeros compress about 30,000 to one: a readable header, then more than
   // the limit of them, makes a tiny archive.
   let mut encoder = ::zstd::Encoder::new(Vec::new(), 3).unwrap();
-  encoder
-    .write_all(
-      b"journal 0.1
-",
-    )
-    .unwrap();
+  encoder.write_all(b"journal dgg.0.3\x1e\n").unwrap();
   encoder.write_all(&vec![0; 8 << 20]).unwrap();
   let bomb = encoder.finish().unwrap();
   assert!(bomb.len() < 4 << 10, "{}", bomb.len());
@@ -548,7 +543,7 @@ fn refuses_a_decompression_bomb() {
   assert!(error.to_string().contains("over 1048576 bytes"), "{error}");
   assert_eq!(
     unpack(&download, None, 16 << 20).unwrap(),
-    ((8 << 20) + 12, 0)
+    ((8 << 20) + 17, 0)
   );
 }
 
@@ -570,7 +565,9 @@ fn counts_records_by_framing() {
   journal.resize(journal.len() + filler - 12, b'x');
   journal.extend(b"\x1e\n0 a 1 frame C\x1e\n");
   assert_eq!(count(&journal), (journal.len() as u64, 3));
-  // Before, a record a line.
+  // Older versions are no longer read.
+  let path = root.path().join("archive.zst");
   let legacy = b"journal 0.1\n0 a 1 frame A\n0 a 1 frame B\n";
-  assert_eq!(count(legacy), (legacy.len() as u64, 2));
+  fs::write(&path, ::zstd::encode_all(&legacy[..], 3).unwrap()).unwrap();
+  assert!(unpack(&path, None, 16 << 20).is_err());
 }

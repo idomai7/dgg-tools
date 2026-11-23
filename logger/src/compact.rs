@@ -9,14 +9,8 @@
 //! as often as any one input has it), and torn tails left by crashes, which
 //! can't ever be read.
 //!
-//! Each input is split by its own framing, and the archive is written in the
-//! newest version, `journal dgg.0.3`, its header and records ending at RS LF. Inputs of
-//! `journal 0.1`, a record per line, are [converted](convert::record): each
-//! record is copied byte for byte, unless it holds an RS; that one is
-//! decoded and encoded again, its text as base64, and either way checked to
-//! read the same. A record that doesn't decode is kept byte for byte too,
-//! but can't be if it holds an RS: then the day is refused, as it is if any
-//! record would read differently.
+//! Inputs must be in the newest version, `journal dgg.0.3`, as the archive
+//! is written: its header and records ending at RS LF.
 //!
 //! The archive is written to a temporary file, fsynced, read back and
 //! checked against what was meant to be written, and only then renamed
@@ -38,7 +32,6 @@ use {
   },
   ::logger_journal::{
     archive::{self, Archive, valid_day},
-    convert,
     layout::{EXTENSION, archive_file, live_day_dir, live_dir},
     record::{Header, Variant, v0},
     writer::writing,
@@ -118,8 +111,8 @@ fn invalid(path: &Path, why: &str) -> io::Error {
   )
 }
 
-/// Splits a journal's bytes into its records, in the newest version (see
-/// the [module docs](self)), and whether it has a torn tail.
+/// Splits a journal's bytes into its records, and whether it has a torn
+/// tail.
 fn parse(path: &Path, bytes: &[u8]) -> io::Result<(Vec<Vec<u8>>, bool)> {
   let Some(header_end) = bytes.iter().position(|&b| b == b'\n') else {
     return Err(invalid(path, "no complete header"));
@@ -129,19 +122,15 @@ fn parse(path: &Path, bytes: &[u8]) -> io::Result<(Vec<Vec<u8>>, bool)> {
   if header.variant != Variant::Dgg {
     return Err(invalid(path, "not dgg's journal"));
   }
-  if !header.readable() {
-    return Err(invalid(path, "journal of an unreadable version"));
+  if header.version != v0::VERSION {
+    return Err(invalid(path, "journal of an older version"));
   }
   let (records, tail) = header.framing().split(&bytes[header_end + 1..]);
   let records = records
     .into_iter()
     .filter(|record| !record.is_empty())
-    .map(|record| {
-      convert::record(&header, record)
-        .map(|converted| converted.into_owned())
-        .map_err(|e| invalid(path, &e.to_string()))
-    })
-    .collect::<io::Result<_>>()?;
+    .map(<[u8]>::to_vec)
+    .collect();
   Ok((records, !tail.is_empty()))
 }
 

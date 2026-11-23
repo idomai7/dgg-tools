@@ -35,10 +35,11 @@
 //! - `0.1`: adds `fetched` and `fetchrange`.
 //! - `0.2`: records end at RS LF, not LF, and the header names the variant.
 //!   Before, it was `journal 0.<minor>`, each record was one line, ending at
-//!   LF, and text data holding an LF went base64 instead. Those files are
-//!   still read ([`LEGACY`]), but no longer written.
+//!   LF, and text data holding an LF went base64 instead.
 //! - `0.3`: the header ends at RS LF too, so every record, the header
-//!   included, can be split on it. 0.2's, ending at LF, is still read.
+//!   included, can be split on it.
+//!
+//! Only 0.3 is read: every host's journal was migrated to it.
 
 pub use super::fields::{valid_instance, valid_token};
 use {
@@ -50,9 +51,6 @@ use {
 };
 
 pub const VERSION: Version = Version { major: 0, minor: 3 };
-
-/// The last version with a record per line, its header naming no variant.
-pub const LEGACY: Version = Version { major: 0, minor: 1 };
 
 /// One record.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -139,16 +137,7 @@ impl Record {
 
   /// Decodes one record, without its RS LF.
   pub fn decode(record: &[u8]) -> Result<Self, DecodeError> {
-    Self::decode_framed(Framing::RsLf, record)
-  }
-
-  /// Decodes one record, without its end, from a file with `framing`:
-  /// [`Framing::Lf`] for a [`LEGACY`] file.
-  pub fn decode_framed(
-    framing: Framing,
-    record: &[u8],
-  ) -> Result<Self, DecodeError> {
-    let fields = fields::decode(framing, record)?;
+    let fields = fields::decode(Framing::RsLf, record)?;
     let data = fields.data;
     let body = match fields.kind {
       "frame" => Body::Frame(data.into()),
