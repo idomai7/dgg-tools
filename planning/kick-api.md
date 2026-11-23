@@ -9,6 +9,7 @@ now, the omnichat later. Kick only, and similar in scope to `dgg-api`. See the
 - Kick's official public API (`https://api.kick.com/public/v1`): OAuth tokens,
   channel lookup, sending chat, deleting messages, and banning, timing out and
   unbanning.
+- A channel's past chat, from `web.kick.com`'s unofficial API.
 - Each part behind its own feature, as in `dgg-api`.
 
 ## Decisions
@@ -202,6 +203,29 @@ now, the omnichat later. Kick only, and similar in scope to `dgg-api`. See the
       - The realtime client's token is Centrifugo's, from Kick's realtime setup,
         and not an OAuth token. It's refreshed on its own, as now.
   - `channel`: decoding the unofficial channel lookup, as now.
+  - `web` (feature `web`): `web.kick.com`'s unofficial API, for now only a
+    channel's chat history (see below).
+    - `web::Client::new(user_agent)`: every request names the tool with an
+      honest `User-Agent`, such as `kick-mod/0.1.0`, never a browser's.
+      Requests without one are refused (403).
+    - `history(channel_id, cursor)`: a page of the channel's messages,
+      newest last, and the cursor for the page before. `cursor_at(ms)` makes
+      the cursor to start at a time; `None` starts now.
+    - Messages are typed like the realtime events' (the sender is the same
+      `User`), with fields they don't name kept in `rest`.
+    - An error keeps the HTTP status and the body, and tells apart a 403
+      that looks like the Cloudflare block.
+    - No retries or pacing: the tool asks for one page at a time, politely.
+    - The base URL can be set, so the tests run against a local fake server.
+- **Kick's terms (read 2026-11-24):** the Terms of Service (§1.4) forbid
+  automated access to the site, access by means it hasn't provided, and
+  bypassing its access measures. The developer terms (§10.1) forbid
+  undocumented endpoints, and limit keeping chat logs to what the tool needs.
+  The realtime socket, the channel lookup and the chat history are all
+  undocumented. Used anyway, knowingly: read-only, low volume, for moderating
+  our own channels, with an honest `User-Agent`. The cost is that any of
+  them may break or be blocked without notice, and the app's credentials may
+  be at risk.
 
 ## Known
 ### Centrifugo (probed 2026-11-19)
@@ -340,6 +364,32 @@ each chat setting and cleared chat.
     `{"error": "Request blocked by security policy."}`, but lets curl through,
     so it's probably blocking on the TLS fingerprint.
 
+### Chat history (probed 2026-11-24)
+Found in kick.com's own page scripts, then asked anonymously for `destiny`.
+- `GET https://web.kick.com/api/v1/chat/<channel id>/history`: no sign-in. It
+  answers `{data: {messages, cursor, pinned_message}, message: "OK"}`, 25
+  messages a page, oldest first.
+  - It takes the channel id (`destiny`: 1772249), which only the unofficial
+    channel lookup has; each message's `chat_id` is it too.
+  - A message: `id`, `chat_id`, `user_id`, `content`, `type` (`message` or
+    `reply`), `metadata` (a JSON string, not an object as in the realtime
+    events), `sender` (`id`, `slug`, `username`, `identity` with `color`,
+    `badges` and `badges_v2`), `created_at` (RFC 3339) and
+    `thread_parent_id`.
+  - `cursor` is a unix time in microseconds: `?cursor=<µs>` answers the
+    messages before it, and its own `cursor` is the page before that. It
+    reached back a year (2025-11); 2024-01 answered nothing.
+  - `?start_time=<RFC 3339>` is for replaying a past stream's chat; it
+    answered no messages as tried.
+  - Whether deleted messages, or banned users', are left out is unknown.
+- reqwest is refused (403 `Request blocked by security policy.`) without a
+  `User-Agent` or with curl's, but let through with `kick-mod`.
+- Also in the page's scripts, not probed: on `web.kick.com`,
+  `/api/v1/channels/{id}/messages-by-thread/{thread}` (with `cursor`) and
+  `/api/v1/channels/{id}/chat/active-chatters`; and on `kick.com`, signed in
+  with the site's session, `/api/v2/channels/<channel id>/users/<user
+  id>/messages` (with `cursor`), the moderator's user card.
+
 ### Official API
 - App token via `POST https://id.kick.com/oauth/token` (`client_credentials`).
 - User sign-in (docs read 2026-11-21): `GET https://id.kick.com/oauth/authorize`
@@ -411,6 +461,8 @@ each chat setting and cleared chat.
   the official channel lookup has it; otherwise the user enters it once and the
   tool keeps it.
 - How long a refresh token lasts when it isn't used.
+- How far back chat history goes, and whether it leaves out deleted messages
+  or banned users'.
 - For the webhooks: whether an app token may subscribe to any channel's
   webhooks.
 
