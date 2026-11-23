@@ -122,3 +122,33 @@ fn remove_waits_out_a_reader_that_blocks_deletion() {
   control::remove(&dir, "a").unwrap();
   fs::remove_dir_all(&dir).unwrap();
 }
+
+#[test]
+fn reads_the_next_version_too() {
+  let built = Status {
+    build: Some("0.1.0+93b72b343555".into()),
+    ..status("a", 5, Some(7))
+  };
+  let text = built.encode_next();
+  assert_eq!(
+    text,
+    "capture-status dgg.0.1\ninstance a\u{1e}\nstarted 5\u{1e}\n\
+     heartbeat 1000\u{1e}\nhealthy-since 7\u{1e}\n\
+     build 0.1.0+93b72b343555\u{1e}\n"
+  );
+  assert_eq!(Status::decode(&text), Some(built));
+  // As pushed from another host, with a note in its header.
+  let noted = text.replacen("dgg.0.1", "dgg.0.1 ; note=x", 1);
+  assert!(Status::decode(&noted).is_some());
+  let base = "instance a\u{1e}\nstarted 5\u{1e}\nheartbeat 1000\u{1e}\n";
+  for bad in [
+    // An entry without its end, or with a version's other form.
+    format!("capture-status dgg.0.1\n{base}healthy-since 7\n"),
+    "capture-status dgg.0.1\ninstance a\nstarted 5\nheartbeat 1000\n".into(),
+    format!("capture-status 0.0\n{base}"),
+    format!("capture-status dgg.0.0\n{base}"),
+    format!("capture-status dgg.0.2\n{base}"),
+  ] {
+    assert_eq!(Status::decode(&bad), None, "{bad:?}");
+  }
+}

@@ -13,7 +13,13 @@
 //! ```
 //!
 //! The first line is the format name and `<major>.<minor>` version. Each
-//! later line is `<key> <value>`. `healthy-since` is omitted while the
+//! later line is `<key> <value>`.
+//!
+//! `capture-status dgg.0.1` is the same but for its header, versioned like
+//! the journal's (see [`Header`]), and its entries ending at RS LF, as the
+//! journal's records do. It's read, but not yet written: an instance hands
+//! off only to one whose status it can read, so instances that read only
+//! 0.0 must be gone before any writes 0.1 (see [`Status::encode_next`]). `healthy-since` is omitted while the
 //! instance isn't healthy; `build` (the [`BUILD`](crate::BUILD) it runs) by
 //! instances from before it was added. It came without a version bump:
 //! readers have always skipped keys they don't know, and old instances must
@@ -31,7 +37,9 @@
 
 use {
   ::common::{atomic_file, fs::MissingOk},
-  ::logger_journal::record::v0::valid_instance,
+  ::logger_journal::{
+    Format, Header, Variant, Version, record::v0::valid_instance,
+  },
   ::std::{
     fs, io,
     path::{Path, PathBuf},
@@ -40,8 +48,17 @@ use {
   },
 };
 
-/// The header line this crate writes and reads.
+/// The header line this crate writes, and reads with [`NEXT`]'s.
 pub const HEADER: &str = "capture-status 0.0";
+
+/// Its format.
+pub const FORMAT: Format = Format {
+  magic: "capture-status",
+  last_unnamed: Version { major: 0, minor: 0 },
+};
+
+/// The version read, and to be written once every instance reads it.
+pub const NEXT: Version = Version { major: 0, minor: 1 };
 
 /// File extension of status files.
 pub const EXTENSION: &str = "status";
@@ -61,27 +78,53 @@ pub struct Status {
 }
 
 impl Status {
-  /// The file contents.
+  /// The file contents, in `capture-status 0.0`.
   pub fn encode(&self) -> String {
+    self.encode_with(HEADER, "\n")
+  }
+
+  /// The file contents, in `capture-status dgg.0.1`, for once every
+  /// instance reads it.
+  pub fn encode_next(&self) -> String {
+    let header = Header::new(Variant::Dgg, NEXT).line_as(FORMAT);
+    self.encode_with(&header, "\u{1e}\n")
+  }
+
+  /// The contents with `header`, each entry ending at `end`.
+  fn encode_with(&self, header: &str, end: &str) -> String {
     let mut text = format!(
-      "{HEADER}\ninstance {}\nstarted {}\nheartbeat {}\n",
+      "{header}\ninstance {}{end}started {}{end}heartbeat {}{end}",
       self.instance, self.started, self.heartbeat
     );
     if let Some(since) = self.healthy_since {
-      text += &format!("healthy-since {since}\n");
+      text += &format!("healthy-since {since}{end}");
     }
     if let Some(build) = &self.build {
-      text += &format!("build {build}\n");
+      text += &format!("build {build}{end}");
     }
     text
   }
 
-  /// Parses file contents, or `None` if they aren't a readable status.
+  /// Parses file contents, in either version, or `None` if they aren't a
+  /// readable status.
   pub fn decode(text: &str) -> Option<Self> {
-    let mut lines = text.strip_suffix('\n')?.split('\n');
-    if lines.next()? != HEADER {
+    let (first, body) = text.split_once('\n')?;
+    let header = Header::parse_as(FORMAT, first.as_bytes())?;
+    let legacy = Version { major: 0, minor: 0 };
+    if header.variant != Variant::Dgg
+      || (header.version != legacy && header.version != NEXT)
+    {
       return None;
     }
+    let (entries, tail) = header.framing_as(FORMAT).split(body.as_bytes());
+    if !tail.is_empty() {
+      return None;
+    }
+    let lines = entries
+      .into_iter()
+      .map(::std::str::from_utf8)
+      .collect::<Result<Vec<_>, _>>()
+      .ok()?;
     let (mut instance, mut started, mut heartbeat, mut healthy_since) =
       (None, None, None, None);
     let mut build = None;
