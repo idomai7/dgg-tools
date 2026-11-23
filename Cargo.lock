@@ -1561,6 +1561,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "clap",
+ "common",
  "kick-api",
  "reqwest",
  "rustls",
