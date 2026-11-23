@@ -96,6 +96,14 @@ Each is a pause for review.
 4. **Manual actions:** delete, timeout (preset durations), ban and unban on each
    message, with an optional reason. Each is appended to the mod log: when, by
    whom, what, on whom, why, and Kick's answer. A failure shows Kick's error.
+   - The buttons show on hovering a message: delete, timeouts of 1m, 10m, 1h
+     and 1d, and ban. A ban or timeout's line has unban. One reason box, in
+     the header, goes with the next action and is cleared once it's done.
+   - What's done shows when Kick's event for it arrives in the chat; only a
+     refusal is shown at once.
+   - A refused action doesn't sign the moderator out, even with a 400 or
+     401: Kick answers a bad request with 400 too. The page's next check of
+     who's signed in does.
 
 Later, each its own step:
 - The Kick journal variant in `logger-journal`, so chat is kept.
