@@ -1,5 +1,6 @@
 //! `web.kick.com`'s unofficial API, which kick.com's own pages use: for now
-//! only a channel's chat history.
+//! only a channel's chat history, a page at a time or [back to](Web::back_to)
+//! a time.
 //!
 //! It's undocumented, and Kick's terms forbid using it (see
 //! `planning/kick-api.md`): it may change or be blocked without notice.
@@ -85,6 +86,75 @@ impl Web {
       })
     }
   }
+
+  /// The channel's history back to `since` (unix ms), page by page, at
+  /// most `max_pages`: to fill a gap in its chat. It stops at an empty
+  /// page, one reaching `since`, the start of the history, or a failure.
+  pub async fn back_to(
+    &self,
+    channel_id: u64,
+    since: i64,
+    max_pages: usize,
+  ) -> Back {
+    let mut back = Back::default();
+    let mut cursor = None;
+    while back.pages.len() < max_pages {
+      let text = match self.history_text(channel_id, cursor.as_deref()).await {
+        Ok(text) => text,
+        Err(e) => {
+          back.error = Some(e.to_string());
+          break;
+        }
+      };
+      let page = parse(&text);
+      back.pages.push((cursor, text));
+      let page = match page {
+        Ok(page) => page,
+        Err(e) => {
+          back.error = Some(e.to_string());
+          break;
+        }
+      };
+      let oldest = page.messages.iter().filter_map(|m| m.created_at).min();
+      back.messages.extend(page.messages);
+      // An empty page, or one past `since`, is the last needed.
+      if oldest.is_none_or(|oldest| oldest <= since) {
+        back.complete = true;
+        break;
+      }
+      match page.cursor {
+        Some(next) if valid_cursor(&next) => cursor = Some(next),
+        // The start of the history.
+        None => {
+          back.complete = true;
+          break;
+        }
+        Some(next) => {
+          back.error = Some(format!("not a cursor: {next:?}"));
+          break;
+        }
+      }
+    }
+    back
+  }
+}
+
+/// What [`Web::back_to`] fetched.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Back {
+  /// Each page as served, with the cursor it was asked with, newest first.
+  pub pages: Vec<(Option<String>, String)>,
+  /// The pages' messages, newest first.
+  pub messages: Vec<Message>,
+  /// Whether the pages reach back to `since`, or the history's start.
+  pub complete: bool,
+  /// Why it stopped short, if it did.
+  pub error: Option<String>,
+}
+
+/// Whether a page's `cursor` is one: unix microseconds, as digits.
+pub fn valid_cursor(cursor: &str) -> bool {
+  !cursor.is_empty() && cursor.bytes().all(|b| b.is_ascii_digit())
 }
 
 /// Decodes a history page as served (see [`Web::history_text`]).

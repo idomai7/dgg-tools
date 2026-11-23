@@ -88,3 +88,62 @@ async fn says_why_not() {
   let e = web(&server).history(1000, None).await.unwrap_err();
   assert!(matches!(e, Error::Decode { raw, .. } if raw == "<html>"));
 }
+
+/// A page of one message at `ms`, with `cursor` for the page before.
+fn page_at(id: &str, ms: i64, cursor: &str) -> String {
+  json!({
+    "data": {
+      "messages": [{
+        "id": id,
+        "content": "hi",
+        "created_at": ::common::time::rfc3339(ms),
+        "sender": {"id": 7, "username": "someone", "slug": "someone"},
+      }],
+      "cursor": cursor,
+      "pinned_message": null,
+    },
+  })
+  .to_string()
+}
+
+#[tokio::test]
+async fn pages_back_to_a_time() {
+  let server = fake::serve(|request| {
+    let page = match request.query.first() {
+      None => page_at("m2", 3_000, "2000000"),
+      Some(_) => page_at("m1", 1_000, "1000000"),
+    };
+    (200, page)
+  })
+  .await;
+  let back = web(&server).back_to(1000, 2_000, 10).await;
+  assert_eq!((back.complete, back.error), (true, None));
+  let cursors: Vec<_> = back.pages.iter().map(|(c, _)| c.as_deref()).collect();
+  assert_eq!(cursors, [None, Some("2000000")]);
+  assert_eq!(back.pages[1].1, page_at("m1", 1_000, "1000000"));
+  let ids: Vec<_> = back.messages.iter().map(|m| m.id.as_str()).collect();
+  assert_eq!(ids, ["m2", "m1"]);
+}
+
+#[tokio::test]
+async fn pages_back_only_so_far() {
+  let server = fake::serve(|_| (200, page_at("m", 3_000, "2000000"))).await;
+  let back = web(&server).back_to(1000, 2_000, 3).await;
+  assert_eq!((back.pages.len(), back.complete), (3, false));
+  assert_eq!(back.error, None);
+
+  // The start of the history is as far back as there is.
+  let server = fake::serve(|_| (200, page_at("m", 3_000, ""))).await;
+  let back = web(&server).back_to(1000, 2_000, 3).await;
+  assert_eq!((back.pages.len(), back.complete), (1, true));
+
+  let server = fake::serve(|_| (200, page_at("m", 3_000, "a b"))).await;
+  let back = web(&server).back_to(1000, 2_000, 3).await;
+  assert_eq!(back.pages.len(), 1);
+  assert_eq!(back.error.as_deref(), Some(r#"not a cursor: "a b""#));
+
+  let server = fake::serve(|_| (403, "no".into())).await;
+  let back = web(&server).back_to(1000, 2_000, 3).await;
+  assert_eq!((back.pages.len(), back.complete), (0, false));
+  assert_eq!(back.error.as_deref(), Some("answered 403: no"));
+}
