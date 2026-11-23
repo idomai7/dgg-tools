@@ -381,8 +381,15 @@ undocumented endpoints anonymously: no token, no login, no app. Planned
   - Live test: after backfill, the index holds exactly a reference capture's 583
     messages over the same span. 16 nicks stay lowercase because those users
     were never seen natively.
-- **Kick:** steps 1 and 2 done: `kick-channels`, `kick-ids` and
-  `kick-capture`, which the supervisor doesn't run yet.
+- **Kick:** steps 1 to 3 done: `kick-channels`, `kick-ids`, `kick-capture`,
+  the supervisor running it and `status` showing it.
+  - The supervisor finds the list in the install's root (its `--peers`,
+    which every install passes), and runs `kick-capture` once it has
+    channels. A list's changes take effect at the supervisor's next start.
+  - When dgg's capture hands off, `kick-capture` gets 90 s to hand off too
+    before it's stopped.
+  - Open: `install` bridges only dgg's capture, so an upgrade leaves Kick a
+    gap of a few seconds that nothing fills.
 - **Cross-host handoff:** done. Tested live: the old instance retired about 38 s
   after the new one started.
 - **`serve` / `sync`:** done. The supervisor's side is in [deploy](deploy.md).
