@@ -52,14 +52,44 @@ fn legacy_lines() {
     connection: 2,
     body,
   };
-  assert_eq!(
-    decode("5 a 2 frame64 QQpC"),
-    Ok(record(Body::Frame("A\nB".into())))
-  );
-  assert_eq!(
-    decode("5 a 2 frame A\u{1e}B"),
-    Ok(record(Body::Frame("A\u{1e}B".into())))
-  );
+  let fetched = |text: &str| Body::Fetched {
+    source: "rustlesearch".into(),
+    timestamp: 1_794_146_765_482,
+    nick: "feustang".into(),
+    text: text.into(),
+  };
+  // Each kind as 0.1 wrote it.
+  for (line, body) in [
+    ("5 a 2 frame MSG {}", Body::Frame("MSG {}".into())),
+    ("5 a 2 frame64 QQpC", Body::Frame("A\nB".into())),
+    ("5 a 2 frame64 DQo=", Body::Frame("\r\n".into())),
+    ("5 a 2 frame A\u{1e}B", Body::Frame("A\u{1e}B".into())),
+    ("5 a 2 binary AP8=", Body::Binary(vec![0, 255])),
+    ("5 a 2 binary", Body::Binary(vec![])),
+    ("5 a 2 open wss://x", Body::Open("wss://x".into())),
+    ("5 a 2 open64 YQpi", Body::Open("a\nb".into())),
+    ("5 a 2 close a\r", Body::Close("a\r".into())),
+    ("5 a 2 close", Body::Close("".into())),
+    ("5 a 2 close64 YQpi", Body::Close("a\nb".into())),
+    (
+      "5 a 2 fetched rustlesearch 1794146765482 feustang hi  there",
+      fetched("hi  there"),
+    ),
+    (
+      "5 a 2 fetched64 cnVzdGxlc2VhcmNoIDE3OTQxNDY3NjU0ODIgZmV1c3RhbmcgYQpi",
+      fetched("a\nb"),
+    ),
+    (
+      "5 a 2 fetchrange rustlesearch 10 20",
+      Body::FetchRange {
+        source: "rustlesearch".into(),
+        from: 10,
+        to: 20,
+      },
+    ),
+  ] {
+    assert_eq!(decode(line), Ok(record(body)), "{line:?}");
+  }
   assert!(matches!(
     decode("5 a 2 frame A\nB"),
     Err(DecodeError::Bad(_))
