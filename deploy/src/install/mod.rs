@@ -16,17 +16,22 @@
 //!
 //! 1. The new build is copied in, and a [`bridge`] capture from it started
 //!    against the new data directory, and waited on until it's healthy.
-//! 2. What was installed stops. If it shared the data directory, its capture
-//!    hands off to the bridge first.
+//!    So is a Kick one, if the install has Kick channels.
+//! 2. What was installed stops. If it shared the data directory, its
+//!    captures hand off to the bridges first.
 //! 3. If the data directory changed, the old data and logs are
 //!    [moved](moving) in.
-//! 4. The new task or service starts. Its capture, the newest, takes over
-//!    from the bridge, which exits.
+//! 4. The new task or service starts. Its captures, the newest, take over
+//!    from the bridges, which exit.
+//!
+//! dgg's capture comes first: a Kick bridge that isn't healthy is only
+//! warned of, and the install carries on without it.
 //!
 //! An install syncs from the peers in its root (see [`crate::peer`]):
 //! [`Options::peers`] changes them. They move with the root, and in a
 //! machine install only administrators and the service can read the files
-//! holding tokens.
+//! holding tokens. The Kick channel list, `kick-channels`, moves with the
+//! root too.
 
 #[cfg(windows)]
 pub mod acl;
@@ -46,7 +51,11 @@ use {
     fs::{MissingOk, same},
     time::{now_ms, utc_timestamp},
   },
-  ::logger::control,
+  ::logger::{
+    control,
+    kick::{capture::control_dir, channels},
+  },
+  ::logger_journal::{Variant, layout::kick_root},
   ::std::{
     fs, io,
     path::{Path, PathBuf},
@@ -175,11 +184,14 @@ pub struct Done {
   pub replaced: Option<Installed>,
   /// The new capture instance.
   pub capture: String,
+  /// How many Kick channels it captures.
+  pub kick_channels: usize,
   /// Old builds still in use, left for next time.
   pub left: Vec<PathBuf>,
   /// The peers it syncs from: `<name> (<URL>)`.
   pub peers: Vec<String>,
-  /// What about its peers couldn't be read.
+  /// What about its peers couldn't be read, or went wrong with Kick's
+  /// capture.
   pub problems: Vec<String>,
 }
 
@@ -229,10 +241,32 @@ pub fn wait_healthy(
   since: i64,
   patience: Duration,
 ) -> io::Result<Option<String>> {
+  wait_healthy_in(&control::dir(journal_root), Variant::Dgg, since, patience)
+}
+
+/// [`wait_healthy`], for Kick's capture: as `slug`'s journal root under
+/// Kick's, `kick_root`, has it. An instance is healthy in every channel or
+/// none.
+pub fn wait_kick_healthy(
+  kick_root: &Path,
+  slug: &str,
+  since: i64,
+  patience: Duration,
+) -> io::Result<Option<String>> {
+  let dir = control_dir(kick_root, slug);
+  wait_healthy_in(&dir, Variant::Kick, since, patience)
+}
+
+fn wait_healthy_in(
+  dir: &Path,
+  variant: Variant,
+  since: i64,
+  patience: Duration,
+) -> io::Result<Option<String>> {
   let until = Instant::now() + patience;
   loop {
     let now = now_ms();
-    let healthy = control::read_all(&control::dir(journal_root))?
+    let healthy = control::read_all_as(dir, variant)?
       .into_iter()
       .filter(|status| {
         status.started >= since
@@ -356,12 +390,35 @@ pub fn install(options: &Options) -> io::Result<Done> {
     service::configure(service::NAME, &launch)?;
     allow_service(&paths)?;
   }
+  // Kick's channels, if Kick is captured: the list moves with the root.
+  let kick_list = paths.root.join(channels::FILE);
+  if let Some(old) = &old
+    && !same(&old.root, &paths.root)
+    && !kick_list.exists()
+  {
+    let from = old.root.join(channels::FILE);
+    if from.exists() {
+      fs::copy(&from, &kick_list)?;
+    }
+  }
+  let kick_channels = channels::load(&kick_list).map_err(error)?;
+  let mut problems = Vec::new();
+
   let journal_root = paths.data.join("journal");
   let since = now_ms() - 1000;
   let mut bridge =
     bridge::start(&build, &paths.data, &paths.logs.join("capture.log"))?;
+  let mut kick_bridge = if kick_channels.is_empty() {
+    None
+  } else {
+    let log = paths.logs.join("kick-capture.log");
+    Some(bridge::start_kick(&build, &paths.data, &kick_list, &log)?)
+  };
   if wait_healthy(&journal_root, since, options.healthy_within)?.is_none() {
     let _ = bridge.kill();
+    if let Some(kick_bridge) = &mut kick_bridge {
+      let _ = kick_bridge.kill();
+    }
     return Err(error(format!(
       "a capture from the new build wasn't healthy within {}s; see \
        capture.log in {}. Nothing else was changed.",
@@ -369,15 +426,34 @@ pub fn install(options: &Options) -> io::Result<Done> {
       paths.logs.display()
     )));
   }
+  if let (Some(child), Some(first)) = (&mut kick_bridge, kick_channels.first())
+  {
+    let kick_root = kick_root(&journal_root);
+    let patience = options.healthy_within;
+    if wait_kick_healthy(&kick_root, &first.slug, since, patience)?.is_none() {
+      let _ = child.kill();
+      let _ = child.wait();
+      kick_bridge = None;
+      problems.push(format!(
+        "a Kick capture from the new build wasn't healthy within {}s (see \
+         kick-capture.log): Kick may miss a few seconds",
+        patience.as_secs()
+      ));
+    }
+  }
 
   // 2. What was installed stops.
   if let Some(current) = &current {
     let old = current.paths();
     if !moving {
-      // Sharing the data, its capture hands off to the bridge.
+      // Sharing the data, its captures hand off to the bridges.
+      let captures: &[&str] = match kick_bridge {
+        Some(_) => &["dgg-logger capture", "dgg-logger kick-capture"],
+        None => &["dgg-logger capture"],
+      };
       processes::wait_gone_except(
         &old.bin(),
-        &["dgg-logger capture"],
+        captures,
         &build,
         options.handoff_within,
       )?;
@@ -394,6 +470,7 @@ pub fn install(options: &Options) -> io::Result<Done> {
       if options.scope == Scope::Machine {
         allow_service(&paths)?;
       }
+      fs::remove_file(old.root.join(channels::FILE)).missing_ok()?;
       remove_root(&old)?;
     }
     match options.scope {
@@ -436,6 +513,15 @@ pub fn install(options: &Options) -> io::Result<Done> {
     )));
   };
   bridge::wait_gone(&mut bridge, options.handoff_within);
+  if let Some(kick_bridge) = &mut kick_bridge
+    && !bridge::wait_gone(kick_bridge, options.handoff_within)
+  {
+    problems.push(format!(
+      "the Kick bridge didn't hand off within {}s, and was stopped; see \
+       kick-capture.log",
+      options.handoff_within.as_secs()
+    ));
+  }
   let left = prune(&paths.bin(), options.keep)?;
   let found = peer::gather(&paths.root);
   let peers = found
@@ -449,9 +535,10 @@ pub fn install(options: &Options) -> io::Result<Done> {
     build,
     replaced: current,
     capture,
+    kick_channels: kick_channels.len(),
     left,
     peers,
-    problems: found.problems,
+    problems: problems.into_iter().chain(found.problems).collect(),
   })
 }
 

@@ -390,6 +390,9 @@ fn install(options: &install::Options) -> ExitCode {
       eprintln!("  data     {}", done.paths.data.display());
       eprintln!("  logs     {}", done.paths.logs.display());
       eprintln!("  capture  {} (healthy)", done.capture);
+      if done.kick_channels > 0 {
+        eprintln!("  kick     {} channels", done.kick_channels);
+      }
       for peer in &done.peers {
         eprintln!("  syncs    from {peer} every 15 minutes");
       }

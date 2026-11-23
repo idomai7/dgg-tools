@@ -4,7 +4,9 @@
 use {
   ::common::temp_dir::TempDir,
   ::common::time::now_ms,
-  ::deploy::install::{BINARIES, build_name, copy_build, prune, wait_healthy},
+  ::deploy::install::{
+    BINARIES, build_name, copy_build, prune, wait_healthy, wait_kick_healthy,
+  },
   ::std::{
     env::consts::EXE_SUFFIX,
     fs,
@@ -97,6 +99,34 @@ fn waits_for_a_new_healthy_capture() {
       .as_deref(),
     Some("new-2")
   );
+}
+
+#[test]
+fn waits_for_a_new_healthy_kick_capture() {
+  use ::logger_journal::Variant;
+
+  let dir = TempDir::new("deploy-install-kick-healthy");
+  let control = dir.path().join("one").join("control");
+  fs::create_dir_all(&control).unwrap();
+  let now = now_ms();
+  let write = |instance: &str, variant: Variant| {
+    let status = ::logger::control::Status {
+      instance: instance.into(),
+      started: now,
+      heartbeat: now,
+      healthy_since: Some(now),
+      build: None,
+    };
+    let text = status.encode_as(variant);
+    fs::write(control.join(format!("{instance}.status")), text).unwrap();
+  };
+  let short = Duration::from_millis(600);
+  // dgg's status in a Kick channel's control isn't Kick's capture.
+  write("dgg-2", Variant::Dgg);
+  let wait = || wait_kick_healthy(dir.path(), "one", now - 1000, short);
+  assert_eq!(wait().unwrap(), None);
+  write("kick-2", Variant::Kick);
+  assert_eq!(wait().unwrap().as_deref(), Some("kick-2"));
 }
 
 #[cfg(windows)]
@@ -399,6 +429,12 @@ fn bridges_run_detached_into_their_log() {
   let log = dir.path().join("bridge.log");
   let mut child =
     bridge::start(dir.path(), &dir.path().join("data"), &log).unwrap();
+  assert!(bridge::wait_gone(&mut child, Duration::from_secs(10)));
+  assert!(!fs::read(&log).unwrap().is_empty());
+
+  let log = dir.path().join("kick-bridge.log");
+  let (data, list) = (dir.path().join("data"), dir.path().join("list"));
+  let mut child = bridge::start_kick(dir.path(), &data, &list, &log).unwrap();
   assert!(bridge::wait_gone(&mut child, Duration::from_secs(10)));
   assert!(!fs::read(&log).unwrap().is_empty());
 }

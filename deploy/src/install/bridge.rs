@@ -8,10 +8,14 @@
 //! detached, appending to `capture.log` (its lines timestamped and marked
 //! `(bridge)`), so it outlives the install if something goes wrong: capture
 //! carries on until someone looks.
+//!
+//! Kick's capture gets a bridge of its own the same way, appending to
+//! `kick-capture.log`, when the install has Kick channels.
 
 use {
   super::exe,
   ::std::{
+    ffi::OsStr,
     fs::OpenOptions,
     io,
     path::Path,
@@ -23,14 +27,40 @@ use {
 
 /// Starts `build`'s capture against `data`, appending its output to `log`.
 pub fn start(build: &Path, data: &Path, log: &Path) -> io::Result<Child> {
+  spawn(
+    build,
+    &["capture".as_ref(), "--data".as_ref(), data.as_ref()],
+    log,
+  )
+}
+
+/// Starts `build`'s Kick capture against `data`, of the channels in
+/// `list`, appending its output to `log`.
+pub fn start_kick(
+  build: &Path,
+  data: &Path,
+  list: &Path,
+  log: &Path,
+) -> io::Result<Child> {
+  let args: [&OsStr; 5] = [
+    "kick-capture".as_ref(),
+    "--data".as_ref(),
+    data.as_ref(),
+    "--channels".as_ref(),
+    list.as_ref(),
+  ];
+  spawn(build, &args, log)
+}
+
+/// Starts `build`'s `dgg-logger` with `args` and `--bridge`, detached,
+/// appending its output to `log`.
+fn spawn(build: &Path, args: &[&OsStr], log: &Path) -> io::Result<Child> {
   let output = OpenOptions::new().create(true).append(true).open(log)?;
   let spawn = |breakaway: bool| {
     let mut command = Command::new(exe(build, "dgg-logger"));
     command
-      .arg("capture")
+      .args(args)
       .arg("--bridge")
-      .arg("--data")
-      .arg(data)
       .stdin(Stdio::null())
       .stdout(output.try_clone()?)
       .stderr(output.try_clone()?);
