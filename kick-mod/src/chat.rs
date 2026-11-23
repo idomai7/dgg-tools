@@ -31,7 +31,7 @@ use {
   },
   ::logger_journal::{
     layout::channel_root,
-    record::kick::v0::{Body, valid_cursor},
+    record::kick::v0::Body,
     writer::{SYNC_INTERVAL, kick::Writer},
   },
   ::serde::Serialize,
@@ -433,13 +433,7 @@ struct Fill {
   connection: u64,
   /// The gap's start, in Kick's time (unix ms), margin included.
   since: i64,
-  /// Each page as served, with the cursor it was asked with.
-  pages: Vec<(Option<String>, String)>,
-  /// The pages' messages, newest first.
-  messages: Vec<web::Message>,
-  /// Whether the pages reach back to `since`.
-  complete: bool,
-  error: Option<String>,
+  back: web::Back,
 }
 
 /// Fetches the channel `channel_id`'s history back to `since` (unix ms),
@@ -450,53 +444,11 @@ async fn fill(
   connection: u64,
   since: i64,
 ) -> Fill {
-  let mut fill = Fill {
+  Fill {
     connection,
     since,
-    pages: Vec::new(),
-    messages: Vec::new(),
-    complete: false,
-    error: None,
-  };
-  let mut cursor = None;
-  while fill.pages.len() < MAX_PAGES {
-    let text = match web.history_text(channel_id, cursor.as_deref()).await {
-      Ok(text) => text,
-      Err(e) => {
-        fill.error = Some(e.to_string());
-        break;
-      }
-    };
-    let page = web::parse(&text);
-    fill.pages.push((cursor, text));
-    let page = match page {
-      Ok(page) => page,
-      Err(e) => {
-        fill.error = Some(e.to_string());
-        break;
-      }
-    };
-    let oldest = page.messages.iter().filter_map(|m| m.created_at).min();
-    fill.messages.extend(page.messages);
-    // An empty page, or one past the gap's start, is the last needed.
-    if oldest.is_none_or(|oldest| oldest <= since) {
-      fill.complete = true;
-      break;
-    }
-    match page.cursor {
-      Some(next) if valid_cursor(&next) => cursor = Some(next),
-      // The start of the history.
-      None => {
-        fill.complete = true;
-        break;
-      }
-      Some(next) => {
-        fill.error = Some(format!("not a cursor: {next:?}"));
-        break;
-      }
-    }
+    back: web.back_to(channel_id, since, MAX_PAGES).await,
   }
-  fill
 }
 
 /// The ids of the messages seen lately, the newest [`SEEN`].
@@ -558,7 +510,7 @@ async fn listen(
     let item = ::tokio::select! {
       item = client.next() => item,
       Some(mut fill) = fills.recv() => {
-        for (cursor, page) in ::std::mem::take(&mut fill.pages) {
+        for (cursor, page) in ::std::mem::take(&mut fill.back.pages) {
           write(&mut journal, fill.connection, Body::History { cursor, page });
         }
         hub.publish(&slug, filled_in(fill, &mut state.seen));
@@ -628,6 +580,7 @@ async fn listen(
 /// first, but those already `seen`.
 fn filled_in(fill: Fill, seen: &mut Seen) -> What {
   let mut messages: Vec<_> = fill
+    .back
     .messages
     .into_iter()
     .filter(|m| m.created_at.is_none_or(|at| at > fill.since))
@@ -640,7 +593,7 @@ fn filled_in(fill: Fill, seen: &mut Seen) -> What {
       .into_iter()
       .map(|m| What::message(m.id, m.created_at, m.sender, m.content))
       .collect(),
-    partial: !fill.complete,
-    error: fill.error,
+    partial: !fill.back.complete,
+    error: fill.back.error,
   }
 }
