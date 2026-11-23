@@ -11,6 +11,7 @@ directory:
 | `gaps` | Lists when no capture was connected | when you want |
 | `backfill` | Fetches missed messages from public logs | after an outage |
 | `sync`, `serve` | Copy the journal between hosts | when moving hosts, or every 15 minutes from a peer |
+| `kick-ids` | Records Kick channels' ids in `kick-channels`, for Kick capture (still to come) | when adding a channel |
 | `install`, `uninstall`, `status`, `supervise` | Run, install and inspect the rest | when you want |
 
 `dgg-supervisor` keeps capture and index running, restarts them after
@@ -39,6 +40,7 @@ An install lives in one folder:
   nodes, mesh.env          the mesh this node is in, if any (mesh.env holds
                            its token)
   peers\                   other hosts to sync from (each holds a token)
+  kick-channels            the Kick channels to capture, from `kick-ids`
 ```
 
 The journal is the record. The index can always be deleted and rebuilt with

@@ -153,6 +153,7 @@ enum Command {
   Backfill(WithData<cli::Backfill>),
   Gaps(WithData<cli::Gaps>),
   Cert(cli::Cert),
+  KickIds(WithRoot<cli::KickIds>),
 }
 
 // One of the logger's own commands, with the data directory it works on
@@ -175,6 +176,28 @@ impl<T: ::clap::Args> WithData<T> {
   ) -> ExitCode {
     let data = self.data.unwrap_or_else(|| installed().data);
     run(self.command, &data)
+  }
+}
+
+// One of the logger's own commands, with the install it works on.
+#[derive(::clap::Args)]
+struct WithRoot<T: ::clap::Args> {
+  /// The install's root (default: the installed logger's, else the user
+  /// install's).
+  #[arg(long)]
+  root: Option<PathBuf>,
+  #[command(flatten)]
+  command: T,
+}
+
+impl<T: ::clap::Args> WithRoot<T> {
+  /// `run` on the install's root.
+  fn run(
+    self,
+    run: impl FnOnce(T, &::std::path::Path) -> ExitCode,
+  ) -> ExitCode {
+    let root = self.root.unwrap_or_else(|| installed().root);
+    run(self.command, &root)
   }
 }
 
@@ -330,6 +353,9 @@ fn main() -> ExitCode {
     Command::Backfill(command) => command.run(cli::Backfill::run),
     Command::Gaps(command) => command.run(cli::Gaps::run),
     Command::Cert(command) => command.run(),
+    Command::KickIds(command) => command.run(|command, root| {
+      command.run(&root.join(::logger::kick::channels::FILE))
+    }),
   }
 }
 
