@@ -12,7 +12,6 @@ pub mod log;
 pub mod paths;
 pub mod peer;
 #[cfg(windows)]
-mod powershell;
 pub mod processes;
 pub mod status;
 pub mod supervise;

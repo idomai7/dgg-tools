@@ -8,7 +8,7 @@
 //! leaves once its capture has handed off.
 
 use {
-  crate::powershell,
+  ::common::powershell,
   ::std::{
     env, fs, io,
     path::{Path, PathBuf},

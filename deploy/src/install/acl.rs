@@ -11,7 +11,7 @@
 //! Permissions are set with `icacls`, owners read through PowerShell.
 
 use {
-  crate::powershell,
+  ::common::powershell,
   ::std::{
     fs, io,
     path::{Path, PathBuf},

@@ -1,5 +1,6 @@
-//! Running PowerShell commands, for what only it reads well: scheduled
-//! tasks, services and owners.
+//! Running PowerShell commands, for what only it reads well on Windows,
+//! such as scheduled tasks, services and file owners. Elsewhere there's no
+//! `powershell.exe`, so [`run`] fails.
 
 use ::std::{
   io,
@@ -7,7 +8,7 @@ use ::std::{
 };
 
 /// Runs a PowerShell command, its output read as UTF-8; `None` if it fails.
-pub(crate) fn run(command: &str) -> io::Result<Option<String>> {
+pub fn run(command: &str) -> io::Result<Option<String>> {
   let output = Command::new("powershell.exe")
     .args(["-NoProfile", "-NonInteractive", "-Command"])
     .arg(format!(

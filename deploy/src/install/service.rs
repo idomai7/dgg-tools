@@ -8,7 +8,7 @@
 
 use {
   super::task::{Task, arguments, parse_arguments},
-  crate::powershell,
+  ::common::powershell,
   ::std::{
     io,
     path::PathBuf,
