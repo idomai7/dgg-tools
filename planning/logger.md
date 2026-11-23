@@ -204,8 +204,8 @@ the [overall rules](README.md), and [deploy](deploy.md) for the mesh it runs on.
       3. **C, the migration:** `dgg-logger migrate`, and the supervisor
          running it. Done; not deployed yet.
       4. **D:** the rollout, on the one host: install the new build, as
-         for any upgrade, and watch `migrate.log`. Done on one host, which
-         is at `dgg.0.2`; the other is still at `journal 0.1`.
+         for any upgrade, and watch `migrate.log`. Done: both hosts are at
+         `dgg.0.3`, their indexes at schema 0.6.
     - **Headers end at RS LF too:** so every record, the header included,
       can be split on RS LF. The header still ends at the first LF, with the
       RS before it, so a reader finds it before it knows the framing. Each
@@ -215,12 +215,13 @@ the [overall rules](README.md), and [deploy](deploy.md) for the mesh it runs on.
         `journal-manifest dgg.0.2` and `synced-archives dgg.0.2`. `kick.0.0`
         (journal and manifest), never written, is redefined.
       - `capture-status dgg.0.2` is read, but not yet written: phase 1
-        again, as for `dgg.0.1`, which was never written either.
+        again, as for `dgg.0.1`, which was never written either. Both hosts
+        now run builds that read it, so the next upgrade can write it.
       - `migrate` takes archives of `journal 0.1` or `dgg.0.2` to
         `dgg.0.3`: from 0.2, only the header changes, every offset moving
         a byte on. The index goes from schema 0.4 or 0.5 to 0.6.
-      - **Rollout:** first the host at `dgg.0.2`, then the other, which
-        goes from `journal 0.1` to `dgg.0.3` at once. Both paths were run
+      - **Rollout,** done: first the host at `dgg.0.2`, then the other,
+        which went from `journal 0.1` to `dgg.0.3` at once. Both paths were run
         with the real builds (the original, the deployed one, and this),
         each checked against an index rebuilt from scratch.
       - Found along the way, as every build has done: the index keeps
