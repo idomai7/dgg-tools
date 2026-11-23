@@ -30,6 +30,7 @@
 //! any other.
 
 use {
+  ::common::atomic_file,
   ::logger_journal::record::v0::valid_instance,
   ::std::{
     fs, io,
@@ -167,11 +168,7 @@ pub fn path(dir: &Path, instance: &str) -> PathBuf {
 /// Writes `status` to its file, atomically: to a temporary file first, then
 /// renamed over the old one, so readers never see a partial status.
 pub fn write(dir: &Path, status: &Status) -> io::Result<()> {
-  fs::create_dir_all(dir)?;
-  let path = path(dir, &status.instance);
-  let temporary = path.with_extension(format!("{EXTENSION}.tmp"));
-  fs::write(&temporary, status.encode())?;
-  fs::rename(temporary, path)
+  atomic_file::replace(&path(dir, &status.instance), status.encode())
 }
 
 /// Deletes an instance's status file, if it exists. Windows refuses while

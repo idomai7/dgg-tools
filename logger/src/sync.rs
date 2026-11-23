@@ -28,6 +28,7 @@ use {
     capture::Peer,
     manifest::{self, archive_path},
   },
+  ::common::atomic_file,
   ::logger_journal::{
     archive::{self, Archive},
     layout::{EXTENSION, archive_file, backfill_root, live_day_dir},
@@ -37,7 +38,7 @@ use {
   ::std::{
     fs::{self, File, OpenOptions},
     io::{self, Read, Write},
-    path::{Path, PathBuf},
+    path::Path,
     time::Duration,
   },
 };
@@ -408,22 +409,10 @@ fn take(
   Ok(installed)
 }
 
-/// Writes `path` with `fill`, through a fsynced temporary file renamed into
-/// place; the temporary file is removed if `fill` fails.
+/// Writes `path` with `fill`, [replacing](atomic_file) it whole.
 fn write_new(
   path: &Path,
   fill: impl FnOnce(&mut File) -> io::Result<()>,
 ) -> io::Result<()> {
-  fs::create_dir_all(path.parent().unwrap())?;
-  let mut temporary = path.as_os_str().to_owned();
-  temporary.push(".tmp");
-  let temporary = PathBuf::from(temporary);
-  let mut file = File::create(&temporary)?;
-  if let Err(e) = fill(&mut file).and_then(|()| file.sync_all()) {
-    drop(file);
-    let _ = fs::remove_file(&temporary);
-    return Err(e);
-  }
-  drop(file);
-  fs::rename(temporary, path)
+  atomic_file::replace_with(path, fill)
 }

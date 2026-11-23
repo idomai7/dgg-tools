@@ -5,6 +5,7 @@ edition.workspace = true
 description = "The logger's journal: append-only files of captured dgg chat"
 
 [dependencies]
+common.workspace = true
 base64.workspace = true
 zstd.workspace = true
 

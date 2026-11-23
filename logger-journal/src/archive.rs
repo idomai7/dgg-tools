@@ -21,6 +21,7 @@
 
 use {
   crate::layout::{archive_dir, archive_file, archive_month_dir},
+  ::common::atomic_file,
   ::std::{
     fs, io,
     path::{Path, PathBuf},
@@ -150,10 +151,7 @@ pub fn record(root: &Path, archive: &Archive) -> io::Result<()> {
   let mut archives = read_manifest(&path)?;
   archives.retain(|other| other.day != archive.day);
   archives.push(archive.clone());
-  fs::create_dir_all(path.parent().unwrap())?;
-  let temporary = path.with_extension("tmp");
-  fs::write(&temporary, encode(&archives))?;
-  fs::rename(temporary, path)
+  atomic_file::replace(&path, encode(&archives))
 }
 
 /// Every archive under journal `root`, oldest first, read from the monthly

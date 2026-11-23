@@ -22,6 +22,7 @@
 //! be merged once it's done.
 
 use {
+  ::common::atomic_file,
   ::logger_journal::{
     archive::{self, Archive, valid_day},
     layout::{EXTENSION, archive_file, live_day_dir, live_dir},
@@ -32,7 +33,7 @@ use {
   ::std::{
     collections::HashMap,
     fs::{self, File},
-    io::{self, Write},
+    io::{self, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     time::Duration,
   },
@@ -255,21 +256,20 @@ pub fn compact_day(
 
   // Write, verify, then put in place.
   let compressed = ::zstd::encode_all(journal.as_slice(), level)?;
-  fs::create_dir_all(archive_path.parent().unwrap())?;
-  let mut temporary = archive_path.clone().into_os_string();
-  temporary.push(".tmp");
-  let temporary = PathBuf::from(temporary);
-  let mut file = File::create(&temporary)?;
-  file.write_all(&compressed)?;
-  file.sync_all()?;
-  drop(file);
-  let written = fs::read(&temporary)?;
-  if written != compressed || ::zstd::decode_all(written.as_slice())? != journal
-  {
-    let _ = fs::remove_file(&temporary);
-    return Err(invalid(&temporary, "archive didn't read back as written"));
-  }
-  fs::rename(&temporary, &archive_path)?;
+  atomic_file::replace_with(&archive_path, |file| {
+    file.write_all(&compressed)?;
+    file.sync_all()?;
+    file.seek(SeekFrom::Start(0))?;
+    let mut written = Vec::new();
+    file.read_to_end(&mut written)?;
+    if written != compressed
+      || ::zstd::decode_all(written.as_slice())? != journal
+    {
+      let temporary = atomic_file::temporary(&archive_path);
+      return Err(invalid(&temporary, "archive didn't read back as written"));
+    }
+    Ok(())
+  })?;
   let archive = Archive {
     day: day.into(),
     compressed: compressed.len() as u64,
