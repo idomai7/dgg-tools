@@ -73,6 +73,8 @@ pub struct Config {
   pub handoff: Handoff,
   /// How long a channel waits to start again after Kick stops its session.
   pub restart_after: Duration,
+  /// Whether this is a bridge, for its log lines (see [`Say`]).
+  pub bridge: bool,
 }
 
 /// Streams every channel's chat into its journal until `shutdown`
@@ -94,10 +96,11 @@ pub async fn run(
     started,
     handoff,
     restart_after,
+    bridge,
   } = config;
   let say = Say {
     instance: instance.clone(),
-    bridge: false,
+    bridge,
   };
   let (stop, stopped) = watch::channel(None);
   let mut tasks = JoinSet::new();

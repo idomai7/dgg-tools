@@ -168,6 +168,7 @@ fn start(
     started: 5,
     handoff: quick_handoff(),
     restart_after: Duration::from_millis(10),
+    bridge: false,
   };
   let (stop, stopped) = oneshot::channel();
   let shutdown = async move {

@@ -41,6 +41,10 @@ pub struct KickCapture {
   /// Don't fill gaps from Kick's chat history.
   #[arg(long)]
   no_fill: bool,
+  /// Run as an install's bridge: lines are timestamped and marked, since
+  /// no supervisor is there to timestamp them.
+  #[arg(long)]
+  bridge: bool,
 }
 
 impl KickCapture {
@@ -57,7 +61,7 @@ impl KickCapture {
     let instance = instance_id(&host, started);
     let say = Say {
       instance: instance.clone(),
-      bridge: false,
+      bridge: self.bridge,
     };
     let channels = match channels::load(&self.channels) {
       Ok(channels) if channels.is_empty() => {
@@ -106,6 +110,7 @@ impl KickCapture {
         ..Handoff::default()
       },
       restart_after: Duration::from_secs(60),
+      bridge: self.bridge,
     };
     match run(config, shutdown()).await {
       Ok(Exit::Shutdown) => {
