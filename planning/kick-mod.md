@@ -81,7 +81,10 @@ Each is a pause for review.
    in `channels.json`.
 2. **Sign-in:** a "Sign in" button on the page goes to Kick, which redirects
    back to the server's own `/oauth/callback`. Later starts use the saved token.
-   When it can't be refreshed, the page asks to sign in again.
+   When it can't be refreshed, the page asks to sign in again. Signing out
+   revokes the token with Kick and deletes it. The redirect URI is
+   `http://localhost:<port>/oauth/callback`, so the app has to register it
+   with the port kick-mod serves on.
 3. **Live chat:** a realtime connection per channel, and a column per channel on
    the page, fed over SSE: messages, with deletions, bans and timeouts shown as
    they happen.
