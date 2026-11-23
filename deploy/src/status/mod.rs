@@ -5,12 +5,14 @@
 //! [`Watcher::gather`] takes a snapshot ([`Report`]); [`text`] prints one,
 //! and [`watch`] redraws one every few seconds.
 
-pub mod format;
 pub mod watch;
 
 use {
   crate::{paths::Paths, peer, processes},
-  ::common::time::{now_ms, utc_day, utc_timestamp},
+  ::common::{
+    format,
+    time::{now_ms, utc_day, utc_timestamp},
+  },
   ::logger::{control, index},
   ::logger_journal::{
     Reader, Record, archive,
@@ -483,11 +485,11 @@ pub fn gaps(path: &Path) -> Result<Option<(String, Vec<String>)>, String> {
 pub fn health(capture: &Capture, now: i64) -> String {
   match capture.health {
     Health::Healthy(since) => {
-      format!("healthy for {}", format::age(now - since))
+      format!("healthy for {}", format::duration(now - since))
     }
     Health::Connecting => "connecting".into(),
     Health::Stale(heard) => {
-      format!("STALE: last heard {} ago", format::age(now - heard))
+      format!("STALE: last heard {} ago", format::duration(now - heard))
     }
   }
 }
@@ -508,7 +510,7 @@ pub fn text(report: &Report) -> Vec<String> {
     out.push("  none running".into());
   }
   for program in &report.programs {
-    let up = format::age(now - program.started as i64 * 1000);
+    let up = format::duration(now - program.started as i64 * 1000);
     let from = match (&program.exe, program.ours) {
       (_, true) => program
         .exe
@@ -538,7 +540,7 @@ pub fn text(report: &Report) -> Vec<String> {
     out.push(format!(
       "  {:<30} up {:<8} {:<24} {:>10} frames  {}",
       capture.instance,
-      format::age(now - capture.started),
+      format::duration(now - capture.started),
       health(capture, now),
       format::count(capture.frames),
       capture.build.as_deref().unwrap_or("")
@@ -561,7 +563,7 @@ pub fn journal_lines(report: &Report) -> Vec<String> {
   let now = report.now;
   let mut out = Vec::new();
   let last = match journal.last_write {
-    Some(at) => format!("last write {} ago", format::age(now - at)),
+    Some(at) => format!("last write {} ago", format::duration(now - at)),
     None => "nothing yet".into(),
   };
   let growth = journal
@@ -604,7 +606,7 @@ pub fn journal_lines(report: &Report) -> Vec<String> {
     Some((bytes, at)) => format!(
       "index  {}  last write {} ago",
       format::size(bytes as f64),
-      format::age(now - at)
+      format::duration(now - at)
     ),
     None => "index  none yet".into(),
   });

@@ -8,11 +8,13 @@
 
 use {
   super::{
-    LOGS, Report, Watcher, capture_tail, format, gaps, health, journal_lines,
-    tail,
+    LOGS, Report, Watcher, capture_tail, gaps, health, journal_lines, tail,
   },
   crate::paths::Paths,
-  ::common::time::{now_ms, utc_timestamp},
+  ::common::{
+    format,
+    time::{now_ms, utc_timestamp},
+  },
   ::ratatui::{
     DefaultTerminal, Frame,
     crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
@@ -202,7 +204,7 @@ pub fn draw(frame: &mut Frame, report: &Report, pane: &Pane) {
       .programs
       .iter()
       .map(|program| {
-        let up = format::age(now - program.started as i64 * 1000);
+        let up = format::duration(now - program.started as i64 * 1000);
         let from = match (&program.exe, program.ours) {
           (Some(exe), true) => exe
             .parent()
@@ -242,7 +244,7 @@ pub fn draw(frame: &mut Frame, report: &Report, pane: &Pane) {
           Span::raw(format!(
             "{:<30} up {:<8} ",
             capture.instance,
-            format::age(now - capture.started)
+            format::duration(now - capture.started)
           )),
           Span::styled(
             format!("{:<24} ", health(capture, now)),

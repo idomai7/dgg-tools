@@ -2,10 +2,11 @@
 
 use {
   crate::{
-    gaps::{coverage, format_duration},
+    gaps::coverage,
     index::{index, open},
   },
   ::clap::Args,
+  ::common::format,
   ::std::{path::Path, process::ExitCode},
 };
 
@@ -47,8 +48,8 @@ impl Gaps {
         .fold((0, 0), |(n, ms), gap| (n + 1, ms + gap.duration_ms()));
       println!(
         "{shown} at least {} long, {} in all",
-        format_duration(min_ms),
-        format_duration(ms)
+        format::duration(min_ms),
+        format::duration(ms)
       );
     }
     for line in lines {

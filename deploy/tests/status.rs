@@ -4,9 +4,7 @@ use {
   ::common::time::{now_ms, utc_day},
   ::deploy::{
     paths::Paths,
-    status::{
-      Health, Watcher, capture_tail, format, gaps, journal_lines, tail, text,
-    },
+    status::{Health, Watcher, capture_tail, gaps, journal_lines, tail, text},
   },
   ::std::{fs, path::PathBuf},
 };
@@ -128,8 +126,8 @@ fn reports_captures_and_the_journal() {
     "archived  2 days (UTC), 2026-01-01 to 2026-01-03  150 B"
   );
   let all = text(&report).join("\n");
-  assert!(all.contains("STALE: last heard 1m 0s ago"), "{all}");
-  assert!(all.contains("healthy for 58m 20s"), "{all}");
+  assert!(all.contains("STALE: last heard 1m00s ago"), "{all}");
+  assert!(all.contains("healthy for 58m20s"), "{all}");
 
   // A second look sees today's growth.
   dir.write(
@@ -161,20 +159,6 @@ fn tails_logs() {
   // Past 64 KB, a cut first line is dropped.
   dir.write("big.log", &format!("{}\nlast\n", "x".repeat(70_000)));
   assert_eq!(tail(&dir.0.join("big.log"), 5).unwrap(), ["last"]);
-}
-
-#[test]
-fn formats_ages_and_sizes() {
-  assert_eq!(format::age(42_000), "42s");
-  assert_eq!(format::age(185_000), "3m 5s");
-  assert_eq!(format::age(7_800_000), "2h 10m");
-  assert_eq!(format::age(273_600_000), "3d 4h");
-  assert_eq!(format::size(512.0), "512 B");
-  assert_eq!(format::size(1536.0), "1.5 KB");
-  assert_eq!(format::size(200.0 * 1024.0 * 1024.0), "200 MB");
-  assert_eq!(format::count(987), "987");
-  assert_eq!(format::count(14_987), "14,987");
-  assert_eq!(format::count(1_204_331), "1,204,331");
 }
 
 #[test]
@@ -211,7 +195,7 @@ fn draws_the_watch_screen() {
   for expected in [
     " programs ",
     " captures ",
-    "healthy for 50s",
+    "healthy for 50.0s",
     "0 frames",
     " journal ",
     " capture.log ",

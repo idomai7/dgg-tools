@@ -13,7 +13,7 @@
 //! coverage is only as exact as the two clocks agree.
 
 use {
-  ::common::time::utc_timestamp,
+  ::common::{format, time::utc_timestamp},
   ::rusqlite::{Connection, params},
 };
 
@@ -76,9 +76,9 @@ impl Coverage {
       "captured {} to {} ({}), {gaps} gaps, {} in all; {unfilled} not filled, {}",
       utc_timestamp(self.first),
       utc_timestamp(self.last),
-      format_duration(self.last - self.first),
-      format_duration(gap_ms),
-      format_duration(unfilled_ms),
+      format::duration(self.last - self.first),
+      format::duration(gap_ms),
+      format::duration(unfilled_ms),
     )
   }
 
@@ -103,7 +103,7 @@ impl Coverage {
       out.push(format!(
         "{} +{}  {filled}, {} messages recovered",
         utc_timestamp(gap.start),
-        format_duration(gap.duration_ms()),
+        format::duration(gap.duration_ms()),
         gap.recovered,
       ));
       out.push(format!("  resumed by {instance}#{connection}"));
@@ -218,20 +218,4 @@ fn fetched_spans(
     }
   }
   Ok(merged)
-}
-
-/// A short human duration: `850ms`, `12.3s`, `4m05s`, `2h07m`, `3d04h`.
-pub fn format_duration(ms: i64) -> String {
-  let seconds = ms / 1000;
-  if ms < 1000 {
-    format!("{ms}ms")
-  } else if ms < 60_000 {
-    format!("{seconds}.{}s", ms % 1000 / 100)
-  } else if ms < 3_600_000 {
-    format!("{}m{:02}s", seconds / 60, seconds % 60)
-  } else if ms < 86_400_000 {
-    format!("{}h{:02}m", seconds / 3600, seconds / 60 % 60)
-  } else {
-    format!("{}d{:02}h", seconds / 86_400, seconds / 3600 % 24)
-  }
 }

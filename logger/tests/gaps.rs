@@ -1,6 +1,6 @@
 use {
   ::logger::{
-    gaps::{Gap, coverage, format_duration, unfetched},
+    gaps::{Gap, coverage, unfetched},
     index::{index, open},
   },
   ::logger_journal::{Writer, record::v0::Body},
@@ -122,15 +122,6 @@ fn no_connections_no_coverage() {
   let root = TempRoot::new();
   let db = open(&root.0.join("index.sqlite")).unwrap();
   assert_eq!(coverage(&db).unwrap(), None);
-}
-
-#[test]
-fn formats() {
-  assert_eq!(format_duration(850), "850ms");
-  assert_eq!(format_duration(12_345), "12.3s");
-  assert_eq!(format_duration(245_000), "4m05s");
-  assert_eq!(format_duration(7_620_000), "2h07m");
-  assert_eq!(format_duration(273_600_000), "3d04h");
 }
 
 #[test]

@@ -8,11 +8,14 @@ use {
       Options, Source, linkers::Linkers, run, rustlesearch::Rustlesearch,
     },
     capture::instance_id,
-    gaps::{coverage, format_duration, unfetched},
+    gaps::{coverage, unfetched},
     index::{index, open},
   },
   ::clap::{Args, ValueEnum},
-  ::common::time::{now_ms, unix_ms, utc_timestamp},
+  ::common::{
+    format,
+    time::{now_ms, unix_ms, utc_timestamp},
+  },
   ::std::{path::Path, process::ExitCode, time::Duration},
 };
 
@@ -151,7 +154,7 @@ impl Backfill {
     let what = if history { "ranges" } else { "gaps" };
     eprintln!("{} {what} not yet fetched", ranges.len());
     for &(from, to) in &ranges {
-      eprintln!("  {} +{}", utc_timestamp(from), format_duration(to - from));
+      eprintln!("  {} +{}", utc_timestamp(from), format::duration(to - from));
     }
     if self.dry_run || ranges.is_empty() {
       return ExitCode::SUCCESS;
