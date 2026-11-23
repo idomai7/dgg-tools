@@ -134,12 +134,12 @@ the [overall rules](README.md), and [deploy](deploy.md) for the mesh it runs on.
   (default) or linkers.ooo. overrustlelogs.net is gone: the domain no longer
   resolves (checked 2026-11-08).
   - **API:**
-    ```
+    ```http
     GET https://api-v2.rustlesearch.dev/anon/search?channel=Destinygg&search_after=<ms>
     ```
     with optional `start_date`/`end_date` (YYYY-MM-DD), `username` and `text`.
     - It returns 100 per page, newest first:
-      ```
+      ```js
       {data: {messages: [{channel, text, ts, username, searchAfter}]}}
       ```
       `searchAfter` is the ms cursor for the next, older page.
@@ -153,11 +153,11 @@ the [overall rules](README.md), and [deploy](deploy.md) for the mesh it runs on.
     least 2016.
   - **Rate limit:** 200 requests per day (`Ratelimit-Policy: 200;w=86400`).
   - **Second source, `--source linkers`:** linkers.ooo:
-    ```
+    ```http
     GET https://linkers.ooo/api/messages?messageType=MSG&endTime=<ISO>&limit=500
     ```
     - It returns up to 500 a page, newest first:
-      ```
+      ```js
       {
         messages: [
           {

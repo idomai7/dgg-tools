@@ -212,14 +212,14 @@ each chat setting and cleared chat.
 - **Connecting:** no login, and no `Origin` header is needed anywhere. reqwest
   is accepted on `web.kick.com`.
   1. `POST https://web.kick.com/api/v1/realtime/connection` with:
-     ```
+     ```js
      {
        "client": {"id": <uuid>, "type": "web"},
        "capabilities": {"accepted_providers": [{"provider": "centrifugo"}]}
      }
      ```
      It answers:
-     ```
+     ```js
      {
        data: {
          connections: [{provider: "centrifugo", credentials: {url}}],
@@ -236,11 +236,11 @@ each chat setting and cleared chat.
      `{"client_id": <the same uuid>}`. It answers `{data: {token}}`, an HS256
      JWT for `sub: guest:<uuid>` that lasts 45 minutes.
   3. Open the socket and send:
-     ```
+     ```js
      {"id": 1, "connect": {"token": <token>, "name": "js"}}
      ```
      The reply was:
-     ```
+     ```js
      {
        client,
        version: "6.9.7 PRO",
@@ -267,7 +267,7 @@ each chat setting and cleared chat.
   or `epoch`, and `history` answers `108 not available`. Whatever arrives while
   disconnected is lost.
 - **Frames:** one push per frame:
-  ```
+  ```js
   {
     "push": {
       "channel",
