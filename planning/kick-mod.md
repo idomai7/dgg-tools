@@ -34,6 +34,7 @@ A chat client and moderation tools for Kick channels. Kick only, built on [kick-
     ```
     - kick-mod adds a channel when asked, by `kick-mod ids <slug>` now and from the page later. The unofficial lookup (curl) has both ids. If it fails, `broadcaster_user_id` comes from the official API, with the app's token, and the chatroom id is left for entering by hand.
     - Written whole, pretty-printed and sorted by slug. It's re-read just before each write, so hand edits made while kick-mod runs survive, and fields kick-mod doesn't know are kept.
+    - It's still a race: a hand edit saved between kick-mod's read and its write is lost. Rare while it's one moderator; it could be handled later, such as with a lock file, or by writing to a temporary file and renaming it only if the original hasn't changed since the read.
   - **Token:** `data/kick-mod/token.json`, saved again on each refresh.
   - **Mod log:** `data/kick-mod/modlog.jsonl`.
   - With several moderators, some settings become theirs, such as which channels they see. They'll go in a per-moderator part of `data/kick-mod/`, since moderators will change them from the page; for now there's one moderator, who sees every channel.
