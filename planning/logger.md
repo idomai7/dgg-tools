@@ -26,6 +26,11 @@ the [overall rules](README.md), and [deploy](deploy.md) for the mesh it runs on.
       only ever ends a record, and a record with one inside is bad. Valid JSON
       can't hold an RS. The header ends at RS LF too, so every record, the
       header included, can be split on it.
+    - **`kick.0.1`** adds `history`: a page of Kick's chat history, fetched
+      to fill a gap in the connection's chat. Its data is `<cursor> <page>`:
+      the cursor it was asked with (`-` for none) and the page's JSON as
+      received. Readers read `kick.0.0` and `kick.0.1`, since kick-mod's
+      journals are already at `kick.0.0`.
     - What dgg's readers (index, status) find of Kick's in a dgg root is
       skipped, or recorded as unparsed.
   - **Header line:** the required fields, then a lone `;`, then informational

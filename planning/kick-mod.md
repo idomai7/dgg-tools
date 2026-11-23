@@ -130,6 +130,32 @@ Each is a pause for review.
    - The panel shows what was there when it opened; it isn't updated live.
      It has a close button.
    - Not yet: looking up a typed name, across channels.
+7. **Filling gaps:** when a channel's connection comes back after a blip,
+   kick-mod asks Kick's chat history (`web.kick.com`, see
+   [kick-api](kick-api.md)) for the messages sent while it was down.
+   - Only blips for now: a reconnect within a run. Not the gap between runs
+     (a restart, or a handover), which may come later.
+   - **How far:** from the newest page back, until a page reaches the last
+     thing received before the drop, with a few seconds' margin, since Kick's
+     times are whole seconds and clocks differ. For a typical blip of a
+     second or two, that's the first page. At most 10 pages (250 messages);
+     past that, the rest of the gap stays missing.
+   - Messages already received (by id) are skipped, the overlap at either
+     end of the gap.
+   - Only messages come back: the history has no deletions, bans, timeouts or
+     unbans, so those during the gap stay missing. Whether it leaves out
+     messages deleted meanwhile is unknown.
+   - **Journal:** each page as received, raw, in a record of a new kind,
+     `history` (Kick's format `kick.0.1`; see [logger](logger.md)), on the
+     connection that came back. The user history lookup reads its messages
+     too, skipping ones it has (by id).
+   - **Page:** the recovered messages show in the column in time order,
+     marked as recovered, and the notice of the drop says how many came back,
+     or that some are still missing.
+   - Needs each channel's channel id, which `channels.json` doesn't have yet:
+     `ids` records it as `channel_id`, from the unofficial lookup that has the
+     chatroom id. A channel without one isn't filled.
+   - Requests name kick-mod in their `User-Agent` (`kick-mod/<version>`).
 
 Later, each its own step:
 - Automod rules.
