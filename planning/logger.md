@@ -331,13 +331,17 @@ undocumented endpoints anonymously: no token, no login, no app. Planned
   does now. `kick-capture --channels <list>` takes the list's path. A session
   Kick stops for good is started again after a minute, its connections
   numbered on from the last, so an instance never reuses a number.
+  - **Following the list** (2026-11-25): it's read again every minute. A
+    channel added is captured from then on; one removed stops, its open
+    connection closed (`removed from the channel list`); one whose ids
+    changed stops and starts again with them, its connections numbered on.
+    A list that can't be read leaves the channels as they were.
   - **Handoff:** as dgg's capture: heartbeats in `control/`, and an older
     instance retires once a newer one has been healthy for the grace period.
     Healthy means subscribed on every channel.
     - The status is written in every channel's `control/`, as
       `capture-status kick.0.0` (dgg's entries, Kick's variant).
-    - An instance retires on a successor seen in any of its channels, so a
-      new instance's list wins, even one that dropped a channel.
+    - An instance retires on a successor seen in any of its channels.
     - Not yet across hosts: `kick-capture` has no `--peer`.
   - **Gaps:** a blip's messages are filled from Kick's chat history, at most
     10 pages, with `User-Agent: ledgerline/<build>`. The paging is
