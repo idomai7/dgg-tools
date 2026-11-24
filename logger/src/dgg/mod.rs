@@ -28,6 +28,7 @@ pub struct Dgg;
 
 impl Service for Dgg {
   const NAME: &'static str = "dgg";
+  const API: &'static str = "v0";
   const VARIANT: Variant = Variant::Dgg;
   const INDEX: &'static str = index::FILE;
 

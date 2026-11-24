@@ -135,7 +135,7 @@ async fn file_endpoint() {
   let client = ::reqwest::Client::new();
   let get = |path: &str, range: Option<&str>| {
     let mut request = client
-      .get(format!("{base}/dgg/files/{path}"))
+      .get(format!("{base}/dgg/v0/files/{path}"))
       .bearer_auth("secret");
     if let Some(range) = range {
       request = request.header("Range", range);
@@ -161,7 +161,7 @@ async fn file_endpoint() {
     assert_eq!(code(get(escape, None).await.unwrap()), 400, "{escape}");
   }
   let anonymous = client
-    .get(format!("{base}/dgg/manifest"))
+    .get(format!("{base}/dgg/v0/manifest"))
     .send()
     .await
     .unwrap();
@@ -541,12 +541,12 @@ async fn takes_no_more_than_the_manifest_says() {
       "journal-manifest dgg.0.2\u{1e}\n{}",
       text.replace('\n', "\u{1e}\n")
     );
-    ::axum::Router::new().route("/dgg/manifest", get(move || async { text }))
+    ::axum::Router::new().route("/dgg/v0/manifest", get(move || async { text }))
   };
 
   // A file sent longer than listed: only what was listed is taken.
   let routes = manifest("live/2026-11-08/a.journal 5\n".into()).route(
-    "/dgg/files/{*path}",
+    "/dgg/v0/files/{*path}",
     get(|| async { (StatusCode::PARTIAL_CONTENT, "x".repeat(100_000)) }),
   );
   let stats = sync_from(routes).await.unwrap();
@@ -566,7 +566,7 @@ async fn takes_no_more_than_the_manifest_says() {
   let sha = "ab".repeat(32);
   let routes =
     manifest(format!("archive/2026/11/2026-11-07.journal.zst 3 {sha}\n"))
-      .route("/dgg/files/{*path}", get(|| async { "abc" }));
+      .route("/dgg/v0/files/{*path}", get(|| async { "abc" }));
   let error = sync_from(routes).await.unwrap_err();
   assert!(error.contains("doesn't match"), "{error}");
   assert_eq!(
@@ -577,7 +577,7 @@ async fn takes_no_more_than_the_manifest_says() {
 
   // A redirect isn't followed: the token would go with it.
   let routes = ::axum::Router::new().route(
-    "/dgg/manifest",
+    "/dgg/v0/manifest",
     get(|| async { Redirect::temporary("/elsewhere") }),
   );
   let error = sync_from(routes).await.unwrap_err();
@@ -667,7 +667,7 @@ async fn pulls_kick_journals() {
 
   // Its own manifest, every path under the channel's.
   let manifest = ::reqwest::Client::new()
-    .get(format!("{}/kick/manifest", peer.url))
+    .get(format!("{}/kick/v0/manifest", peer.url))
     .bearer_auth("secret")
     .send()
     .await
@@ -742,7 +742,7 @@ async fn serves_only_kick_journal_paths() {
     ("d/live/1970-01-01/k.journal", 404),
   ] {
     let response = client
-      .get(format!("{base}/kick/files/{path}"))
+      .get(format!("{base}/kick/v0/files/{path}"))
       .bearer_auth("secret")
       .send()
       .await

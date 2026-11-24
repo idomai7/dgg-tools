@@ -127,11 +127,12 @@ async fn a_users_history() {
   );
   let base = serve(&dir).await;
 
-  let history: Value = get(&format!("{base}/kick/channels/c/users/7"), QUERY)
-    .await
-    .json()
-    .await
-    .unwrap();
+  let history: Value =
+    get(&format!("{base}/kick/v0/channels/c/users/7"), QUERY)
+      .await
+      .json()
+      .await
+      .unwrap();
   let ids: Vec<&str> = history["messages"]
     .as_array()
     .unwrap()
@@ -154,17 +155,17 @@ async fn a_users_history() {
     async move { get(&url, token).await.status().as_u16() }
   };
   // The read token reads it too; the query token reads nothing else.
-  assert_eq!(code("/kick/channels/c/users/7", READ).await, 200);
-  assert_eq!(code("/kick/manifest", QUERY).await, 403);
-  assert_eq!(code("/dgg/manifest", QUERY).await, 403);
+  assert_eq!(code("/kick/v0/channels/c/users/7", READ).await, 200);
+  assert_eq!(code("/kick/v0/manifest", QUERY).await, 403);
+  assert_eq!(code("/dgg/v0/manifest", QUERY).await, 403);
   assert_eq!(
-    code("/kick/files/c/live/1970-01-01/k.journal", QUERY).await,
+    code("/kick/v0/files/c/live/1970-01-01/k.journal", QUERY).await,
     403
   );
-  assert_eq!(code("/kick/channels/c/users/7", "nobody").await, 401);
-  assert_eq!(code("/kick/channels/d/users/7", QUERY).await, 404);
-  assert_eq!(code("/kick/channels/C/users/7", QUERY).await, 400);
-  assert_eq!(code("/kick/channels/c/users/x", QUERY).await, 400);
+  assert_eq!(code("/kick/v0/channels/c/users/7", "nobody").await, 401);
+  assert_eq!(code("/kick/v0/channels/d/users/7", QUERY).await, 404);
+  assert_eq!(code("/kick/v0/channels/C/users/7", QUERY).await, 400);
+  assert_eq!(code("/kick/v0/channels/c/users/x", QUERY).await, 400);
 }
 
 /// Reads server-sent events from `response` until `done` says it has what
@@ -208,7 +209,7 @@ async fn live_chat_from_now_on() {
   write(&dir, "k", vec![(10, message("m0", 7, "Seven", "before"))]);
   let base = serve(&dir).await;
   let mut response =
-    get(&format!("{base}/kick/channels/c/events"), QUERY).await;
+    get(&format!("{base}/kick/v0/channels/c/events"), QUERY).await;
   assert_eq!(response.status().as_u16(), 200);
 
   // Two captures overlapping: each message is passed on once.

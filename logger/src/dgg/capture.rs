@@ -6,6 +6,8 @@ use {
   crate::{
     capture::{Exit, HANDOFF, Handoff, Peer, SHUTDOWN, Say},
     control::{self, Status},
+    dgg::Dgg,
+    service::routes,
   },
   ::common::time::now_ms,
   ::dgg_api::chat::{Client, Item, Options},
@@ -183,12 +185,12 @@ fn peer_client(peer: &Peer) -> Result<::reqwest::Client, String> {
   peer.client(::reqwest::Client::builder().timeout(Duration::from_secs(5)))
 }
 
-/// Where `instance`'s status goes on `peer`: under `/dgg/`, or where a
-/// peer from before dgg's routes had a prefix takes it.
+/// Where `instance`'s status goes on `peer`: under dgg's routes, or where
+/// a peer from before they had a prefix takes it.
 fn peer_url(peer: &Peer, instance: &str, legacy: bool) -> String {
   let base = peer.url.trim_end_matches('/');
   match legacy {
-    false => format!("{base}/dgg/control/{instance}"),
+    false => format!("{base}{}/control/{instance}", routes::<Dgg>()),
     true => format!("{base}/control/{instance}"),
   }
 }

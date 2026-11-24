@@ -27,6 +27,7 @@ pub struct Kick;
 
 impl Service for Kick {
   const NAME: &'static str = "kick";
+  const API: &'static str = "v0";
   const VARIANT: Variant = Variant::Kick;
   const INDEX: &'static str = index::FILE;
 

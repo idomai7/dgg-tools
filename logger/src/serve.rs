@@ -1,35 +1,37 @@
 //! Serve: this host's journals over HTTP, for other hosts. Each service's
-//! routes start with its name (see [`Service::NAME`]), and its paths are
-//! relative to its directory.
+//! routes start with its name and its API's version, `/<service>/<api>`
+//! (see [`Service::API`]): `v0` for now, which may change incompatibly
+//! from one build to the next until a stable `v1` is decided on. A
+//! service's paths are relative to its directory.
 //!
 //! It carries journal sync between hosts, for every service:
 //!
-//! - `GET /<service>/manifest`: every live file and archive of the
+//! - `GET /<service>/<api>/manifest`: every live file and archive of the
 //!   service's, and its size ([`manifest`]).
-//! - `GET /<service>/files/<path>`: a file's bytes, `<path>` as the
+//! - `GET /<service>/<api>/files/<path>`: a file's bytes, `<path>` as the
 //!   manifest gives it (see [`valid_path`]); with `Range: bytes=<from>-`,
 //!   from that offset on (`206`).
 //!
 //! And dgg's capture handoff between hosts:
 //!
-//! - `PUT /dgg/control/<instance>`: an instance on another host pushes its
+//! - `PUT /dgg/v0/control/<instance>`: an instance on another host pushes its
 //!   status ([`control::push_body`]); it's written to this host's control
 //!   directory with its times shifted onto this host's clock, so local
 //!   instances can hand off to it. Also to the one dgg's captures used
 //!   before dgg's journals had a directory of their own, while it's there,
 //!   so a capture from before hands off to it too.
-//! - `DELETE /dgg/control/<instance>`: it's stopping.
-//! - `GET /dgg/control`: `now <unix ms>`, a blank line, then every status
+//! - `DELETE /dgg/v0/control/<instance>`: it's stopping.
+//! - `GET /dgg/v0/control`: `now <unix ms>`, a blank line, then every status
 //!   here, each followed by a blank line.
 //!
-//! For kick-mod, Kick's history and live chat, under `/kick/channels/`, so
-//! no channel's slug can be mistaken for another route:
+//! For kick-mod, Kick's history and live chat, under `/kick/v0/channels/`,
+//! so no channel's slug can be mistaken for another route:
 //!
-//! - `GET /kick/channels/<slug>/users/<id>`: a user's history in the
+//! - `GET /kick/v0/channels/<slug>/users/<id>`: a user's history in the
 //!   channel, as JSON (see [`history`](crate::kick::history)), from Kick's
 //!   index (the data directory's, beside the journal) and what it hasn't
 //!   reached yet.
-//! - `GET /kick/channels/<slug>/events`: the channel's live chat as server-sent
+//! - `GET /kick/v0/channels/<slug>/events`: the channel's live chat as server-sent
 //!   events, by following its live files from now on (see
 //!   [`tail`](crate::kick::tail)), looking every [`LOOK`]. Each event's
 //!   data is JSON, with `received`, `instance` and `connection`, and:
@@ -60,7 +62,7 @@ use {
       tail::{Tail, What, Written},
     },
     manifest::{self, valid_path},
-    service::{Service, locate},
+    service::{Service, locate, routes},
   },
   ::axum::{
     Json, Router,
@@ -196,21 +198,32 @@ pub fn router(journal: PathBuf, tokens: Tokens) -> Router {
     serving: Arc::new(Semaphore::new(CONCURRENT)),
     streams: Arc::new(Semaphore::new(STREAMS)),
   });
+  let (dgg, kick) = (routes::<Dgg>(), routes::<Kick>());
   Router::new()
-    .route("/dgg/control", get(list))
-    .route("/dgg/control/{instance}", put(push).delete(remove))
+    .route(&format!("{dgg}/control"), get(list))
+    .route(
+      &format!("{dgg}/control/{{instance}}"),
+      put(push).delete(remove),
+    )
     .merge(journals::<Dgg>())
     .merge(journals::<Kick>())
-    .route("/kick/channels/{slug}/users/{id}", get(kick_user))
-    .route("/kick/channels/{slug}/events", get(kick_events))
+    .route(
+      &format!("{kick}/channels/{{slug}}/users/{{id}}"),
+      get(kick_user),
+    )
+    .route(
+      &format!("{kick}/channels/{{slug}}/events"),
+      get(kick_events),
+    )
     .with_state(shared)
 }
 
 /// `S`'s routes for sync: its manifest and its files.
 fn journals<S: Service>() -> Router<Arc<Shared>> {
+  let at = routes::<S>();
   Router::new()
-    .route(&format!("/{}/manifest", S::NAME), get(listing::<S>))
-    .route(&format!("/{}/files/{{*path}}", S::NAME), get(file::<S>))
+    .route(&format!("{at}/manifest"), get(listing::<S>))
+    .route(&format!("{at}/files/{{*path}}"), get(file::<S>))
 }
 
 /// Serves `app` on `listener` until that fails: over TLS with `tls`, else

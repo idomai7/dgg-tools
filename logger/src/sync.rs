@@ -1,9 +1,10 @@
 //! Sync: pull another host's journals, every service's, into this one's.
 //!
 //! Each service is pulled in turn, by the same rules: its [manifest](crate::
-//! manifest) from `GET /<service>/manifest`, its files from `GET
-//! /<service>/files/<path>`, each path relative to its directory there and
-//! here. A peer without a service (`404`) has none of its journals.
+//! manifest) from `GET /<service>/<api>/manifest`, its files from `GET
+//! /<service>/<api>/files/<path>`, each path relative to its directory
+//! there and here. A peer without a service, or without its API's version
+//! (see [`Service::API`]), answers `404`: it has none of its journals.
 //!
 //! Journal files are only ever appended to, so a local copy is always a
 //! prefix of the remote file. Each round fetches the manifest and, for
@@ -34,7 +35,7 @@ use {
     dgg::Dgg,
     kick::Kick,
     manifest::{self, archive_root},
-    service::{Root, Service, locate},
+    service::{Root, Service, locate, routes},
   },
   ::common::{atomic_file, fs::MissingOk},
   ::logger_journal::{
@@ -128,10 +129,10 @@ async fn fetch_manifest<S: Service>(
   client: &::reqwest::Client,
   peer: &Peer,
 ) -> Result<Vec<manifest::File>, String> {
-  let path = format!("{}/manifest", S::NAME);
+  let path = format!("{}/manifest", routes::<S>());
   let base = peer.url.trim_end_matches('/');
   let response = client
-    .get(format!("{base}/{path}"))
+    .get(format!("{base}{path}"))
     .bearer_auth(&peer.token)
     .send()
     .await
@@ -176,7 +177,8 @@ async fn pull<S: Service>(
   let dir = S::dir(journal);
   let variant = S::VARIANT;
   let base = peer.url.trim_end_matches('/');
-  let get = |path: &str| client.get(format!("{base}/{}/files/{path}", S::NAME));
+  let at = routes::<S>();
+  let get = |path: &str| client.get(format!("{base}{at}/files/{path}"));
   for file in files {
     if let Some(sha256) = &file.sha256 {
       let Some((root, day)) = archive_root::<S>(&dir, &file.path) else {

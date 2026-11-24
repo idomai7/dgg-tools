@@ -25,9 +25,14 @@ use {
 };
 
 pub trait Service: 'static {
-  /// Its name: its routes' first segment (`/<name>/...`), its index's
-  /// flag (`--rebuild-<name>`), and how what's logged about it starts.
+  /// Its name: its routes' first segment (`/<name>/<api>/...`), its
+  /// index's flag (`--rebuild-<name>`), and how what's logged about it
+  /// starts.
   const NAME: &'static str;
+  /// Its API's version, its routes' second segment. `v0` is unstable: it
+  /// may change incompatibly from one build to the next, until a stable
+  /// `v1` is decided on.
+  const API: &'static str;
   /// Its journals' variant.
   const VARIANT: Variant;
   /// Its index's file, in the data directory.
@@ -70,6 +75,11 @@ pub trait Service: 'static {
     journal: &Path,
     at_most: u64,
   ) -> Result<u64, Error>;
+}
+
+/// Where `S`'s routes start: `/<name>/<api>`.
+pub fn routes<S: Service>() -> String {
+  format!("/{}/{}", S::NAME, S::API)
 }
 
 /// One of a service's journal roots.
