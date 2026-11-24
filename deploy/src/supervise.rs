@@ -26,12 +26,13 @@
 //!   read at start, `dgg-logger serve` is always restarted, its tokens and
 //!   key on its stdin. Only one supervisor runs it at a time (`serve.lock`),
 //!   so during a handoff the new one waits for the old one's port.
-//! - Given the Kick channel list, `dgg-logger kick-capture` runs once it
-//!   has channels (looked for every `kick_check_every` until then), and is
-//!   restarted after it fails. A clean exit is a handoff to a newer
-//!   instance, which ends it alone. When capture hands off, it's given
-//!   `kick_handoff_wait` to hand off too (an upgrade's new one is starting
-//!   alongside) before it's stopped.
+//! - Given the Kick channel list, a `dgg-logger kick-capture` runs for each
+//!   channel in it, each on its own, so one failing leaves the others; the
+//!   list is read every `kick_check_every` to start the added. Each is
+//!   restarted after it fails. A clean exit (a handoff to a newer instance,
+//!   or its channel removed) ends one alone. When dgg's capture hands off,
+//!   Kick's are given `kick_handoff_wait` to hand off too (an upgrade's new
+//!   ones are starting alongside) before they're stopped.
 //!
 //! Each program's stdout and stderr go, line by line, to `<name>.log` in the
 //! logs directory; the supervisor's own lines to `supervisor.log`. Restarts
@@ -43,6 +44,7 @@ use {
   ::common::{config::Secret, log::Level},
   ::logger::kick::channels,
   ::std::{
+    collections::HashSet,
     ffi::OsString,
     fs::{self, File, TryLockError},
     io::{self, BufRead, BufReader, Read, Write},
@@ -50,7 +52,7 @@ use {
     process::{Child, Command, ExitStatus, Stdio},
     sync::{
       Arc, Condvar, Mutex,
-      atomic::{AtomicBool, Ordering},
+      atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     thread,
     time::{Duration, Instant},
@@ -110,8 +112,8 @@ pub struct Config {
   /// Where the peers to sync from are, if anywhere: the install's root
   /// (see [`crate::peer`]).
   pub peers: Option<PathBuf>,
-  /// `kick-capture`, without its channel list: that's added from
-  /// `kick_channels`.
+  /// `kick-capture`, without its channel list or channel: they're added
+  /// from `kick_channels`.
   pub kick_capture: Program,
   /// The Kick channel list, if Kick is captured.
   pub kick_channels: Option<PathBuf>,
@@ -280,8 +282,8 @@ pub fn run(config: &Config, stop: &Stop) -> io::Result<Exit> {
     stop: &kick,
     lifeline: &lifeline,
   };
-  // Whether it's running, to wait for only one that is.
-  let kick_running = AtomicBool::new(false);
+  // How many are running, to wait only for those.
+  let kick_running = AtomicUsize::new(0);
   // References, so the threads started from the migration's can take them.
   let (context, programs, sync_log, serve_log, supervisor) =
     (&context, &programs, &sync_log, &serve_log, &supervisor);
@@ -452,7 +454,8 @@ pub fn run(config: &Config, stop: &Stop) -> io::Result<Exit> {
         programs.request();
       }
     }
-    if handed_off.load(Ordering::SeqCst) && kick_running.load(Ordering::SeqCst)
+    if handed_off.load(Ordering::SeqCst)
+      && kick_running.load(Ordering::SeqCst) > 0
     {
       let wait = config.kick_handoff_wait;
       log_line(
@@ -464,7 +467,7 @@ pub fn run(config: &Config, stop: &Stop) -> io::Result<Exit> {
         ),
       );
       let until = Instant::now() + wait;
-      while kick_running.load(Ordering::SeqCst)
+      while kick_running.load(Ordering::SeqCst) > 0
         && Instant::now() < until
         && !stop.requested()
       {
@@ -486,51 +489,95 @@ pub fn run(config: &Config, stop: &Stop) -> io::Result<Exit> {
   Ok(exit)
 }
 
-/// Runs `kick-capture` on `list` once it has channels, until stopped or
-/// handed off, with `running` set meanwhile.
+/// Runs a `kick-capture` for each channel in `list`, each on its own, and
+/// restarted after it fails, reading the list every `kick_check_every` to
+/// start the added; until stopped, with `running` counting those running.
+/// A clean exit (a handoff, or its channel removed) ends one alone: it's
+/// started again only once its channel has left the list and come back.
 fn capture_kick(
   config: &Config,
   list: &Path,
   log: &SharedLog,
-  running: &AtomicBool,
+  running: &AtomicUsize,
   context: &Context,
 ) {
   // What was last said of the list, to say only changes.
   let mut said = None;
-  loop {
-    let (level, now) = match channels::load(list) {
-      Ok(found) if !found.is_empty() => break,
-      Ok(_) => (
-        Level::Info,
-        format!("kick-capture: no channels in {}", list.display()),
-      ),
-      Err(e) => (Level::Warn, format!("kick-capture: {e}")),
-    };
-    if said.as_ref() != Some(&now) {
-      log_line(context.supervisor, level, &now);
-      said = Some(now);
+  // The channels with a capture, running or ended.
+  let mut started: HashSet<String> = HashSet::new();
+  // Those whose capture ended cleanly.
+  let ended: Mutex<HashSet<String>> = Mutex::default();
+  thread::scope(|scope| {
+    loop {
+      let now = match channels::load(list) {
+        Ok(found) => {
+          let listed: HashSet<String> =
+            found.into_iter().map(|channel| channel.slug).collect();
+          ended.lock().unwrap().retain(|slug| {
+            let still = listed.contains(slug);
+            if !still {
+              started.remove(slug);
+            }
+            still
+          });
+          for slug in &listed {
+            if !started.insert(slug.clone()) {
+              continue;
+            }
+            let program = kick_capture(config, list, slug);
+            let (ended, slug) = (&ended, slug.clone());
+            scope.spawn(move || {
+              let name = format!("kick-capture {slug}");
+              running.fetch_add(1, Ordering::SeqCst);
+              let clean = keep_running(
+                &program,
+                &name,
+                log,
+                &config.backoff,
+                true,
+                context,
+              );
+              running.fetch_sub(1, Ordering::SeqCst);
+              if clean {
+                let said = format!("{name}: ended (handed off, or removed)");
+                log_line(context.supervisor, Level::Info, &said);
+                ended.lock().unwrap().insert(slug);
+              }
+            });
+          }
+          match listed.is_empty() {
+            true => Some((
+              Level::Info,
+              format!("kick-capture: no channels in {}", list.display()),
+            )),
+            false => None,
+          }
+        }
+        Err(e) => Some((Level::Warn, format!("kick-capture: {e}"))),
+      };
+      if said != now {
+        if let Some((level, line)) = &now {
+          log_line(context.supervisor, *level, line);
+        }
+        said = now;
+      }
+      if context.stop.wait(config.kick_check_every) {
+        break;
+      }
     }
-    if context.stop.wait(config.kick_check_every) {
-      return;
-    }
-  }
+  });
+}
+
+/// `kick-capture` for channel `slug` in `list`.
+fn kick_capture(config: &Config, list: &Path, slug: &str) -> Program {
   let mut program = config.kick_capture.clone();
+  program.args.extend([
+    "--channels".into(),
+    list.as_os_str().to_owned(),
+    "--channel".into(),
+    slug.into(),
+  ]);
   program
-    .args
-    .extend(["--channels".into(), list.as_os_str().to_owned()]);
-  running.store(true, Ordering::SeqCst);
-  let ended = keep_running(
-    &program,
-    "kick-capture",
-    log,
-    &config.backoff,
-    true,
-    context,
-  );
-  running.store(false, Ordering::SeqCst);
-  if ended {
-    log_line(context.supervisor, Level::Info, "kick-capture handed off");
-  }
 }
 
 /// `sync` pulling from `peer`, its token in its config on stdin; if it's

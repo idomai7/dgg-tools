@@ -502,7 +502,8 @@ fn bridges_run_detached_into_their_log() {
 
   let log = dir.path().join("kick-bridge.log");
   let (data, list) = (dir.path().join("data"), dir.path().join("list"));
-  let mut child = bridge::start_kick(dir.path(), &data, &list, &log).unwrap();
+  let mut child =
+    bridge::start_kick(dir.path(), &data, &list, "one", &log).unwrap();
   assert!(bridge::wait_gone(&mut child, Duration::from_secs(10)));
   assert!(!fs::read(&log).unwrap().is_empty());
 }

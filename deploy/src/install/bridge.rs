@@ -9,8 +9,8 @@
 //! `(bridge)`), so it outlives the install if something goes wrong: capture
 //! carries on until someone looks.
 //!
-//! Kick's capture gets a bridge of its own the same way, appending to
-//! `kick-capture.log`, when the install has Kick channels.
+//! Each Kick channel's capture gets a bridge of its own the same way,
+//! appending to `kick-capture.log`.
 
 use {
   super::exe,
@@ -34,20 +34,23 @@ pub fn start(build: &Path, data: &Path, log: &Path) -> io::Result<Child> {
   )
 }
 
-/// Starts `build`'s Kick capture against `data`, of the channels in
+/// Starts `build`'s Kick capture against `data`, of channel `slug` in
 /// `list`, appending its output to `log`.
 pub fn start_kick(
   build: &Path,
   data: &Path,
   list: &Path,
+  slug: &str,
   log: &Path,
 ) -> io::Result<Child> {
-  let args: [&OsStr; 5] = [
+  let args: [&OsStr; 7] = [
     "kick-capture".as_ref(),
     "--data".as_ref(),
     data.as_ref(),
     "--channels".as_ref(),
     list.as_ref(),
+    "--channel".as_ref(),
+    slug.as_ref(),
   ];
   spawn(build, &args, log)
 }

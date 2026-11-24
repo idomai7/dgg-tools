@@ -478,14 +478,15 @@ fn captures_kick_given_channels() {
   assert_eq!(run(&config, &Stop::new()).unwrap(), Exit::HandedOff);
   assert!(started.elapsed() < Duration::from_secs(10));
   let list = dir.path().join("kick-channels");
-  let said = format!("kick-capture --channels {}", list.display());
+  let said =
+    format!("kick-capture --channels {} --channel one", list.display());
   assert!(log(&dir, "kick-capture").contains(&said));
   // Given a while to hand off too, then stopped.
   let supervisor = log(&dir, "supervisor");
   assert!(
     supervisor.contains("waiting up to 0.3s for kick-capture to hand off")
   );
-  assert!(supervisor.contains("kick-capture: stopped"));
+  assert!(supervisor.contains("kick-capture one: stopped"));
 }
 
 #[test]
@@ -500,12 +501,9 @@ fn lets_kick_capture_hand_off_on_its_own() {
   assert_eq!(run(&config, &Stop::new()).unwrap(), Exit::HandedOff);
   assert!(started.elapsed() < Duration::from_secs(20));
   let supervisor = log(&dir, "supervisor");
+  assert!(supervisor.contains("kick-capture a: ended"), "{supervisor}");
   assert!(
-    supervisor.contains("kick-capture handed off"),
-    "{supervisor}"
-  );
-  assert!(
-    !supervisor.contains("kick-capture: stopped"),
+    !supervisor.contains("kick-capture a: stopped"),
     "{supervisor}"
   );
 }
@@ -522,7 +520,88 @@ fn waits_for_kick_channels() {
   // Said once, though looked for again and again.
   let none = supervisor.matches("kick-capture: no channels in").count();
   assert_eq!(none, 1, "{supervisor}");
-  assert!(!supervisor.contains("kick-capture: started"));
+  assert!(!supervisor.contains("kick-capture "), "{supervisor}");
   // No wait for a capture that never started.
   assert!(!supervisor.contains("waiting up to"));
+}
+
+#[test]
+fn runs_a_kick_capture_per_channel() {
+  let dir = TempDir::new("deploy-supervise-kick-each");
+  let capture = script(dir.path(), "capture", &[Step::Sleep(2), Step::Exit(0)]);
+  let index = script(dir.path(), "index", &[Step::Sleep(20)]);
+  let mut kick = script(
+    dir.path(),
+    "kick",
+    &[Step::SayArgsAndStdin, Step::Sleep(20)],
+  );
+  kick.args = vec!["kick-capture".into()];
+  let config = with_kick(
+    &dir,
+    config(&dir, capture, index),
+    kick,
+    "one 2 1
+",
+  );
+  let list = dir.path().join("kick-channels");
+  thread::scope(|scope| {
+    // A channel added while it runs.
+    scope.spawn(|| {
+      thread::sleep(Duration::from_millis(500));
+      fs::write(
+        &list,
+        "one 2 1
+two 4 3
+",
+      )
+      .unwrap();
+    });
+    assert_eq!(run(&config, &Stop::new()).unwrap(), Exit::HandedOff);
+  });
+  let kick = log(&dir, "kick-capture");
+  for slug in ["one", "two"] {
+    assert!(kick.contains(&format!("--channel {slug}")), "{kick}");
+  }
+  let supervisor = log(&dir, "supervisor");
+  for slug in ["one", "two"] {
+    let started = format!("kick-capture {slug}: started");
+    assert!(supervisor.contains(&started), "{supervisor}");
+  }
+}
+
+#[test]
+fn starts_an_ended_kick_capture_once_its_channel_is_back() {
+  let dir = TempDir::new("deploy-supervise-kick-back");
+  let capture = script(dir.path(), "capture", &[Step::Sleep(3), Step::Exit(0)]);
+  let index = script(dir.path(), "index", &[Step::Sleep(20)]);
+  let kick = script(dir.path(), "kick", &[Step::Exit(0)]);
+  let config = with_kick(
+    &dir,
+    config(&dir, capture, index),
+    kick,
+    "a 2 1
+",
+  );
+  let list = dir.path().join("kick-channels");
+  thread::scope(|scope| {
+    scope.spawn(|| {
+      thread::sleep(Duration::from_millis(1000));
+      fs::write(
+        &list, "# none
+",
+      )
+      .unwrap();
+      thread::sleep(Duration::from_millis(500));
+      fs::write(
+        &list, "a 2 1
+",
+      )
+      .unwrap();
+    });
+    assert_eq!(run(&config, &Stop::new()).unwrap(), Exit::HandedOff);
+  });
+  let supervisor = log(&dir, "supervisor");
+  // Not again while listed, but again once back.
+  let started = supervisor.matches("kick-capture a: started").count();
+  assert_eq!(started, 2, "{supervisor}");
 }

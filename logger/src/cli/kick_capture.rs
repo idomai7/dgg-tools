@@ -3,9 +3,9 @@
 use {
   super::capture::shutdown,
   crate::{
-    capture::{Exit, Handoff, Say, instance_id},
+    capture::{Handoff, Say, instance_id},
     kick::{
-      capture::{Config, run},
+      capture::{Config, Exit, run},
       channels,
     },
   },
@@ -21,15 +21,18 @@ use {
   },
 };
 
-/// Capture Kick chat into the journal: every channel in the channel list,
-/// each into its own journal root, `kick/<slug>`, read anonymously. Gaps
-/// are filled from Kick's chat history. The list is read again every
-/// minute: channels added or removed are followed.
+/// Capture one Kick channel's chat into the journal, into its own journal
+/// root, `kick/<slug>`, read anonymously. Gaps are filled from Kick's chat
+/// history. The list is read again every minute: changed ids are connected
+/// with, and if the channel's removed, this capture stops.
 #[derive(Args)]
 pub struct KickCapture {
   /// The channel list (`kick-channels`, see `kick-ids`).
   #[arg(long)]
   channels: PathBuf,
+  /// The channel to capture, by its slug: one in the list.
+  #[arg(long)]
+  channel: String,
   /// Host name used in the instance id (default: this machine's).
   #[arg(long)]
   host: Option<String>,
@@ -64,16 +67,21 @@ impl KickCapture {
       instance: instance.clone(),
       bridge: self.bridge,
     };
-    let channels = match channels::load(&self.channels) {
-      Ok(channels) if channels.is_empty() => {
-        say.error(format_args!("no channels in {}", self.channels.display()));
-        return ExitCode::FAILURE;
-      }
-      Ok(channels) => channels,
+    let listed = match channels::load(&self.channels) {
+      Ok(listed) => listed,
       Err(e) => {
         say.error(e);
         return ExitCode::FAILURE;
       }
+    };
+    let Some(channel) = listed.into_iter().find(|c| c.slug == self.channel)
+    else {
+      say.error(format_args!(
+        "{} isn't in {}",
+        self.channel,
+        self.channels.display()
+      ));
+      return ExitCode::FAILURE;
     };
     let web = if self.no_fill {
       None
@@ -91,15 +99,14 @@ impl KickCapture {
       }
     };
     let kick_root = kick_root(&data.join("journal"));
-    let slugs: Vec<&str> = channels.iter().map(|c| c.slug.as_str()).collect();
     say.info(format_args!(
       "capturing {} into {} (build {})",
-      slugs.join(", "),
+      channel.slug,
       kick_root.display(),
       crate::BUILD
     ));
     let config = Config {
-      channels,
+      channel,
       list: Some(self.channels.clone()),
       reread_every: Duration::from_secs(60),
       realtime: Options::default(),
@@ -122,6 +129,10 @@ impl KickCapture {
       }
       Ok(Exit::HandedOff(successor)) => {
         say.info(format_args!("handed off to {successor}"));
+        ExitCode::SUCCESS
+      }
+      Ok(Exit::Removed) => {
+        say.info(format_args!("stopped: {}", self.channel));
         ExitCode::SUCCESS
       }
       Err(e) => {

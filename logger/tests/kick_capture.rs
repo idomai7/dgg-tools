@@ -9,10 +9,10 @@ use {
     web::Web,
   },
   ::logger::{
-    capture::{Exit, HANDOFF, Handoff, SHUTDOWN},
+    capture::{HANDOFF, Handoff, SHUTDOWN},
     control::{self, Status},
     kick::{
-      capture::{CHANGED, Config, REMOVED, control_dir, run},
+      capture::{CHANGED, Config, Exit, REMOVED, control_dir, run},
       channels::Channel,
     },
   },
@@ -155,22 +155,22 @@ struct Running {
 
 fn start(
   centrifugo: &Centrifugo,
-  channels: Vec<Channel>,
+  channel: Channel,
   web: Option<Web>,
 ) -> Running {
-  start_following(centrifugo, channels, web, None)
+  start_following(centrifugo, channel, web, None)
 }
 
 /// As [`start`], following the list in `list`, if given, read again often.
 fn start_following(
   centrifugo: &Centrifugo,
-  channels: Vec<Channel>,
+  channel: Channel,
   web: Option<Web>,
   list: Option<PathBuf>,
 ) -> Running {
   let dir = TempDir::new("logger-kick-capture");
   let config = Config {
-    channels,
+    channel,
     list,
     reread_every: Duration::from_millis(30),
     realtime: centrifugo.options(),
@@ -215,54 +215,40 @@ fn statuses(root: &Path, slug: &str) -> Vec<Status> {
 }
 
 #[tokio::test]
-async fn captures_each_channel_apart() {
+async fn captures_a_channel() {
   let centrifugo = Centrifugo::start().await;
-  let channels = vec![channel("one", 1000), channel("two", 2000)];
-  let running = start(&centrifugo, channels, None);
+  let running = start(&centrifugo, channel("one", 1000), None);
   let root = running.dir.path().to_owned();
-  let mut sockets = Vec::new();
-  for _ in 0..2 {
-    let (mut ws, room) = centrifugo.accept().await;
-    send(&mut ws, &push(&room, &format!("hi {room}"))).await;
-    sockets.push(ws);
-  }
-  // Healthy once both are subscribed.
+  let (mut ws, room) = centrifugo.accept().await;
+  assert_eq!(room, "chatrooms.1000.v2");
+  send(&mut ws, &push(&room, &format!("hi {room}"))).await;
+  // Healthy once subscribed.
   until(|| {
-    ["one", "two"].iter().all(|slug| {
-      statuses(&root, slug)
-        .first()
-        .is_some_and(|status| status.healthy_since.is_some())
-    })
+    statuses(&root, "one")
+      .first()
+      .is_some_and(|status| status.healthy_since.is_some())
   })
   .await;
-  until(|| {
-    ["one", "two"]
-      .iter()
-      .all(|slug| bodies(&root, slug).len() >= 4)
-  })
-  .await;
+  until(|| bodies(&root, "one").len() >= 4).await;
 
   running.stop.send(()).unwrap();
   let exit = within(running.task).await.unwrap().unwrap();
   assert_eq!(exit, Exit::Shutdown);
-  for (slug, room) in [("one", 1000), ("two", 2000)] {
-    let bodies = bodies(&root, slug);
-    let [
-      (1, Body::Open(url)),
-      (1, Body::Frame(_connected)),
-      (1, Body::Frame(_subscribed)),
-      (1, Body::Frame(said)),
-      (1, Body::Close(reason)),
-    ] = &bodies[..]
-    else {
-      panic!("{slug}: {bodies:?}");
-    };
-    assert_eq!(url, &centrifugo.url);
-    let room = format!("chatrooms.{room}.v2");
-    assert!(said.contains(&format!("hi {room}")), "{said}");
-    assert_eq!(reason, SHUTDOWN);
-    assert_eq!(statuses(&root, slug), []);
-  }
+  let bodies = bodies(&root, "one");
+  let [
+    (1, Body::Open(url)),
+    (1, Body::Frame(_connected)),
+    (1, Body::Frame(_subscribed)),
+    (1, Body::Frame(said)),
+    (1, Body::Close(reason)),
+  ] = &bodies[..]
+  else {
+    panic!("{bodies:?}");
+  };
+  assert_eq!(url, &centrifugo.url);
+  assert!(said.contains("hi chatrooms.1000.v2"), "{said}");
+  assert_eq!(reason, SHUTDOWN);
+  assert_eq!(statuses(&root, "one"), []);
   // Each file names its channel.
   let file = &live_files(&channel_root(&root, "one")).unwrap()[0];
   let text = ::std::fs::read_to_string(file).unwrap();
@@ -279,7 +265,7 @@ async fn fills_a_gap_from_the_history() {
   let (base, asked) = history(PAGE).await;
   let web =
     Web::new(::reqwest::Client::new(), "ledgerline-tests/0").with_base(base);
-  let running = start(&centrifugo, vec![channel("one", 1000)], Some(web));
+  let running = start(&centrifugo, channel("one", 1000), Some(web));
   let root = running.dir.path().to_owned();
   let (mut ws, room) = centrifugo.accept().await;
   send(&mut ws, &push(&room, "before")).await;
@@ -309,7 +295,7 @@ async fn fills_a_gap_from_the_history() {
 #[tokio::test]
 async fn starts_again_after_kick_stops_it() {
   let centrifugo = Centrifugo::start().await;
-  let running = start(&centrifugo, vec![channel("one", 1000)], None);
+  let running = start(&centrifugo, channel("one", 1000), None);
   let root = running.dir.path().to_owned();
   let (mut ws, _) = centrifugo.accept().await;
   let stop = r#"{"push":{"disconnect":{"code":3501,"reason":"bad request"}}}"#;
@@ -331,13 +317,12 @@ async fn starts_again_after_kick_stops_it() {
 #[tokio::test]
 async fn hands_off_to_a_newer_instance() {
   let centrifugo = Centrifugo::start().await;
-  let channels = vec![channel("one", 1000), channel("two", 2000)];
-  let running = start(&centrifugo, channels, None);
+  let running = start(&centrifugo, channel("one", 1000), None);
   let root = running.dir.path().to_owned();
-  let _sockets = (centrifugo.accept().await, centrifugo.accept().await);
-  until(|| !statuses(&root, "two").is_empty()).await;
+  let _ws = centrifugo.accept().await;
+  until(|| !statuses(&root, "one").is_empty()).await;
 
-  // A newer instance, healthy a while, capturing only channel two.
+  // A newer instance, healthy a while.
   let newer = Status {
     instance: "there-9".into(),
     started: 9,
@@ -345,85 +330,64 @@ async fn hands_off_to_a_newer_instance() {
     healthy_since: Some(now_ms() - 60_000),
     build: None,
   };
-  let dir = control_dir(&root, "two");
+  let dir = control_dir(&root, "one");
   control::write_as(&dir, &newer, Variant::Kick).unwrap();
   let exit = within(running.task).await.unwrap().unwrap();
   assert_eq!(exit, Exit::HandedOff("there-9".into()));
-  for slug in ["one", "two"] {
-    let bodies = bodies(&root, slug);
-    let handoff = format!("{HANDOFF}there-9");
-    assert!(
-      matches!(bodies.last(), Some((1, Body::Close(r))) if *r == handoff),
-      "{slug}: {bodies:?}"
-    );
-  }
+  let bodies = bodies(&root, "one");
+  let handoff = format!("{HANDOFF}there-9");
+  assert!(
+    matches!(bodies.last(), Some((1, Body::Close(r))) if *r == handoff),
+    "{bodies:?}"
+  );
   // Only its own status is gone.
-  assert_eq!(statuses(&root, "one"), []);
-  assert_eq!(statuses(&root, "two"), [newer]);
+  assert_eq!(statuses(&root, "one"), [newer]);
 }
 
 #[tokio::test]
-async fn follows_the_list() {
+async fn follows_its_channel_in_the_list() {
   let centrifugo = Centrifugo::start().await;
   let lists = TempDir::new("logger-kick-capture-list");
   let list = lists.path().join("kick-channels");
   let write = |channels: &[Channel]| {
-    let text: String = channels
-      .iter()
-      .map(|c| {
-        c.line()
-          + "
-"
-      })
-      .collect();
+    let text: String = channels.iter().map(|c| c.line() + "\n").collect();
     ::std::fs::write(&list, text).unwrap();
   };
-  write(&[channel("one", 1000)]);
-  let channels = vec![channel("one", 1000)];
-  let running =
-    start_following(&centrifugo, channels, None, Some(list.clone()));
-  let root = running.dir.path().to_owned();
-  let (_one, room) = centrifugo.accept().await;
-  assert_eq!(room, "chatrooms.1000.v2");
-
-  // Added: captured from then on.
   write(&[channel("one", 1000), channel("two", 2000)]);
-  let (_two, room) = centrifugo.accept().await;
-  assert_eq!(room, "chatrooms.2000.v2");
-  until(|| !statuses(&root, "two").is_empty()).await;
+  let running = start_following(
+    &centrifugo,
+    channel("one", 1000),
+    None,
+    Some(list.clone()),
+  );
+  let root = running.dir.path().to_owned();
+  let (_ws, room) = centrifugo.accept().await;
+  assert_eq!(room, "chatrooms.1000.v2");
+  until(|| !statuses(&root, "one").is_empty()).await;
 
-  // Removed: its connection closed, and its status gone.
-  write(&[channel("two", 2000)]);
-  let closed = |slug: &str, why: &str| {
-    bodies(&root, slug)
-      .iter()
-      .any(|(_, body)| matches!(body, Body::Close(r) if r == why))
-  };
-  until(|| closed("one", REMOVED) && statuses(&root, "one").is_empty()).await;
-
-  // Changed: started again with its new ids, numbering its connections
-  // on.
+  // Changed ids: connected again with them, numbering its connections on.
   let changed = Channel {
-    slug: "two".into(),
+    slug: "one".into(),
     channel_id: 3001,
     chatroom_id: 3000,
   };
   write(&[changed]);
-  let (_two, room) = centrifugo.accept().await;
+  let (_ws, room) = centrifugo.accept().await;
   assert_eq!(room, "chatrooms.3000.v2");
-  until(|| bodies(&root, "two").iter().filter(|(c, _)| *c == 2).count() >= 3)
+  until(|| bodies(&root, "one").iter().filter(|(c, _)| *c == 2).count() >= 3)
     .await;
 
-  running.stop.send(()).unwrap();
+  // Removed: it stops, its connection closed and its status gone.
+  write(&[channel("two", 2000)]);
   let exit = within(running.task).await.unwrap().unwrap();
-  assert_eq!(exit, Exit::Shutdown);
-  let closes: Vec<(u64, String)> = bodies(&root, "two")
+  assert_eq!(exit, Exit::Removed);
+  let closes: Vec<(u64, String)> = bodies(&root, "one")
     .into_iter()
     .filter_map(|(connection, body)| match body {
       Body::Close(reason) => Some((connection, reason)),
       _ => None,
     })
     .collect();
-  assert_eq!(closes, [(1, CHANGED.into()), (2, SHUTDOWN.into())]);
-  assert_eq!(statuses(&root, "two"), []);
+  assert_eq!(closes, [(1, CHANGED.into()), (2, REMOVED.into())]);
+  assert_eq!(statuses(&root, "one"), []);
 }

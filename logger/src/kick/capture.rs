@@ -1,11 +1,11 @@
-//! Kick capture: each channel's chat into the journal, raw, and nothing
-//! else.
+//! Kick capture: one channel's chat into the journal, raw, and nothing
+//! else. Each channel has a capture of its own, a process of its own, so
+//! one failing leaves the others.
 //!
-//! Each channel in the [list](super::channels) gets a realtime connection of
-//! its own, subscribed to `chatrooms.<chatroom id>.v2`, so one channel's
-//! connection failing leaves the others. Each is journaled in its channel's
-//! journal root, `<journal>/kick/<slug>/`, in Kick's format. A session Kick
-//! stops for good is started again after [`Config::restart_after`].
+//! The channel gets a realtime connection subscribed to
+//! `chatrooms.<chatroom id>.v2`, journaled in its journal root,
+//! `<journal>/kick/<slug>/`, in Kick's format. A session Kick stops for good
+//! is started again after [`Config::restart_after`].
 //!
 //! Kick keeps no history on the connection, so when one comes back after a
 //! drop, the gap's messages are fetched from Kick's chat history
@@ -14,22 +14,21 @@
 //! came back. Only messages come back: deletions, bans and the rest in the
 //! gap stay missing.
 //!
-//! Given the list's file, it's read again every [`Config::reread_every`],
-//! and followed: a channel added is captured from then on, and a channel
-//! removed stops, its open connection closed in its journal. A channel
-//! whose ids changed starts again with the new ones. A list that can't be
-//! read leaves the channels as they were.
+//! Given the list's file, it's read again every [`Config::reread_every`]:
+//! if the channel's ids changed, it connects again with them, numbering its
+//! connections on; if the channel was removed, it stops, its open
+//! connection closed in its journal ([`Exit::Removed`]). A list that can't
+//! be read leaves it as it was.
 //!
 //! Instances hand off as dgg's capture's do (see [`crate::capture`]), through
-//! a `capture-status kick.0.0` file in each channel's `control/`. An
-//! instance is healthy once every one of its channels is subscribed, and
-//! retires once a later-started one has been healthy for the grace period in
-//! any of its channels.
+//! a `capture-status kick.0.0` file in the channel's `control/`. An
+//! instance is healthy while subscribed, and retires once a later-started
+//! one has been healthy for the grace period.
 
 use {
   super::channels::{self, Channel},
   crate::{
-    capture::{Exit, HANDOFF, Handoff, SHUTDOWN, Say},
+    capture::{HANDOFF, Handoff, SHUTDOWN, Say},
     control::{self, Status},
   },
   ::common::log::Level,
@@ -45,7 +44,6 @@ use {
     writer::{SYNC_INTERVAL, kick::Writer},
   },
   ::std::{
-    collections::{BTreeMap, HashMap},
     io,
     path::{Path, PathBuf},
     sync::Arc,
@@ -53,7 +51,7 @@ use {
   },
   ::tokio::{
     sync::{mpsc, watch},
-    task::JoinSet,
+    task::JoinHandle,
     time::{Instant, interval, interval_at, sleep},
   },
 };
@@ -69,17 +67,28 @@ const MARGIN: i64 = 5_000;
 pub const REMOVED: &str = "removed from the channel list";
 
 /// Why a channel whose ids changed stopped, in its journal, before it
-/// starts again with them.
+/// connects again with them.
 pub const CHANGED: &str = "its ids changed in the channel list";
 
+/// Why a capture returned.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Exit {
+  /// `shutdown` completed.
+  Shutdown,
+  /// Retired in favour of this instance.
+  HandedOff(String),
+  /// Its channel was removed from the list.
+  Removed,
+}
+
 pub struct Config {
-  /// Each captured, with its own connection.
-  pub channels: Vec<Channel>,
-  /// The list's file, to follow; with none, `channels` stay as they are.
+  /// The channel captured.
+  pub channel: Channel,
+  /// The list's file, to follow; with none, `channel` stays as it is.
   pub list: Option<PathBuf>,
   /// How often the list is read again.
   pub reread_every: Duration,
-  /// Every connection's options, but for its channels.
+  /// The connection's options, but for its channels.
   pub realtime: Options,
   /// Where gaps are filled from; with none, they aren't.
   pub web: Option<Arc<Web>>,
@@ -90,27 +99,24 @@ pub struct Config {
   /// When this instance started, unix ms. Later-started instances win.
   pub started: i64,
   pub handoff: Handoff,
-  /// How long a channel waits to start again after Kick stops its session.
+  /// How long to wait to start again after Kick stops the session.
   pub restart_after: Duration,
   /// Whether this is a bridge, for its log lines (see [`Say`]).
   pub bridge: bool,
 }
 
-/// Each channel's task: its slug, and how it ended: its last connection's
-/// number, if it ended well.
-type Tasks = JoinSet<(String, io::Result<u64>)>;
-
-/// A channel being captured.
+/// The channel's connection, as it's captured now.
 struct Captured {
   channel: Channel,
-  control: PathBuf,
   /// Since when (unix ms) it's been subscribed, if it is.
   subscribed: watch::Receiver<Option<i64>>,
   /// Set to the reason, to close and stop.
   stop: watch::Sender<Option<String>>,
+  /// Its last connection's number, once it's stopped.
+  task: JoinHandle<io::Result<u64>>,
 }
 
-/// What starting a channel's capture takes.
+/// What starting the channel's capture takes.
 struct Starter {
   realtime: Options,
   web: Option<Arc<Web>>,
@@ -121,16 +127,9 @@ struct Starter {
 }
 
 impl Starter {
-  /// Starts capturing `channel`, in `tasks`, its connections numbered
-  /// after `last`.
-  fn start(
-    &self,
-    channel: Channel,
-    last: u64,
-    tasks: &mut Tasks,
-  ) -> io::Result<Captured> {
+  /// Starts capturing `channel`, its connections numbered after `last`.
+  fn start(&self, channel: Channel, last: u64) -> io::Result<Captured> {
     let root = channel_root(&self.kick_root, &channel.slug);
-    let control = control::dir(&root);
     let (subscribed, subscribed_rx) = watch::channel(None);
     let (stop, stopped) = watch::channel(None);
     let listening = Listening {
@@ -147,100 +146,51 @@ impl Starter {
       say: self.say.clone(),
       slug: channel.slug.clone(),
     };
-    let slug = channel.slug.clone();
-    tasks.spawn(async move { (slug, listening.run().await) });
     Ok(Captured {
       channel,
-      control,
       subscribed: subscribed_rx,
       stop,
+      task: ::tokio::spawn(listening.run()),
     })
   }
 }
 
-/// The channels being captured, and those stopping.
-#[derive(Default)]
-struct Following {
-  captured: BTreeMap<String, Captured>,
-  /// Stopping, until their tasks end: their control directories.
-  leaving: HashMap<String, PathBuf>,
-  /// The last connection of each channel that stopped, so one started
-  /// again numbers its connections on: an instance's are numbered once.
-  last: HashMap<String, u64>,
+/// What reading the list again calls for.
+enum Change {
+  /// Connect again with these ids.
+  Changed(Channel),
+  Removed,
 }
 
-impl Following {
-  /// Stops capturing `slug`, with `reason`.
-  fn stop(&mut self, slug: &str, reason: &str) {
-    if let Some(captured) = self.captured.remove(slug) {
-      captured.stop.send_replace(Some(reason.into()));
-      self.leaving.insert(slug.into(), captured.control);
+/// What `list` says of `channel` now, if it changed. A list that can't be
+/// read changes nothing.
+fn reread(list: &Path, channel: &Channel, say: &Say) -> Option<Change> {
+  let listed = match channels::load(list) {
+    Ok(listed) => listed,
+    Err(e) => {
+      say.warn(format_args!("{e}; capturing as before"));
+      return None;
     }
-  }
-
-  /// Follows the list in `list`: starts what was added, and stops what was
-  /// removed or changed. A changed one starts again once it's stopped.
-  fn follow(
-    &mut self,
-    list: &Path,
-    starter: &Starter,
-    tasks: &mut Tasks,
-    say: &Say,
-  ) {
-    let wanted = match channels::load(list) {
-      Ok(wanted) => wanted,
-      Err(e) => {
-        say.warn(format_args!("{e}; capturing as before"));
-        return;
-      }
-    };
-    let gone: Vec<String> = self
-      .captured
-      .keys()
-      .filter(|slug| !wanted.iter().any(|channel| &channel.slug == *slug))
-      .cloned()
-      .collect();
-    for slug in gone {
-      say.info(format_args!("{slug}: {REMOVED}; stopping"));
-      self.stop(&slug, REMOVED);
-    }
-    for channel in wanted {
-      let slug = channel.slug.clone();
-      match self.captured.get(&slug) {
-        Some(captured) if captured.channel != channel => {
-          say.info(format_args!("{slug}: {CHANGED}; starting again"));
-          self.stop(&slug, CHANGED);
-        }
-        Some(_) => {}
-        // Once it's stopped.
-        None if self.leaving.contains_key(&slug) => {}
-        None => {
-          let last = self.last.get(&slug).copied().unwrap_or(0);
-          match starter.start(channel, last, tasks) {
-            Ok(captured) => {
-              say.info(format_args!("{slug}: added to the list; capturing"));
-              self.captured.insert(slug, captured);
-            }
-            Err(e) => say.warn(format_args!("{slug}: can't capture it: {e}")),
-          }
-        }
-      }
-    }
+  };
+  match listed.into_iter().find(|c| c.slug == channel.slug) {
+    None => Some(Change::Removed),
+    Some(now) if now != *channel => Some(Change::Changed(now)),
+    Some(_) => None,
   }
 }
 
-/// Streams every channel's chat into its journal until `shutdown`
-/// completes or a successor takes over, then closes each open connection's
-/// record, syncs, and removes this instance's status files.
+/// Streams the channel's chat into its journal until `shutdown` completes,
+/// a successor takes over or the channel leaves the list, then closes the
+/// open connection's record, syncs, and removes this instance's status.
 ///
-/// A journal write error ends the run, every channel's, since carrying on
-/// would silently drop messages.
+/// A journal write error ends the run, since carrying on would silently
+/// drop messages.
 pub async fn run(
   config: Config,
   shutdown: impl Future<Output = ()>,
 ) -> io::Result<Exit> {
   let Config {
-    channels,
+    channel,
     list,
     reread_every,
     realtime,
@@ -256,6 +206,8 @@ pub async fn run(
     instance: instance.clone(),
     bridge,
   };
+  let slug = channel.slug.clone();
+  let controls = [control::dir(&channel_root(&kick_root, &slug))];
   let starter = Starter {
     realtime,
     web,
@@ -264,37 +216,21 @@ pub async fn run(
     restart_after,
     say: say.clone(),
   };
-  let mut tasks = Tasks::new();
-  let mut following = Following::default();
-  for channel in channels {
-    let slug = channel.slug.clone();
-    let captured = starter.start(channel, 0, &mut tasks)?;
-    following.captured.insert(slug, captured);
-  }
+  let mut captured = starter.start(channel, 0)?;
+  // The change it's stopping for, once one is asked.
+  let mut stopping: Option<Change> = None;
   let mut heartbeat = interval(handoff.interval);
-  let mut reread = interval_at(Instant::now() + reread_every, reread_every);
+  let mut reread_at = interval_at(Instant::now() + reread_every, reread_every);
   let mut older = control::Older::default();
   ::tokio::pin!(shutdown);
   let ended = loop {
     ::tokio::select! {
       _ = heartbeat.tick() => {
-        // Healthy once the last channel subscribed, while all still are.
-        let healthy_since = following
-          .captured
-          .values()
-          .map(|captured| *captured.subscribed.borrow())
-          .collect::<Option<Vec<i64>>>()
-          .and_then(|since| since.into_iter().max());
-        let controls: Vec<PathBuf> = following
-          .captured
-          .values()
-          .map(|captured| captured.control.clone())
-          .collect();
         let me = Status {
           instance: instance.clone(),
           started,
           heartbeat: now_ms(),
-          healthy_since,
+          healthy_since: *captured.subscribed.borrow(),
           build: Some(crate::BUILD.into()),
         };
         // Advisory, as dgg's: a failed round is retried next tick.
@@ -310,30 +246,34 @@ pub async fn run(
           Err(e) => say.warn(format_args!("control: {e}")),
         }
       }
-      _ = reread.tick(), if list.is_some() => {
+      _ = reread_at.tick(), if list.is_some() && stopping.is_none() => {
         let list = list.as_deref().unwrap();
-        following.follow(list, &starter, &mut tasks, &say);
+        let change = reread(list, &captured.channel, &say);
+        let why = match &change {
+          Some(Change::Removed) => REMOVED,
+          Some(Change::Changed(_)) => CHANGED,
+          None => continue,
+        };
+        say.info(format_args!("{slug}: {why}; stopping"));
+        captured.stop.send_replace(Some(why.into()));
+        stopping = change;
       }
-      Some(ended) = tasks.join_next() => {
-        let (slug, ended) = match ended {
-          Ok(ended) => ended,
+      ended = &mut captured.task => {
+        let last = match ended {
+          Ok(Ok(last)) => last,
+          Ok(Err(e)) => break Err(e),
           Err(e) => break Err(io::Error::other(e)),
         };
-        let last = match ended {
-          Ok(last) => last,
-          Err(e) => break Err(e),
-        };
-        following.last.insert(slug.clone(), last);
-        let Some(control) = following.leaving.remove(&slug) else {
-          break Err(io::Error::other(format!("{slug}: it stopped")));
-        };
-        if let Err(e) = control::remove(&control, &instance) {
-          say.warn(format_args!("control: {e}"));
-        }
-        say.info(format_args!("{slug}: stopped"));
-        // A changed one starts again now.
-        if let Some(list) = &list {
-          following.follow(list, &starter, &mut tasks, &say);
+        match stopping.take() {
+          Some(Change::Removed) => break Ok(Exit::Removed),
+          Some(Change::Changed(channel)) => {
+            say.info(format_args!("{slug}: connecting again with its new ids"));
+            captured = match starter.start(channel, last) {
+              Ok(captured) => captured,
+              Err(e) => break Err(e),
+            };
+          }
+          None => break Err(io::Error::other("the channel stopped")),
         }
       }
       () = &mut shutdown => break Ok(Exit::Shutdown),
@@ -342,27 +282,21 @@ pub async fn run(
   let reason = match &ended {
     Ok(Exit::Shutdown) => SHUTDOWN.to_owned(),
     Ok(Exit::HandedOff(successor)) => format!("{HANDOFF}{successor}"),
+    Ok(Exit::Removed) => REMOVED.to_owned(),
     Err(e) => format!("failed: {e}"),
   };
-  for captured in following.captured.values() {
-    captured.stop.send_replace(Some(reason.clone()));
-  }
   let mut result = ended;
-  while let Some(ended) = tasks.join_next().await {
-    let error = match ended {
-      Ok((_, Ok(_))) => continue,
-      Ok((_, Err(e))) => e,
-      Err(e) => io::Error::other(e),
+  if !captured.task.is_finished() {
+    captured.stop.send_replace(Some(reason));
+    let stopped = match (&mut captured.task).await {
+      Ok(stopped) => stopped.map(|_| ()),
+      Err(e) => Err(io::Error::other(e)),
     };
-    if result.is_ok() {
-      result = Err(error);
+    if let (Ok(_), Err(e)) = (&result, stopped) {
+      result = Err(e);
     }
   }
-  let controls = following
-    .captured
-    .values()
-    .map(|captured| &captured.control);
-  for dir in controls.chain(following.leaving.values()) {
+  for dir in &controls {
     if let Err(e) = control::remove(dir, &instance) {
       say.warn(format_args!("control: {e}"));
     }
