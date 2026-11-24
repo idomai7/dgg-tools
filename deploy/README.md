@@ -130,18 +130,19 @@ It finds the installed logger and shows:
 
 `--watch` keeps it open, redrawing every second (`--interval` to change)
 with how fast today's journal is growing and a page filling the rest of the
-window. The pages' keys are grouped:
+window. The keys are grouped:
 
-- what's live: `1` the supervisor's log, `2` the latest records of the
-  newest capture (`2` again for the next capture), `3` migrate's log;
-- periodic maintenance: `4` capture's log, `5` compact's, `6` index's, `7`
-  the gaps in capture as `gaps` reports them (looked at again every 30
-  seconds; it reads the index as `index` has brought it, without updating
-  it), `8` sync's log;
-- `9` kick-capture's log.
+- `l` every log at once, in time order, each line naming its log (the page
+  it starts on); `r` the latest records of the newest capture (`r` again
+  for the next capture); Space redraws, `e` opens the data folder, `q`
+  quits;
+- each program's log: `1` the supervisor's, `2` migrate's, `3` capture's,
+  `4` compact's, `5` index's, `6` the gaps in capture as `gaps` reports
+  them (looked at again every 30 seconds; it reads the index as `index`
+  has brought it, without updating it), `7` sync's;
+- `8` kick-capture's log.
 
-`r` redraws, `e` opens the data folder, `q` quits. In a narrow window the
-keys take two lines.
+In a narrow window the keys take two lines.
 
 ## Running it in a shell instead
 
