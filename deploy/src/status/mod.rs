@@ -14,12 +14,15 @@ use {
     time::{now_ms, utc_day, utc_timestamp},
   },
   ::common::{fs::MissingOk, log::Level},
-  ::logger::{control, dgg::index, kick::channels},
+  ::logger::{
+    control,
+    dgg::{Dgg, index},
+    kick::channels,
+    service::{Root, Service},
+  },
   ::logger_journal::{
     Reader, Record, Variant, archive,
-    layout::{
-      backfill_files, backfill_root, channel_root, kick_root, live_files,
-    },
+    layout::{channel_root, kick_root, live_files},
     record::v0,
   },
   ::std::{
@@ -234,14 +237,14 @@ impl Watcher {
   pub fn gather(&mut self, paths: &Paths) -> io::Result<Report> {
     let now = now_ms();
     let journal_root = paths.data.join("journal");
+    let [dgg, backfill] = dgg_roots(&journal_root)?;
     Ok(Report {
       now,
       paths: paths.clone(),
       programs: self.programs(&paths.bin()),
-      captures: self
-        .count_frames(&journal_root, captures(&journal_root, now)?)?,
-      journal: self.journal(&journal_root, now)?,
-      index: size_and_write(&paths.data.join("index.sqlite")),
+      captures: self.count_frames(&dgg, captures(&journal_root, now)?)?,
+      journal: self.journal(&dgg, &backfill, now)?,
+      index: size_and_write(&paths.data.join(Dgg::INDEX)),
       kick_index: size_and_write(&paths.data.join(::logger::kick::index::FILE)),
       free: free_space(&paths.data),
       sync: sync(paths),
@@ -289,10 +292,10 @@ impl Watcher {
   /// the last count left off.
   fn count_frames(
     &mut self,
-    root: &Path,
+    root: &Root,
     mut captures: Vec<Capture>,
   ) -> io::Result<Vec<Capture>> {
-    let files = live_files(root)?;
+    let files = root.live_files()?;
     // Compacted files are gone; so is their count.
     self.counted.retain(|file, _| files.contains(file));
     for file in files {
@@ -325,14 +328,19 @@ impl Watcher {
     Ok(captures)
   }
 
-  fn journal(&mut self, root: &Path, now: i64) -> io::Result<Journal> {
+  fn journal(
+    &mut self,
+    root: &Root,
+    backfill: &Root,
+    now: i64,
+  ) -> io::Result<Journal> {
     let today = utc_day(now);
     let mut journal = Journal {
       today: today.clone(),
       ..Journal::default()
     };
     let mut waiting = BTreeSet::new();
-    for file in live_files(root)? {
+    for file in root.live_files()? {
       let Ok(metadata) = fs::metadata(&file) else {
         continue;
       };
@@ -346,13 +354,13 @@ impl Watcher {
       }
     }
     journal.waiting = waiting.into_iter().collect();
-    for file in backfill_files(root)? {
+    for file in backfill.live_files()? {
       if let Ok(metadata) = fs::metadata(&file) {
         journal.backfill_waiting.add(metadata.len());
       }
     }
-    journal.archived = archived(&archive::all(root)?);
-    journal.backfill_archived = archived(&archive::all(&backfill_root(root))?);
+    journal.archived = archived(&archive::all(&root.dir)?);
+    journal.backfill_archived = archived(&archive::all(&backfill.dir)?);
 
     let bytes = journal.today_files.bytes;
     if let Some((day, at, before)) = &self.previous
@@ -400,12 +408,33 @@ fn last_round(log: &[String], name: &str) -> Option<String> {
   })
 }
 
-fn captures(journal_root: &Path, now: i64) -> io::Result<Vec<Capture>> {
-  let mut captures: Vec<Capture> =
-    control::read_all(&control::dir(journal_root))?
-      .into_iter()
-      .map(|status| capture(status, now))
-      .collect();
+/// dgg's journal roots, in the journal directory `journal`: its own, and
+/// the backfill journal's.
+fn dgg_roots(journal: &Path) -> io::Result<[Root; 2]> {
+  Dgg::roots(&Dgg::dir(journal))?
+    .try_into()
+    .map_err(|_| io::Error::other("dgg has two journal roots"))
+}
+
+/// dgg's captures, from their statuses in dgg's control directory, and in
+/// the one from before dgg's journals had a directory of their own (a
+/// capture from this build writes in both, a capture from before only
+/// there).
+fn captures(journal: &Path, now: i64) -> io::Result<Vec<Capture>> {
+  let mut statuses: Vec<control::Status> = Vec::new();
+  for dir in [control::dir(&Dgg::dir(journal)), control::dir(journal)] {
+    for status in control::read_all(&dir)? {
+      match statuses.iter_mut().find(|s| s.instance == status.instance) {
+        Some(known) if known.heartbeat >= status.heartbeat => {}
+        Some(known) => *known = status,
+        None => statuses.push(status),
+      }
+    }
+  }
+  let mut captures: Vec<Capture> = statuses
+    .into_iter()
+    .map(|status| capture(status, now))
+    .collect();
   captures.sort_by_key(|capture| capture.started);
   Ok(captures)
 }
@@ -567,15 +596,17 @@ pub fn logged_at(line: &str) -> Option<&str> {
   shape.then_some(time)
 }
 
-/// The last `lines` records `instance` wrote to its newest live file, one
-/// line each: receive time (`HH:MM:SS.mmmZ`, UTC), connection, and the frame as received
+/// The last `lines` records dgg's capture `instance` wrote to its newest
+/// live file, in the journal directory `journal`, one line each: receive time (`HH:MM:SS.mmmZ`, UTC), connection, and the frame as received
 /// (or what happened to the connection). Reads at most the last 64 KB.
 pub fn capture_tail(
-  journal_root: &Path,
+  journal: &Path,
   instance: &str,
   lines: usize,
 ) -> io::Result<Vec<String>> {
-  let Some(file) = live_files(journal_root)?
+  let [root, _] = dgg_roots(journal)?;
+  let Some(file) = root
+    .live_files()?
     .into_iter()
     .rfind(|file| file.file_stem().is_some_and(|stem| stem == instance))
   else {

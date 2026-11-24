@@ -254,20 +254,19 @@ pub fn follow<S: Service>(
   Ok(())
 }
 
-/// How many records in `files`, live files under `journal_root`, aren't
-/// indexed in `db` yet, counting up to `at_most`.
+/// How many records in `files`, live files each with its path as the index
+/// names it, aren't indexed in `db` yet, counting up to `at_most`.
 pub(crate) fn waiting_in(
   db: &Connection,
-  journal_root: &Path,
-  files: Vec<PathBuf>,
+  files: Vec<(String, PathBuf)>,
   at_most: u64,
 ) -> Result<u64, Error> {
   let mut count = 0;
-  for file in files {
+  for (path, file) in files {
     if count >= at_most {
       break;
     }
-    let (offset, _) = checkpoint(db, &relative(journal_root, &file))?;
+    let (offset, _) = checkpoint(db, &path)?;
     // Only a file that's grown since is opened.
     if fs::metadata(&file)
       .missing_ok()?

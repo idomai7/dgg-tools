@@ -8,6 +8,7 @@ use {
     kick::Kick,
     manifest::{self, File, archive_path, live_path, valid_path},
     serve::{self, Tokens, router},
+    service::{Root, Service},
     sync::{MAX_FILE, TAKEN, sync, unpack},
   },
   ::logger_journal::{
@@ -127,7 +128,7 @@ fn manifest_format() {
 #[::tokio::test]
 async fn file_endpoint() {
   let root = TempDir::new("logger-sync");
-  let mut writer = Writer::new(root.to_path_buf(), "a");
+  let mut writer = Writer::new(dgg(&root), "a");
   writer.write(0, 1, Body::Frame("MSG 1".into())).unwrap();
   drop(writer);
   let base = serve(&root).await;
@@ -195,7 +196,7 @@ async fn pulls_over_tls_from_its_ca_alone() {
   let (remote, local) =
     (TempDir::new("logger-sync"), TempDir::new("logger-sync"));
   let (url, ca_cert) = serve_tls(&remote).await;
-  let mut writer = Writer::new(remote.to_path_buf(), "a");
+  let mut writer = Writer::new(dgg(&remote), "a");
   writer.write(0, 1, Body::Frame("MSG 1".into())).unwrap();
   drop(writer);
   let peer = Peer {
@@ -231,7 +232,7 @@ async fn pulls_only_what_is_missing() {
     token: "secret".into(),
     ca: None,
   };
-  let mut writer = Writer::new(remote.to_path_buf(), "a");
+  let mut writer = Writer::new(dgg(&remote), "a");
   writer.write(0, 1, Body::Frame("MSG 1".into())).unwrap();
   writer
     .write(86_400_000, 1, Body::Frame("MSG 2".into()))
@@ -241,7 +242,7 @@ async fn pulls_only_what_is_missing() {
   let first = sync(&peer, local.path()).await.unwrap();
   assert_eq!((first.files, first.updated), (2, 2));
   let same = |path: &str| {
-    let read = |root: &TempDir| fs::read(root.path().join(path)).unwrap();
+    let read = |root: &TempDir| fs::read(dgg(root).join(path)).unwrap();
     assert_eq!(read(&local), read(&remote), "{path}");
   };
   same("live/1970-01-01/a.journal");
@@ -253,7 +254,7 @@ async fn pulls_only_what_is_missing() {
   let append = |bytes: &[u8]| {
     let mut file = OpenOptions::new()
       .append(true)
-      .open(remote.path().join(path))
+      .open(dgg(&remote).join(path))
       .unwrap();
     file.write_all(bytes).unwrap();
   };
@@ -268,11 +269,11 @@ async fn pulls_only_what_is_missing() {
   assert_eq!((idle.updated, idle.bytes), (0, 0));
 
   // A file shorter remotely than here was rewritten: reported, untouched.
-  let before = fs::read(local.path().join(path)).unwrap();
-  fs::write(remote.path().join(path), "journal 0.1\n").unwrap();
+  let before = fs::read(dgg(&local).join(path)).unwrap();
+  fs::write(dgg(&remote).join(path), "journal 0.1\n").unwrap();
   let rewritten = sync(&peer, local.path()).await.unwrap();
   assert_eq!(rewritten.mismatched, [path]);
-  assert_eq!(fs::read(local.path().join(path)).unwrap(), before);
+  assert_eq!(fs::read(dgg(&local).join(path)).unwrap(), before);
 }
 
 #[::tokio::test]
@@ -284,8 +285,7 @@ async fn pulls_backfill_files() {
     token: "secret".into(),
     ca: None,
   };
-  let mut writer =
-    Writer::backfill(remote.to_path_buf(), "backfill-a").unwrap();
+  let mut writer = Writer::backfill(dgg(&remote), "backfill-a").unwrap();
   let range = Body::FetchRange {
     source: "x".into(),
     from: 0,
@@ -297,14 +297,55 @@ async fn pulls_backfill_files() {
   assert_eq!((stats.files, stats.updated), (1, 1));
   let path = "backfill/live/1970-01-01/backfill-a.journal";
   assert_eq!(
-    fs::read(local.path().join(path)).unwrap(),
-    fs::read(remote.path().join(path)).unwrap()
+    fs::read(dgg(&local).join(path)).unwrap(),
+    fs::read(dgg(&remote).join(path)).unwrap()
   );
+}
+
+/// A capture from before dgg's journals moved into dgg/ writes where they
+/// were: served from there, and appended to there if that's where the file
+/// is here too.
+#[::tokio::test]
+async fn pulls_live_files_where_they_were() {
+  let (remote, local) =
+    (TempDir::new("logger-sync"), TempDir::new("logger-sync"));
+  let peer = Peer {
+    url: serve(&remote).await,
+    token: "secret".into(),
+    ca: None,
+  };
+  let mut writer = Writer::new(remote.to_path_buf(), "a");
+  writer.write(0, 1, Body::Frame("MSG 1".into())).unwrap();
+  let stats = sync(&peer, local.path()).await.unwrap();
+  assert_eq!((stats.files, stats.updated), (1, 1));
+  let path = "live/1970-01-01/a.journal";
+  let read = |path: ::std::path::PathBuf| fs::read(path).unwrap();
+  assert_eq!(read(dgg(&local).join(path)), read(remote.path().join(path)));
+
+  // Here too, where it was.
+  fs::create_dir_all(local.path().join("live/1970-01-01")).unwrap();
+  fs::rename(dgg(&local).join(path), local.path().join(path)).unwrap();
+  writer.write(1, 1, Body::Frame("MSG 2".into())).unwrap();
+  drop(writer);
+  let stats = sync(&peer, local.path()).await.unwrap();
+  assert_eq!(stats.updated, 1);
+  assert_eq!(
+    read(local.path().join(path)),
+    read(remote.path().join(path))
+  );
+  assert!(!dgg(&local).join(path).exists());
+}
+
+/// dgg's journal root in `root`'s journal directory.
+fn dgg(root: &TempDir) -> ::std::path::PathBuf {
+  Dgg::dir(root.path())
 }
 
 /// Compacts 1970-01-01 under journal `root`.
 fn compact(root: &::std::path::Path) {
-  compact_day(root, "1970-01-01", 3).unwrap().unwrap();
+  compact_day(&Root::at(root), "1970-01-01", 3)
+    .unwrap()
+    .unwrap();
 }
 
 #[::tokio::test]
@@ -316,50 +357,50 @@ async fn takes_archives_without_overwriting() {
     token: "secret".into(),
     ca: None,
   };
-  let mut writer = Writer::new(remote.to_path_buf(), "a");
+  let mut writer = Writer::new(dgg(&remote), "a");
   writer.write(0, 1, Body::Frame("MSG 1".into())).unwrap();
   drop(writer);
-  compact(remote.path());
+  compact(&dgg(&remote));
   let path = "archive/1970/01/1970-01-01.journal.zst";
 
   // Nothing here for the day: installed as it is, and not taken again.
   let stats = sync(&peer, local.path()).await.unwrap();
   assert_eq!((stats.installed, stats.merging), (1, 0));
   assert_eq!(
-    fs::read(local.path().join(path)).unwrap(),
-    fs::read(remote.path().join(path)).unwrap()
+    fs::read(dgg(&local).join(path)).unwrap(),
+    fs::read(dgg(&remote).join(path)).unwrap()
   );
   assert_eq!(
-    ::logger_journal::archive::all(local.path()).unwrap(),
-    ::logger_journal::archive::all(remote.path()).unwrap()
+    ::logger_journal::archive::all(&dgg(&local)).unwrap(),
+    ::logger_journal::archive::all(&dgg(&remote)).unwrap()
   );
   let stats = sync(&peer, local.path()).await.unwrap();
   assert_eq!((stats.installed, stats.merging, stats.bytes), (0, 0, 0));
 
   // The remote merges more into its archive: this one is kept, and the new
   // one written out as a live file for compaction to merge, once.
-  let mut writer = Writer::new(remote.to_path_buf(), "b");
+  let mut writer = Writer::new(dgg(&remote), "b");
   writer.write(5, 1, Body::Frame("MSG 2".into())).unwrap();
   drop(writer);
-  compact(remote.path());
-  let before = fs::read(local.path().join(path)).unwrap();
+  compact(&dgg(&remote));
+  let before = fs::read(dgg(&local).join(path)).unwrap();
   let stats = sync(&peer, local.path()).await.unwrap();
   assert_eq!((stats.installed, stats.merging), (0, 1));
-  assert_eq!(fs::read(local.path().join(path)).unwrap(), before);
-  let day = local.path().join("live/1970-01-01");
+  assert_eq!(fs::read(dgg(&local).join(path)).unwrap(), before);
+  let day = dgg(&local).join("live/1970-01-01");
   assert_eq!(fs::read_dir(&day).unwrap().count(), 1);
-  compact(local.path());
+  compact(&dgg(&local));
   assert_eq!(
-    ::logger_journal::archive::all(local.path()).unwrap()[0].records,
+    ::logger_journal::archive::all(&dgg(&local)).unwrap()[0].records,
     2
   );
-  let taken = fs::read_to_string(local.path().join(TAKEN)).unwrap();
+  let taken = fs::read_to_string(dgg(&local).join(TAKEN)).unwrap();
   assert!(
     taken.starts_with("synced-archives dgg.0.2\u{1e}\n"),
     "{taken}"
   );
   assert_eq!(
-    ::logger::taken::read(local.path(), Variant::Dgg)
+    ::logger::taken::read(&dgg(&local), Variant::Dgg)
       .unwrap()
       .len(),
     2
@@ -377,8 +418,7 @@ async fn takes_backfill_archives() {
     token: "secret".into(),
     ca: None,
   };
-  let mut writer =
-    Writer::backfill(remote.to_path_buf(), "backfill-a").unwrap();
+  let mut writer = Writer::backfill(dgg(&remote), "backfill-a").unwrap();
   let range = Body::FetchRange {
     source: "x".into(),
     from: 0,
@@ -386,19 +426,19 @@ async fn takes_backfill_archives() {
   };
   writer.write_on(0, 10, 1, range).unwrap();
   drop(writer);
-  compact(&remote.path().join("backfill"));
+  compact(&dgg(&remote).join("backfill"));
   let stats = sync(&peer, local.path()).await.unwrap();
   assert_eq!((stats.installed, stats.merging), (1, 0));
   let path = "backfill/archive/1970/01/1970-01-01.journal.zst";
   assert_eq!(
-    fs::read(local.path().join(path)).unwrap(),
-    fs::read(remote.path().join(path)).unwrap()
+    fs::read(dgg(&local).join(path)).unwrap(),
+    fs::read(dgg(&remote).join(path)).unwrap()
   );
 }
 
 /// The records of `root`'s archive of 1970-01-01, sorted.
 fn archived_records(root: &::std::path::Path) -> Vec<String> {
-  let path = root.join("archive/1970/01/1970-01-01.journal.zst");
+  let path = Dgg::dir(root).join("archive/1970/01/1970-01-01.journal.zst");
   let bytes = ::zstd::decode_all(fs::File::open(path).unwrap()).unwrap();
   let text = String::from_utf8(bytes).unwrap();
   // The header's a record like the rest.
@@ -422,7 +462,7 @@ async fn a_mesh_settles() {
   ];
   let mut urls = Vec::new();
   for (n, root) in roots.iter().enumerate() {
-    let mut writer = Writer::new(root.to_path_buf(), format!("node{n}"));
+    let mut writer = Writer::new(dgg(root), format!("node{n}"));
     for at in [0, 5, 10] {
       let frame = format!("MSG {n}-{at}");
       writer.write(at, 1, Body::Frame(frame)).unwrap();
@@ -430,7 +470,7 @@ async fn a_mesh_settles() {
     drop(writer);
     // Compacted before hearing from the others: each starts with an
     // archive the others' differ from.
-    compact_day(root.path(), "1970-01-01", 3).unwrap();
+    compact_day(&Root::at(dgg(root)), "1970-01-01", 3).unwrap();
     urls.push(serve(root).await);
   }
   let peer = |n: usize| Peer {
@@ -452,7 +492,7 @@ async fn a_mesh_settles() {
       }
     }
     for root in &roots {
-      compact_day(root.path(), "1970-01-01", 3).unwrap();
+      compact_day(&Root::at(dgg(root)), "1970-01-01", 3).unwrap();
     }
     if moved == 0 {
       break;
@@ -511,7 +551,7 @@ async fn takes_no_more_than_the_manifest_says() {
   );
   let stats = sync_from(routes).await.unwrap();
   assert_eq!((stats.updated, stats.bytes), (1, 5));
-  let path = local.path().join("live/2026-11-08/a.journal");
+  let path = dgg(&local).join("live/2026-11-08/a.journal");
   assert_eq!(fs::read(path).unwrap(), b"xxxxx");
 
   // A file listed as too big to take.
@@ -530,10 +570,10 @@ async fn takes_no_more_than_the_manifest_says() {
   let error = sync_from(routes).await.unwrap_err();
   assert!(error.contains("doesn't match"), "{error}");
   assert_eq!(
-    fs::read_dir(local.path().join("control")).unwrap().count(),
+    fs::read_dir(dgg(&local).join("control")).unwrap().count(),
     0
   );
-  assert!(!local.path().join("archive").exists());
+  assert!(!dgg(&local).join("archive").exists());
 
   // A redirect isn't followed: the token would go with it.
   let routes = ::axum::Router::new().route(
@@ -662,10 +702,10 @@ async fn pulls_kick_journals() {
   kick_records(&local, "c", "l", vec![(86_400_005, open())]);
   let local_channel = channel_root(&kick_root(local.path()), "c");
   let remote_channel = channel_root(&kick_root(remote.path()), "c");
-  compact_day(&local_channel, "1970-01-02", 3)
+  compact_day(&Root::at(&local_channel), "1970-01-02", 3)
     .unwrap()
     .unwrap();
-  compact_day(&remote_channel, "1970-01-02", 3)
+  compact_day(&Root::at(&remote_channel), "1970-01-02", 3)
     .unwrap()
     .unwrap();
   let stats = sync(&peer, local.path()).await.unwrap();
@@ -675,7 +715,7 @@ async fn pulls_kick_journals() {
     taken.starts_with("synced-archives kick.0.0\u{1e}\n"),
     "{taken}"
   );
-  compact_day(&local_channel, "1970-01-02", 3)
+  compact_day(&Root::at(&local_channel), "1970-01-02", 3)
     .unwrap()
     .unwrap();
   let archives = ::logger_journal::archive::all(&local_channel).unwrap();

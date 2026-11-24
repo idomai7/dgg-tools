@@ -21,6 +21,7 @@ use {
     log::Level,
     time::{now_ms, utc_timestamp},
   },
+  ::logger::{dgg::Dgg, service::Service},
   ::ratatui::{
     DefaultTerminal, Frame,
     crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
@@ -257,7 +258,7 @@ fn event_loop(
   loop {
     let report = watcher.gather(paths)?;
     if let View::Gaps(gaps) = &mut view {
-      gaps.refresh(paths.data.join("index.sqlite"));
+      gaps.refresh(paths.data.join(Dgg::INDEX));
     }
     let pane = view.pane(paths);
     terminal.draw(|frame| draw(frame, &report, &pane))?;

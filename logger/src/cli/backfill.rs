@@ -6,12 +6,14 @@ use {
   crate::{
     capture::instance_id,
     dgg::{
+      Dgg,
       backfill::{
         Options, Source, linkers::Linkers, run, rustlesearch::Rustlesearch,
       },
       gaps::{coverage, unfetched},
       index::{index, open},
     },
+    service::Service,
   },
   ::clap::{Args, ValueEnum},
   ::common::{error, info, warn},
@@ -117,21 +119,21 @@ fn parse_time(text: &str) -> Result<i64, String> {
 }
 
 impl Backfill {
-  /// Reads `<data>/index.sqlite` and writes `<data>/journal`.
+  /// Reads `<data>/index-dgg.sqlite` and writes dgg's backfill journal.
   pub fn run(self, data: &Path) -> ExitCode {
     super::block_on(self.backfill(data))
   }
 
   async fn backfill(self, data: &Path) -> ExitCode {
     let history = self.from.is_some();
-    let journal_root = data.join("journal");
+    let journal = data.join("journal");
     let margin = (self.margin * 1000.0) as i64;
     if let Err(e) = ::std::fs::create_dir_all(data) {
       error!("backfill failed: {}: {e}", data.display());
       return ExitCode::FAILURE;
     }
-    let found = open(&data.join("index.sqlite")).and_then(|mut db| {
-      index(&mut db, &journal_root)?;
+    let found = open(&data.join(Dgg::INDEX)).and_then(|mut db| {
+      index(&mut db, &journal)?;
       let ranges = match self.from {
         Some(from) => {
           let to = self.to.unwrap_or_else(now_ms);
@@ -173,7 +175,7 @@ impl Backfill {
       (max_requests, delay, 3, None)
     };
     let options = Options {
-      journal_root,
+      journal_root: Dgg::dir(&journal),
       instance: format!("backfill-{}", instance_id(&host, now_ms())),
       max_requests: self.max_requests.unwrap_or(max_requests),
       reserve: self.reserve.unwrap_or(reserve),

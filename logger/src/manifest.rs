@@ -39,16 +39,13 @@
 //! - `0.0`: the first.
 
 use {
-  crate::service::Service,
+  crate::service::{Root, Service},
   ::logger_journal::{
     archive::{self, valid_day},
-    layout::{ARCHIVE_SUFFIX, EXTENSION, live_files},
+    layout::{ARCHIVE_SUFFIX, EXTENSION},
     record::{Format, Header, Variant, Version, split, v0::valid_instance},
   },
-  ::std::{
-    fs, io,
-    path::{Path, PathBuf},
-  },
+  ::std::{fs, io, path::Path},
 };
 
 /// The manifest's format.
@@ -124,14 +121,10 @@ pub fn valid_path<S: Service>(path: &str) -> bool {
 pub fn archive_root<'a, S: Service>(
   dir: &Path,
   path: &'a str,
-) -> Option<(PathBuf, &'a str)> {
+) -> Option<(Root, &'a str)> {
   let (prefix, rest) = S::split(path)?;
   let day = archive_path(rest)?;
-  let root = match prefix.strip_suffix('/') {
-    Some(directory) => dir.join(directory),
-    None => dir.to_owned(),
-  };
-  Some((root, day))
+  Some((Root::new::<S>(dir, prefix, ""), day))
 }
 
 fn valid_sha256(text: &str) -> bool {
@@ -140,11 +133,12 @@ fn valid_sha256(text: &str) -> bool {
 }
 
 /// Every file of `S`'s in its directory `dir`, with its size: each journal
-/// root's live files, then its archives.
+/// root's live files (with those in its legacy directory), then its
+/// archives.
 pub fn list<S: Service>(dir: &Path) -> io::Result<Vec<File>> {
   let mut files = Vec::new();
   for root in S::roots(dir)? {
-    for path in live_files(&root.dir)? {
+    for path in root.live_files()? {
       let relative = root.path(&path);
       if valid_path::<S>(&relative) {
         files.push(File {

@@ -27,6 +27,10 @@ pub struct Config {
   /// Another host to push this instance's status to, so instances there
   /// hand off to this one.
   pub peer: Option<Peer>,
+  /// The control directory dgg's captures used before dgg's journals had
+  /// a directory of their own: this instance's status is written there
+  /// too while it's there, so a capture from before hands off to it.
+  pub legacy_control: Option<PathBuf>,
   /// Whether this is a bridge, for its log lines (see [`Say`]).
   pub bridge: bool,
 }
@@ -70,6 +74,7 @@ pub async fn run(
     started,
     handoff,
     peer,
+    mut legacy_control,
     bridge,
   } = config;
   let say = Say {
@@ -134,6 +139,10 @@ pub async fn run(
         // Control files are advisory: a failed round (e.g. Windows refusing
         // a rename while another instance reads the file) is retried next
         // tick rather than stopping capture.
+        let mirrored = mirror(&mut legacy_control, &me);
+        if let Err(e) = mirrored {
+          say.warn(format_args!("control: {e}"));
+        }
         match check_handoff(&control, &me, &handoff, &mut older) {
           Ok((successor, gone)) => {
             for line in gone {
@@ -157,8 +166,11 @@ pub async fn run(
     writer.write(now_ms(), connection, Body::Close(reason))?;
   }
   writer.sync()?;
-  if let Err(e) = control::remove(&control, &instance) {
-    say.warn(format_args!("control: {e}"));
+  let dirs = [Some(&control), legacy_control.as_ref()];
+  for dir in dirs.into_iter().flatten() {
+    if let Err(e) = control::remove(dir, &instance) {
+      say.warn(format_args!("control: {e}"));
+    }
   }
   if let (Some(pusher), Some(peer)) = (pusher, peer) {
     pusher.abort();
@@ -171,8 +183,14 @@ fn peer_client(peer: &Peer) -> Result<::reqwest::Client, String> {
   peer.client(::reqwest::Client::builder().timeout(Duration::from_secs(5)))
 }
 
-fn peer_url(peer: &Peer, instance: &str) -> String {
-  format!("{}/dgg/control/{instance}", peer.url.trim_end_matches('/'))
+/// Where `instance`'s status goes on `peer`: under `/dgg/`, or where a
+/// peer from before dgg's routes had a prefix takes it.
+fn peer_url(peer: &Peer, instance: &str, legacy: bool) -> String {
+  let base = peer.url.trim_end_matches('/');
+  match legacy {
+    false => format!("{base}/dgg/control/{instance}"),
+    true => format!("{base}/control/{instance}"),
+  }
 }
 
 /// Pushes this instance's status file to `peer` every `interval`, until
@@ -192,7 +210,7 @@ async fn push_status(
     }
   };
   let instance = &say.instance;
-  let url = peer_url(&peer, instance);
+  let mut legacy = false;
   let mut tick = ::tokio::time::interval(interval);
   let mut failing: Option<String> = None;
   loop {
@@ -202,13 +220,19 @@ async fn push_status(
       continue;
     };
     let sent = client
-      .put(&url)
+      .put(peer_url(&peer, instance, legacy))
       .bearer_auth(&peer.token)
       .body(control::push_body(&status, now_ms()))
       .send()
       .await;
     let error = match sent {
       Ok(response) if response.status().is_success() => None,
+      Ok(response)
+        if response.status() == ::reqwest::StatusCode::NOT_FOUND && !legacy =>
+      {
+        legacy = true;
+        continue;
+      }
       Ok(response) => Some(format!("HTTP {}", response.status())),
       Err(e) => Some(e.to_string()),
     };
@@ -228,19 +252,34 @@ async fn push_status(
 
 /// Removes this instance's status from `peer`, best effort.
 async fn withdraw_status(peer: &Peer, say: &Say) {
-  let sent = match peer_client(peer) {
-    Ok(client) => client
-      .delete(peer_url(peer, &say.instance))
+  let client = match peer_client(peer) {
+    Ok(client) => client,
+    Err(e) => return say.warn(format_args!("peer {}: {e}", peer.url)),
+  };
+  for legacy in [false, true] {
+    let sent = client
+      .delete(peer_url(peer, &say.instance, legacy))
       .bearer_auth(&peer.token)
       .send()
-      .await
-      .map(drop)
-      .map_err(|e| e.to_string()),
-    Err(e) => Err(e),
-  };
-  if let Err(e) = sent {
-    say.warn(format_args!("peer {}: {e}", peer.url));
+      .await;
+    match sent {
+      Ok(response) if response.status() == ::reqwest::StatusCode::NOT_FOUND => {
+      }
+      Ok(_) => return,
+      Err(e) => return say.warn(format_args!("peer {}: {e}", peer.url)),
+    }
   }
+}
+
+/// Writes `me` in `legacy_control` too, while it's there; once it's gone,
+/// stops.
+fn mirror(legacy_control: &mut Option<PathBuf>, me: &Status) -> io::Result<()> {
+  if let Some(dir) = legacy_control
+    && !control::write_if_there(dir, me)?
+  {
+    *legacy_control = None;
+  }
+  Ok(())
 }
 
 /// Writes this instance's status, then returns the successor to hand off

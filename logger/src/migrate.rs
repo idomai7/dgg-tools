@@ -1,24 +1,24 @@
-//! Migrate: brings the journal and the index up to this build's formats, in
-//! place, as a supervisor starts.
+//! Migrate: brings the journal and the index up to this build's layout and
+//! formats, in place, as a supervisor starts.
 //!
-//! There's nothing to migrate: every host is on this build's formats
-//! (`journal dgg.0.3`, index schema 0.6), so it only checks. It logs what an
+//! Every host is on this build's formats (`journal dgg.0.3`, index schema
+//! 0.6), but dgg's journals move into a directory of their own,
+//! `journal/dgg/`, and its index to `index-dgg.sqlite`, while capture keeps
+//! running (see [`crate::dgg::migrate`]). It logs what an
 //! upgrade touches, so its log shows how one went:
 //!
 //! - first, the build, and the versions it writes;
+//! - what moved, and what was left where it was;
 //! - for each service's journal roots (dgg's, the backfill journal's and
 //!   each Kick channel's), a line for each kind of file in it, with its
-//!   version: live
-//!   files, archive manifests, `synced-archives` and capture statuses. A
-//!   file at another version, which this build can't read, gets a line of
-//!   its own, and is left as it was;
-//! - the index's schema, which must be [`SCHEMA_VERSION`] (or there's none
-//!   yet), and Kick's index's, which must be its own
-//!   [`SCHEMA_VERSION`](kick_index::SCHEMA_VERSION).
+//!   version: live files, archive manifests, `synced-archives` and capture
+//!   statuses. A file at another version, which this build can't read, gets
+//!   a line of its own, and is left as it was;
+//! - each index's schema, which must be its service's (or there's none
+//!   yet): [`SCHEMA_VERSION`] for dgg's,
+//!   [`SCHEMA_VERSION`](kick_index::SCHEMA_VERSION) for Kick's.
 //!
 //! How the captures hand over is theirs to say, in their own logs.
-//!
-//! The next format change that needs a migration fills one in.
 //!
 //! It holds `index.lock`, `compact.lock` and `sync.lock` in the data
 //! directory while it runs, waiting for them as a supervisor does, so
@@ -28,16 +28,16 @@
 use {
   crate::{
     BUILD, control,
-    dgg::{Dgg, index::SCHEMA_VERSION},
+    dgg::{self, Dgg, index::SCHEMA_VERSION},
     index::schema_version,
     kick::{Kick, index as kick_index},
-    service::Service,
+    service::{Root, Service},
     taken,
   },
   ::common::{fs::MissingOk, log::Level},
   ::logger_journal::{
     Format, Header, Variant, Version, archive,
-    layout::{archive_dir, live_files},
+    layout::archive_dir,
     record::{JOURNAL, kick, v0},
   },
   ::rusqlite::{Connection, OpenFlags},
@@ -58,7 +58,11 @@ pub const LOCKS: [&str; 3] = ["index.lock", "compact.lock", "sync.lock"];
 pub struct Report {
   /// What was left as it was, with why.
   pub failed: Vec<String>,
-  /// The index's schema, if there's an index.
+  /// Files moved into their service's directory.
+  pub moved: u64,
+  /// Live files left where they were, still being written.
+  pub left: Vec<PathBuf>,
+  /// dgg's index's schema, if there's an index.
   pub index: Option<Version>,
   /// Kick's index's schema, if there's one.
   pub kick_index: Option<Version>,
@@ -66,7 +70,7 @@ pub struct Report {
   pub unreadable: Vec<PathBuf>,
 }
 
-/// Migrates `<data>/journal` and `<data>/index.sqlite` (see the [module
+/// Migrates `<data>/journal` and the indexes in `<data>` (see the [module
 /// docs](self)), saying what it does to `say`. Fails only if it can't go on
 /// at all; what it can't migrate is in the report.
 pub fn migrate(
@@ -91,13 +95,17 @@ pub fn migrate(
     hold(data, say)?
   };
   let mut report = Report::default();
+  let moved = dgg::migrate::move_in(data, dry_run, say)?;
+  report.moved = moved.files;
+  report.left = moved.left;
+  report.failed = moved.failed;
   let journal = data.join("journal");
   check_service::<Dgg>(&journal, &mut report, say)?;
   check_service::<Kick>(&journal, &mut report, say)?;
 
   report.index = check_index(
-    "index",
-    &data.join("index.sqlite"),
+    "dgg's index",
+    &data.join(Dgg::INDEX),
     SCHEMA_VERSION,
     &mut report.failed,
     say,
@@ -150,19 +158,19 @@ fn check_service<S: Service>(
   say: &mut dyn FnMut(Level, &str),
 ) -> io::Result<()> {
   for root in S::roots(&S::dir(journal))? {
-    check_root(&root.name, &root.dir, S::VARIANT, report, say)?;
+    check_root(&root, S::VARIANT, report, say)?;
   }
   Ok(())
 }
 
-/// Checks each kind of file under journal `root`, `name` in what it says.
+/// Checks each kind of file in journal `root`.
 fn check_root(
-  name: &str,
-  root: &Path,
+  journal_root: &Root,
   variant: Variant,
   report: &mut Report,
   say: &mut dyn FnMut(Level, &str),
 ) -> io::Result<()> {
+  let (name, root) = (&journal_root.name, journal_root.dir.as_path());
   let journal = match variant {
     Variant::Dgg => v0::VERSION,
     Variant::Kick => kick::v0::VERSION,
@@ -191,7 +199,7 @@ fn check_root(
   let kinds = [
     (
       ["live file", "live files"],
-      live_files(root)?,
+      journal_root.live_files()?,
       JOURNAL,
       journal,
     ),
@@ -245,19 +253,13 @@ fn check_root(
       ),
     );
     for (file, found) in unreadable {
-      let relative = file.strip_prefix(root).unwrap_or(file);
-      let relative: Vec<_> = relative
-        .components()
-        .map(|part| part.as_os_str().to_string_lossy())
-        .collect();
+      let path = journal_root.path(file);
+      let relative = &path[journal_root.prefix.len()..];
       let found =
         found.map_or("no header".to_owned(), |header| header.line_as(format));
       say(
         Level::Warn,
-        &format!(
-          "{name}: {} is {found}, which this build can't read",
-          relative.join("/")
-        ),
+        &format!("{name}: {relative} is {found}, which this build can't read"),
       );
       report.unreadable.push(file.clone());
     }

@@ -3,7 +3,12 @@
 use {
   crate::{
     capture::{Exit, Handoff, Peer, Say, instance_id},
-    dgg::capture::{Config, run},
+    control,
+    dgg::{
+      Dgg,
+      capture::{Config, run},
+    },
+    service::Service,
   },
   ::clap::Args,
   ::common::time::now_ms,
@@ -69,7 +74,8 @@ impl Capture {
     if self.no_origin {
       chat.origin = None;
     }
-    let journal_root = data.join("journal");
+    let journal = data.join("journal");
+    let journal_root = Dgg::dir(&journal);
     let say = Say {
       instance: instance.clone(),
       bridge: self.bridge,
@@ -106,6 +112,7 @@ impl Capture {
         ..Handoff::default()
       },
       peer,
+      legacy_control: Some(control::dir(&journal)),
       bridge: self.bridge,
     };
     match run(config, shutdown()).await {

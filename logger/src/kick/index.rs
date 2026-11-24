@@ -133,9 +133,11 @@ pub fn waiting(
   let dir = Kick::dir(journal);
   let mut files = Vec::new();
   for slug in channels::journaled(&dir)? {
-    files.extend(live_files(&channel_root(&dir, &slug))?);
+    for file in live_files(&channel_root(&dir, &slug))? {
+      files.push((relative(&dir, &file), file));
+    }
   }
-  waiting_in(db, &dir, files, at_most)
+  waiting_in(db, files, at_most)
 }
 
 /// Indexes everything in every Kick channel's journal, in the journal

@@ -10,6 +10,7 @@ use {
       Kick,
       index::{SCHEMA_VERSION, index, open, waiting},
     },
+    service::Root,
   },
   ::logger_journal::{
     Version,
@@ -297,7 +298,9 @@ fn reads_archives_once() {
   let mut db = open(&database(&dir)).unwrap();
   index(&mut db, &journal(&dir)).unwrap();
   let root = channel_root(&kick_root(&journal(&dir)), "c");
-  compact_day(&root, "1970-01-01", 3).unwrap().unwrap();
+  compact_day(&Root::at(&root), "1970-01-01", 3)
+    .unwrap()
+    .unwrap();
   // The archive is read through, adding nothing, and the live file's
   // checkpoint goes with it.
   let stats = index(&mut db, &journal(&dir)).unwrap();

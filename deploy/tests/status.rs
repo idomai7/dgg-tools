@@ -32,13 +32,15 @@ fn reports_captures_and_the_journal() {
   let dir = TempDir::new("deploy-status-report");
   let now = now_ms();
   let today = utc_day(now);
-  let control = "data/journal/control";
+  let control = "data/journal/dgg/control";
   dir.write(
     format!("{control}/a-1.status"),
     status("a-1", now - 3_600_000, now - 500, Some(now - 3_500_000)),
   );
+  // A capture from before dgg's journals moved into dgg/, writing where
+  // they were.
   dir.write(
-    format!("{control}/a-2.status"),
+    "data/journal/control/a-2.status",
     status("a-2", now - 120_000, now - 60_000, None),
   );
   dir.write(
@@ -47,7 +49,7 @@ fn reports_captures_and_the_journal() {
   );
   // Two frames, a connection opening, and a frame still being written.
   dir.write(
-    format!("data/journal/live/{today}/a-3.journal"),
+    format!("data/journal/dgg/live/{today}/a-3.journal"),
     "journal dgg.0.3\u{1e}\n1 a-3 1 open wss://x\u{1e}\n2 a-3 1 frame MSG {}\u{1e}\n\
      3 a-3 1 frame NAMES {}\u{1e}\n4 a-3 1 frame JO",
   );
@@ -55,17 +57,17 @@ fn reports_captures_and_the_journal() {
     format!("data/journal/live/{today}/a-1.journal"),
     "0123456789",
   );
-  dir.write("data/journal/live/2026-01-02/a-1.journal", "01234");
-  dir.write("data/journal/backfill/live/2026-01-01/b.journal", "012");
+  dir.write("data/journal/dgg/live/2026-01-02/a-1.journal", "01234");
+  dir.write("data/journal/dgg/backfill/live/2026-01-01/b.journal", "012");
   dir.write(
-    "data/journal/archive/2026/01/manifest",
+    "data/journal/dgg/archive/2026/01/manifest",
     format!(
       "journal-archive dgg.0.2\u{1e}\n2026-01-01 100 1000 10 {0}\u{1e}\n\
        2026-01-03 50 500 5 {0}\u{1e}\n",
       "0".repeat(64)
     ),
   );
-  dir.write("data/index.sqlite", "x");
+  dir.write("data/index-dgg.sqlite", "x");
 
   let paths = Paths::under(dir.to_path_buf());
   let mut watcher = Watcher::new().unwrap();
@@ -116,7 +118,7 @@ fn reports_captures_and_the_journal() {
   );
   // The frame being written was finished, and the connection closed.
   dir.write(
-    format!("data/journal/live/{today}/a-3.journal"),
+    format!("data/journal/dgg/live/{today}/a-3.journal"),
     "journal dgg.0.3\u{1e}\n1 a-3 1 open wss://x\u{1e}\n2 a-3 1 frame MSG {}\u{1e}\n\
      3 a-3 1 frame NAMES {}\u{1e}\n4 a-3 1 frame JOIN {}\u{1e}\n5 a-3 1 close bye\u{1e}\n",
   );
@@ -148,7 +150,7 @@ fn draws_the_watch_screen() {
   let dir = TempDir::new("deploy-status-watch");
   let now = now_ms();
   dir.write(
-    "data/journal/control/a-1.status",
+    "data/journal/dgg/control/a-1.status",
     status("a-1", now - 60_000, now, Some(now - 50_000)),
   );
   let report = Watcher::new()
@@ -280,9 +282,9 @@ fn tails_a_captures_frames() {
     at + 9,
     at + 10
   );
-  dir.write("journal/live/2026-11-09/a-1.journal", &text);
+  dir.write("journal/dgg/live/2026-11-09/a-1.journal", &text);
   dir.write(
-    "journal/live/2026-11-09/a-2.journal",
+    "journal/dgg/live/2026-11-09/a-2.journal",
     "journal dgg.0.3\u{1e}\n",
   );
   assert_eq!(
@@ -299,7 +301,7 @@ fn tails_a_captures_frames() {
   );
   // A newer day's file is the one shown.
   dir.write(
-    "journal/live/2026-11-10/a-1.journal",
+    "journal/dgg/live/2026-11-10/a-1.journal",
     format!(
       "journal dgg.0.3\u{1e}\n{} a-1 2 frame PING {{}}\u{1e}\n",
       at + 86_400_000
@@ -314,11 +316,11 @@ fn tails_a_captures_frames() {
 #[test]
 fn reports_gaps_without_writing_the_index() {
   let dir = TempDir::new("deploy-status-gaps");
-  let index = dir.path().join("index.sqlite");
+  let index = dir.path().join("index-dgg.sqlite");
   assert_eq!(gaps(&index), Err("no index yet".into()));
   // Connected 1 s to 2 s, then again from 5 s: one 3 s gap, not filled.
   dir.write(
-    "journal/live/1970-01-01/a.journal",
+    "journal/dgg/live/1970-01-01/a.journal",
     "journal dgg.0.3\u{1e}\n1000 a 1 open wss://x\u{1e}\n2000 a 1 close reset\u{1e}\n\
      5000 a 2 open wss://x\u{1e}\n6000 a 2 close shutdown\u{1e}\n",
   );

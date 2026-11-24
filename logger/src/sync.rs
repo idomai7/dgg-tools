@@ -34,7 +34,7 @@ use {
     dgg::Dgg,
     kick::Kick,
     manifest::{self, archive_root},
-    service::Service,
+    service::{Root, Service, locate},
   },
   ::common::{atomic_file, fs::MissingOk},
   ::logger_journal::{
@@ -194,7 +194,7 @@ async fn pull<S: Service>(
       if response.status() != ::reqwest::StatusCode::OK {
         return Err(fail(&format_args!("HTTP {}", response.status())));
       }
-      let download = root.join(format!("control/sync-{day}.download"));
+      let download = root.dir.join(format!("control/sync-{day}.download"));
       let taken = download_archive(response, &download, file.size, sha256)
         .await
         .and_then(|()| {
@@ -210,7 +210,7 @@ async fn pull<S: Service>(
       stats.bytes += file.size;
       continue;
     }
-    let local = dir.join(&file.path);
+    let local = locate::<S>(&dir, &file.path);
     let have = fs::metadata(&local)
       .missing_ok()
       .map_err(|e| format!("{}: {e}", file.path))?
@@ -302,35 +302,38 @@ fn invalid(why: &str) -> io::Error {
 /// Whether the archive of `day` with `sha256` is new to journal `root`, of
 /// `variant`'s: it isn't the archive here, and wasn't taken before.
 fn wanted(
-  root: &Path,
+  root: &Root,
   variant: Variant,
   day: &str,
   sha256: &str,
 ) -> io::Result<bool> {
-  let here = archive::read_month(root, day)?;
+  let here = archive::read_month(&root.dir, day)?;
   if here
     .iter()
     .any(|archive| archive.day == day && archive.sha256 == sha256)
   {
     return Ok(false);
   }
-  let taken = crate::taken::read(root, variant)?;
+  let taken = crate::taken::read(&root.dir, variant)?;
   Ok(!taken.iter().any(|(d, s)| d == day && s == sha256))
 }
 
-/// Whether journal `root` has live files for `day`.
-fn has_live(root: &Path, day: &str) -> io::Result<bool> {
-  let Some(entries) = fs::read_dir(live_day_dir(root, day)).missing_ok()?
-  else {
-    return Ok(false);
-  };
-  for entry in entries {
-    if entry?
-      .path()
-      .extension()
-      .is_some_and(|extension| extension == EXTENSION)
-    {
-      return Ok(true);
+/// Whether journal `root` has live files for `day`, in its directory or
+/// its legacy one.
+fn has_live(root: &Root, day: &str) -> io::Result<bool> {
+  for dir in root.dirs() {
+    let Some(entries) = fs::read_dir(live_day_dir(dir, day)).missing_ok()?
+    else {
+      continue;
+    };
+    for entry in entries {
+      if entry?
+        .path()
+        .extension()
+        .is_some_and(|extension| extension == EXTENSION)
+      {
+        return Ok(true);
+      }
     }
   }
   Ok(false)
@@ -403,18 +406,15 @@ pub fn unpack(
 /// manifest's `sha256` and `size`, into journal `root`, of `variant`'s (see
 /// the [module docs](self)); whether it was installed as it is.
 fn take(
-  root: &Path,
+  root: &Root,
   variant: Variant,
   day: &str,
   sha256: &str,
   size: u64,
   download: &Path,
 ) -> io::Result<bool> {
-  let archived = archive::read_month(root, day)?
-    .iter()
-    .any(|archive| archive.day == day)
-    || archive_file(root, day).exists();
-  let installed = !archived && !has_live(root, day)?;
+  let installed = !archived(&root.dir, day)? && !has_live(root, day)?;
+  let root = root.dir.as_path();
   if installed {
     let (bytes, records) = unpack(download, variant, None, MAX_FILE)?;
     let path = archive_file(root, day);
@@ -439,6 +439,16 @@ fn take(
   }
   crate::taken::add(root, variant, day, sha256)?;
   Ok(installed)
+}
+
+/// Whether journal `root` has an archive for `day`.
+fn archived(root: &Path, day: &str) -> io::Result<bool> {
+  Ok(
+    archive::read_month(root, day)?
+      .iter()
+      .any(|archive| archive.day == day)
+      || archive_file(root, day).exists(),
+  )
 }
 
 /// Writes `path` with `fill`, [replacing](atomic_file) it whole.

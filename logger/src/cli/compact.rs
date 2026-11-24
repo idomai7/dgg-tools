@@ -5,7 +5,7 @@ use {
     compact::{DEFAULT_LEVEL, closed_days, compact_day},
     dgg::Dgg,
     kick::Kick,
-    service::Service,
+    service::{Root, Service},
   },
   ::clap::Args,
   ::common::time::now_ms,
@@ -52,7 +52,7 @@ impl Compact {
       Ok(roots) => {
         let mut ok = true;
         for root in roots {
-          ok &= self.compact(&root.dir, &root.name);
+          ok &= self.compact(&root);
         }
         ok
       }
@@ -63,12 +63,12 @@ impl Compact {
     }
   }
 
-  /// Compacts the journal at `journal_root`, called `name`; whether every
-  /// day went well.
-  fn compact(&self, journal_root: &Path, name: &str) -> bool {
+  /// Compacts journal `root`; whether every day went well.
+  fn compact(&self, root: &Root) -> bool {
+    let name = &root.name;
     let grace = Duration::from_secs_f64(self.grace_hours * 3600.0);
     let now = self.now.unwrap_or_else(now_ms);
-    let days = match closed_days(journal_root, now, grace) {
+    let days = match closed_days(root, now, grace) {
       Ok(days) => days,
       Err(e) => {
         error!("compact {name} failed: {e}");
@@ -84,7 +84,7 @@ impl Compact {
     }
     let mut ok = true;
     for day in &days {
-      match compact_day(journal_root, day, self.level) {
+      match compact_day(root, day, self.level) {
         Ok(Some(done)) => {
           let archive = &done.archive;
           let ratio = archive.bytes as f64 / archive.compressed.max(1) as f64;

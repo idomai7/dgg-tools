@@ -6,6 +6,7 @@ use {
       index::{SCHEMA_VERSION, index, open, waiting},
     },
     index::{Error, Pace, follow, rebuild, user_version},
+    service::Service,
   },
   ::logger_journal::{Version, Writer, record::v0::Body},
   ::rusqlite::Connection,
@@ -24,8 +25,13 @@ fn journal(dir: &TempDir) -> PathBuf {
   dir.path().join("journal")
 }
 
+/// dgg's journal root, in the journal directory.
+fn dgg(dir: &TempDir) -> PathBuf {
+  Dgg::dir(&journal(dir))
+}
+
 fn database(dir: &TempDir) -> PathBuf {
-  dir.path().join("index.sqlite")
+  dir.path().join("index-dgg.sqlite")
 }
 
 fn message(timestamp: i64, nick: &str, data: &str) -> String {
@@ -78,7 +84,7 @@ fn write_journal(root: &TempDir) {
       .collect();
     frame(format!("HISTORY {}", ::serde_json::Value::Array(entries)))
   };
-  let mut a = Writer::new(journal(root), "a");
+  let mut a = Writer::new(dgg(root), "a");
   a.write(100, 1, Body::Open("wss://x".into())).unwrap();
   let entries = [
     format!("MSG {}", message(10, "old", "before a started")),
@@ -102,7 +108,7 @@ fn write_journal(root: &TempDir) {
   a.write(107, 1, Body::Close("handoff to b".into())).unwrap();
   drop(a);
 
-  let mut b = Writer::new(journal(root), "b");
+  let mut b = Writer::new(dgg(root), "b");
   b.write(90, 1, Body::Open("wss://x".into())).unwrap();
   // b saw "second" live earlier than a did, and replays "hello world".
   b.write(91, 1, frame(format!("MSG {}", message(30, "y", "second"))))
@@ -169,7 +175,7 @@ fn resumes_from_checkpoints() {
   assert_eq!((again.records, again.messages), (0, 0));
 
   // b keeps writing; only the new record is read.
-  let mut b = Writer::new(journal(&root), "b");
+  let mut b = Writer::new(dgg(&root), "b");
   b.write(93, 1, frame(format!("MSG {}", message(40, "z", "third"))))
     .unwrap();
   drop(b);
@@ -238,7 +244,7 @@ fn wait_for(db: &Connection, expected: i64) {
 
 /// Writes a live message from instance `b`.
 fn write_message(root: &TempDir, timestamp: i64, data: &str) {
-  let mut b = Writer::new(journal(root), "b");
+  let mut b = Writer::new(dgg(root), "b");
   b.write(
     93,
     1,
@@ -362,11 +368,11 @@ fn backfill_yields_to_native_messages() {
     nick: nick.into(),
     text: text.into(),
   };
-  let mut a = Writer::new(journal(&root), "a");
+  let mut a = Writer::new(dgg(&root), "a");
   a.write(100, 1, Body::Open("wss://x".into())).unwrap();
   a.write(101, 1, live("Alice", 100, "one\ntwo")).unwrap();
   drop(a);
-  let mut backfill = Writer::new(journal(&root), "backfill-x");
+  let mut backfill = Writer::new(dgg(&root), "backfill-x");
   // The same message as a's, as rustlesearch has it: skipped.
   backfill
     .write(900, 1, fetched(100, "alice", "one two"))
@@ -409,7 +415,7 @@ fn backfill_yields_to_native_messages() {
 
   // Native messages arrive later: Bob's replaces the backfilled copy, and
   // Carol's other message re-cases hers.
-  let mut b = Writer::new(journal(&root), "b");
+  let mut b = Writer::new(dgg(&root), "b");
   b.write(1000, 1, Body::Open("wss://x".into())).unwrap();
   b.write(1001, 1, live("Bob", 300, "bob\nsays")).unwrap();
   b.write(1002, 1, live("Carol", 260, "yo")).unwrap();
@@ -459,11 +465,11 @@ fn truncated_timestamps_match_within_their_second() {
       nick: nick.into(),
       text: text.into(),
     };
-  let mut a = Writer::new(journal(&root), "a");
+  let mut a = Writer::new(dgg(&root), "a");
   a.write(100, 1, Body::Open("wss://x".into())).unwrap();
   a.write(101, 1, live("Alice", 5_250, "one\ntwo")).unwrap();
   drop(a);
-  let mut linkers = Writer::new(journal(&root), "backfill-l");
+  let mut linkers = Writer::new(dgg(&root), "backfill-l");
   // Alice's message truncated to its second: skipped.
   linkers
     .write(900, 1, fetched("linkers", 5_000, "Alice", "one two"))
@@ -487,7 +493,7 @@ fn truncated_timestamps_match_within_their_second() {
   // rustlesearch's precise copy of Bob's replaces linkers', taking the
   // casing linkers had; a native copy of Carol's replaces hers. Named to
   // sort first, so a rebuild indexes these in the other order.
-  let mut rustle = Writer::new(journal(&root), "backfill-0");
+  let mut rustle = Writer::new(dgg(&root), "backfill-0");
   rustle
     .write(950, 1, fetched("rustlesearch", 7_420, "bob", "bob says"))
     .unwrap();
@@ -495,7 +501,7 @@ fn truncated_timestamps_match_within_their_second() {
     .write(950, 1, fetched("rustlesearch", 6_500, "bob", "first"))
     .unwrap();
   drop(rustle);
-  let mut b = Writer::new(journal(&root), "b");
+  let mut b = Writer::new(dgg(&root), "b");
   b.write(1000, 1, Body::Open("wss://x".into())).unwrap();
   b.write(1001, 1, live("Carol", 8_999, "hi")).unwrap();
   drop(b);
@@ -530,12 +536,12 @@ fn truncated_timestamps_match_within_their_second() {
 
 #[test]
 fn follows_files_into_archives() {
-  use ::logger::compact::compact_day;
+  use ::logger::{compact::compact_day, service::Root};
   let root = TempDir::new("logger-index");
   let live = |nick: &str, timestamp, data: &str| {
     frame(format!("MSG {}", message(timestamp, nick, data)))
   };
-  let mut a = Writer::new(journal(&root), "a");
+  let mut a = Writer::new(dgg(&root), "a");
   a.write(100, 1, Body::Open("wss://x".into())).unwrap();
   a.write(101, 1, live("Alice", 101, "one")).unwrap();
   a.write(102, 1, live("Bob", 102, "two")).unwrap();
@@ -546,7 +552,7 @@ fn follows_files_into_archives() {
 
   // Compacting moves the day into an archive: indexed once more (nothing
   // new), its live checkpoint forgotten, then skipped without being read.
-  compact_day(&journal(&root), "1970-01-01", 3)
+  compact_day(&Root::at(dgg(&root)), "1970-01-01", 3)
     .unwrap()
     .unwrap();
   let archived = index(&mut db, &journal(&root)).unwrap();
@@ -566,11 +572,11 @@ fn follows_files_into_archives() {
 
   // A late file re-merges the archive: its digest changes, so it's read
   // again from the start, and the late message arrives.
-  let mut b = Writer::new(journal(&root), "b");
+  let mut b = Writer::new(dgg(&root), "b");
   b.write(103, 1, Body::Open("wss://x".into())).unwrap();
   b.write(104, 1, live("Carol", 104, "three")).unwrap();
   drop(b);
-  compact_day(&journal(&root), "1970-01-01", 3)
+  compact_day(&Root::at(dgg(&root)), "1970-01-01", 3)
     .unwrap()
     .unwrap();
   let remerged = index(&mut db, &journal(&root)).unwrap();
@@ -588,9 +594,9 @@ fn follows_files_into_archives() {
 
 #[test]
 fn forgets_compacted_files_unparsed_rows() {
-  use ::logger::compact::compact_day;
+  use ::logger::{compact::compact_day, service::Root};
   let root = TempDir::new("logger-index");
-  let mut a = Writer::new(journal(&root), "a");
+  let mut a = Writer::new(dgg(&root), "a");
   a.write(100, 1, Body::Open("wss://x".into())).unwrap();
   a.write(101, 1, frame("MSG not json".into())).unwrap();
   drop(a);
@@ -613,9 +619,45 @@ fn forgets_compacted_files_unparsed_rows() {
   )
   .unwrap();
 
-  compact_day(&journal(&root), "1970-01-01", 3)
+  compact_day(&Root::at(dgg(&root)), "1970-01-01", 3)
     .unwrap()
     .unwrap();
   index(&mut db, &journal(&root)).unwrap();
   assert_eq!(rows(&db), ["archive/1970/01/1970-01-01.journal.zst"]);
+}
+
+/// A live file a capture from before dgg's journals moved into dgg/ wrote
+/// where they were is read there, under the same path, so once it's moved
+/// its checkpoint still holds.
+#[test]
+fn reads_live_files_where_they_were() {
+  let root = TempDir::new("logger-index");
+  let mut a = Writer::new(journal(&root), "a");
+  a.write(100, 1, Body::Open("wss://x".into())).unwrap();
+  a.write(
+    101,
+    1,
+    frame(format!("MSG {}", message(101, "Alice", "one"))),
+  )
+  .unwrap();
+  drop(a);
+  let mut db = open(&database(&root)).unwrap();
+  let stats = index(&mut db, &journal(&root)).unwrap();
+  assert_eq!((stats.records, stats.messages), (2, 1));
+
+  let path = "live/1970-01-01/a.journal";
+  let moved = dgg(&root).join(path);
+  ::std::fs::create_dir_all(moved.parent().unwrap()).unwrap();
+  ::std::fs::rename(journal(&root).join(path), &moved).unwrap();
+  assert_eq!(waiting(&db, &journal(&root), 1000).unwrap(), 0);
+  let again = index(&mut db, &journal(&root)).unwrap();
+  assert_eq!(again.records, 0);
+  let paths: Vec<String> = db
+    .prepare("SELECT path FROM files")
+    .unwrap()
+    .query_map([], |row| row.get(0))
+    .unwrap()
+    .map(Result::unwrap)
+    .collect();
+  assert_eq!(paths, [path]);
 }

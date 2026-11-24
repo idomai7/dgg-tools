@@ -1,5 +1,5 @@
-//! Index each service's journals into SQLite: dgg's into `index.sqlite`,
-//! Kick's into `index-kick.sqlite`.
+//! Index each service's journals into SQLite: dgg's into
+//! `index-dgg.sqlite`, Kick's into `index-kick.sqlite`.
 
 use {
   crate::{

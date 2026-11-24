@@ -15,7 +15,9 @@
 //! - `PUT /dgg/control/<instance>`: an instance on another host pushes its
 //!   status ([`control::push_body`]); it's written to this host's control
 //!   directory with its times shifted onto this host's clock, so local
-//!   instances can hand off to it.
+//!   instances can hand off to it. Also to the one dgg's captures used
+//!   before dgg's journals had a directory of their own, while it's there,
+//!   so a capture from before hands off to it too.
 //! - `DELETE /dgg/control/<instance>`: it's stopping.
 //! - `GET /dgg/control`: `now <unix ms>`, a blank line, then every status
 //!   here, each followed by a blank line.
@@ -58,7 +60,7 @@ use {
       tail::{Tail, What, Written},
     },
     manifest::{self, valid_path},
-    service::Service,
+    service::{Service, locate},
   },
   ::axum::{
     Json, Router,
@@ -154,6 +156,8 @@ struct Shared {
   journal: PathBuf,
   /// dgg's capture statuses.
   control: PathBuf,
+  /// Where they were before dgg's journals had a directory of their own.
+  legacy_control: PathBuf,
   /// Kick's index, in the data directory.
   kick_index: PathBuf,
   tokens: Tokens,
@@ -185,6 +189,7 @@ pub fn router(journal: PathBuf, tokens: Tokens) -> Router {
   let data = journal.parent().unwrap_or(&journal);
   let shared = Arc::new(Shared {
     control: control::dir(&Dgg::dir(&journal)),
+    legacy_control: control::dir(&journal),
     kick_index: data.join(Kick::INDEX),
     journal,
     tokens,
@@ -295,6 +300,9 @@ async fn push(
   if status.instance != instance {
     return StatusCode::BAD_REQUEST;
   }
+  if let Err(e) = control::write_if_there(&shared.legacy_control, &status) {
+    warn!("control: {e}");
+  }
   match control::write(&shared.control, &status) {
     Ok(()) => StatusCode::NO_CONTENT,
     Err(e) => {
@@ -315,6 +323,9 @@ async fn remove(
   };
   if !valid_instance(&instance) {
     return StatusCode::BAD_REQUEST;
+  }
+  if let Err(e) = control::remove(&shared.legacy_control, &instance) {
+    warn!("control: {e}");
   }
   match control::remove(&shared.control, &instance) {
     Ok(()) => StatusCode::NO_CONTENT,
@@ -375,7 +386,8 @@ async fn file<S: Service>(
         .ok_or(StatusCode::RANGE_NOT_SATISFIABLE)?,
     ),
   };
-  let mut opened = ::tokio::fs::File::open(S::dir(&shared.journal).join(&path))
+  let local = locate::<S>(&S::dir(&shared.journal), &path);
+  let mut opened = ::tokio::fs::File::open(local)
     .await
     .map_err(|_| StatusCode::NOT_FOUND)?;
   let size = opened

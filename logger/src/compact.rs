@@ -31,8 +31,12 @@
 //! own. Backfill runs write to days that are already closed, so the files of
 //! a run still going (holding its lock, see [`writing`]) are left alone, to
 //! be merged once it's done.
+//!
+//! A root's live files in its [legacy](Root::legacy) directory are its
+//! day's too: merged into the root's archive, and deleted from there.
 
 use {
+  crate::service::Root,
   ::common::fs::MissingOk,
   ::common::{
     atomic_file,
@@ -77,29 +81,32 @@ pub struct Day {
   pub archive: Archive,
 }
 
-/// The days with live files under `journal_root` that are closed at `now`
+/// The days with live files in journal `root` that are closed at `now`
 /// (unix ms): they ended at least `grace` ago. Oldest first.
 pub fn closed_days(
-  journal_root: &Path,
+  root: &Root,
   now: i64,
   grace: Duration,
 ) -> io::Result<Vec<String>> {
-  let Some(entries) = fs::read_dir(live_dir(journal_root)).missing_ok()? else {
-    return Ok(Vec::new());
-  };
   let mut days = Vec::new();
-  for entry in entries {
-    let entry = entry?;
-    let day = entry.file_name().to_string_lossy().into_owned();
-    if entry.file_type()?.is_dir()
-      && valid_day(&day)
-      && let Some(start) = day_start(&day)
-      && now >= start + DAY_MS + grace.as_millis() as i64
-    {
-      days.push(day);
+  for dir in root.dirs() {
+    let Some(entries) = fs::read_dir(live_dir(dir)).missing_ok()? else {
+      continue;
+    };
+    for entry in entries {
+      let entry = entry?;
+      let day = entry.file_name().to_string_lossy().into_owned();
+      if entry.file_type()?.is_dir()
+        && valid_day(&day)
+        && let Some(start) = day_start(&day)
+        && now >= start + DAY_MS + grace.as_millis() as i64
+      {
+        days.push(day);
+      }
     }
   }
   days.sort();
+  days.dedup();
   Ok(days)
 }
 
@@ -188,19 +195,19 @@ fn receive_time(record: &[u8]) -> i64 {
     .unwrap_or(i64::MAX)
 }
 
-/// Whether a backfill run still writes the live file at `path`: its
-/// instance's, `<instance>.journal`, or `<instance>.<n>.journal` after a
-/// change of format.
-fn busy_file(journal_root: &Path, path: &Path) -> io::Result<bool> {
+/// Whether a backfill run still writes the live file at `path`, in journal
+/// root `dir`: its instance's, `<instance>.journal`, or
+/// `<instance>.<n>.journal` after a change of format.
+pub(crate) fn busy_file(dir: &Path, path: &Path) -> io::Result<bool> {
   let stem = path.file_stem().unwrap().to_string_lossy();
   let numbered = stem
     .rsplit_once('.')
     .filter(|(_, n)| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()));
-  if writing(journal_root, &stem)? {
+  if writing(dir, &stem)? {
     return Ok(true);
   }
   match numbered {
-    Some((instance, _)) => writing(journal_root, instance),
+    Some((instance, _)) => writing(dir, instance),
     None => Ok(false),
   }
 }
@@ -209,14 +216,15 @@ fn hex(bytes: &[u8]) -> String {
   bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// Compacts `day`'s live files (and existing archive) under `journal_root`
+/// Compacts `day`'s live files (and existing archive) in journal `root`
 /// into its archive, at zstd `level`. `None` if it has no live files that
 /// aren't [busy](Day::busy).
 pub fn compact_day(
-  journal_root: &Path,
+  root: &Root,
   day: &str,
   level: i32,
 ) -> io::Result<Option<Day>> {
+  let journal_root = root.dir.as_path();
   let mut inputs = Vec::new();
   let archive_path = archive_file(journal_root, day);
   let remerged = archive_path.exists();
@@ -231,29 +239,30 @@ pub fn compact_day(
     });
   }
   let (mut live, mut busy) = (Vec::new(), 0);
-  let Some(entries) =
-    fs::read_dir(live_day_dir(journal_root, day)).missing_ok()?
-  else {
-    return Ok(None);
-  };
-  for entry in entries {
-    let path = entry?.path();
-    if !path
-      .extension()
-      .is_some_and(|extension| extension == EXTENSION)
-    {
+  for dir in root.dirs() {
+    let Some(entries) = fs::read_dir(live_day_dir(dir, day)).missing_ok()?
+    else {
       continue;
-    }
-    if busy_file(journal_root, &path)? {
-      busy += 1;
-    } else {
-      live.push(path);
+    };
+    for entry in entries {
+      let path = entry?.path();
+      if !path
+        .extension()
+        .is_some_and(|extension| extension == EXTENSION)
+      {
+        continue;
+      }
+      if busy_file(dir, &path)? {
+        busy += 1;
+      } else {
+        live.push(path);
+      }
     }
   }
   if live.is_empty() {
     return Ok(None);
   }
-  live.sort();
+  live.sort_by_cached_key(|path| root.path(path));
   for path in live {
     let bytes = fs::read(&path)?;
     let (header, records, torn) = parse(&path, &bytes)?;
@@ -334,7 +343,9 @@ pub fn compact_day(
       grown += 1;
     }
   }
-  let _ = fs::remove_dir(live_day_dir(journal_root, day));
+  for dir in root.dirs() {
+    let _ = fs::remove_dir(live_day_dir(dir, day));
+  }
   Ok(Some(Day {
     day: day.into(),
     files,

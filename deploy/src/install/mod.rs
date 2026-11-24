@@ -53,7 +53,9 @@ use {
   },
   ::logger::{
     control,
+    dgg::Dgg,
     kick::{capture::control_dir, channels},
+    service::Service,
   },
   ::logger_journal::{Variant, layout::kick_root},
   ::std::{
@@ -234,14 +236,16 @@ fn exe(dir: &Path, name: &str) -> PathBuf {
   dir.join(format!("{name}{}", ::std::env::consts::EXE_SUFFIX))
 }
 
-/// Waits up to `patience` for a capture started at or after `since` (unix
-/// ms) to be healthy; its instance.
+/// Waits up to `patience` for a dgg capture started at or after `since`
+/// (unix ms) to be healthy, as its status in the journal directory
+/// `journal` has it; its instance.
 pub fn wait_healthy(
-  journal_root: &Path,
+  journal: &Path,
   since: i64,
   patience: Duration,
 ) -> io::Result<Option<String>> {
-  wait_healthy_in(&control::dir(journal_root), Variant::Dgg, since, patience)
+  let dir = control::dir(&Dgg::dir(journal));
+  wait_healthy_in(&dir, Variant::Dgg, since, patience)
 }
 
 /// [`wait_healthy`], for Kick's capture: as `slug`'s journal root under

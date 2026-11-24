@@ -4,7 +4,9 @@ use {
   ::logger::{
     cert,
     control::{self, Status, parse_push, push_body},
+    dgg::Dgg,
     serve::{self, CONCURRENT, Tokens, router},
+    service::Service,
   },
   ::logger_journal::{Writer, record::v0::Body},
   ::rcgen::KeyPair,
@@ -74,6 +76,9 @@ async fn serve(root: &TempDir, tokens: Tokens) -> String {
 #[::tokio::test]
 async fn control_endpoints() {
   let root = TempDir::new("logger-serve");
+  // Where captures from before dgg's journals moved into dgg/ look.
+  let old_control = control::dir(root.path());
+  ::std::fs::create_dir_all(&old_control).unwrap();
   let tokens = Tokens {
     read: "reader".into(),
     control: Some("secret".into()),
@@ -130,11 +135,13 @@ async fn control_endpoints() {
     204
   );
 
-  // It's written where local instances look.
-  let control = control::dir(root.path());
-  let written = control::read_all(&control).unwrap();
-  assert_eq!(written.len(), 1);
-  assert_eq!(written[0].instance, "remote");
+  // It's written where local instances look, older ones too.
+  let control = control::dir(&Dgg::dir(root.path()));
+  for dir in [&control, &old_control] {
+    let written = control::read_all(dir).unwrap();
+    assert_eq!(written.len(), 1);
+    assert_eq!(written[0].instance, "remote");
+  }
   let listed = client
     .get(url("/dgg/control"))
     .bearer_auth("secret")
@@ -158,6 +165,7 @@ async fn control_endpoints() {
     .unwrap();
   assert_eq!(code(deleted), 204);
   assert_eq!(control::read_all(&control).unwrap(), []);
+  assert_eq!(control::read_all(&old_control).unwrap(), []);
 }
 
 #[::tokio::test]
@@ -181,14 +189,15 @@ async fn without_a_control_token_nothing_pushes() {
       .unwrap();
     assert!([401, 403].contains(&pushed.status().as_u16()), "{token:?}");
   }
-  assert_eq!(control::read_all(&control::dir(root.path())).unwrap(), []);
+  let control = control::dir(&Dgg::dir(root.path()));
+  assert_eq!(control::read_all(&control).unwrap(), []);
 }
 
 #[::tokio::test]
 async fn serves_a_few_requests_at_once() {
   let root = TempDir::new("logger-serve");
   // Big enough that sending it stalls until it's read.
-  let mut writer = Writer::new(root.to_path_buf(), "a");
+  let mut writer = Writer::new(Dgg::dir(root.path()), "a");
   let frame = "x".repeat(1 << 20);
   for _ in 0..64 {
     writer.write(0, 1, Body::Frame(frame.clone())).unwrap();

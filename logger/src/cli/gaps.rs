@@ -1,9 +1,13 @@
 //! Report gaps in what was captured.
 
 use {
-  crate::dgg::{
-    gaps::coverage,
-    index::{index, open},
+  crate::{
+    dgg::{
+      Dgg,
+      gaps::coverage,
+      index::{index, open},
+    },
+    service::Service,
   },
   ::clap::Args,
   ::common::format,
@@ -20,9 +24,9 @@ pub struct Gaps {
 }
 
 impl Gaps {
-  /// Reads `<data>/journal` and `<data>/index.sqlite`.
+  /// Reads `<data>/journal` and `<data>/index-dgg.sqlite`.
   pub fn run(self, data: &Path) -> ExitCode {
-    let result = open(&data.join("index.sqlite")).and_then(|mut db| {
+    let result = open(&data.join(Dgg::INDEX)).and_then(|mut db| {
       index(&mut db, &data.join("journal"))?;
       Ok(coverage(&db)?)
     });

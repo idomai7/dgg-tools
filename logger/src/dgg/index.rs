@@ -1,5 +1,5 @@
-//! dgg's index: its journal into SQLite, `index.sqlite`, for searching and
-//! for finding gaps. As every service's (see [`crate::index`]), it's
+//! dgg's index: its journal into SQLite, `index-dgg.sqlite`, for searching
+//! and for finding gaps. As every service's (see [`crate::index`]), it's
 //! derived data, and each file's progress is checkpointed with its rows.
 //!
 //! Archives are found through the monthly manifests. An archive's
@@ -25,16 +25,11 @@
 use {
   crate::{
     dgg::Dgg,
-    index::{
-      Error, Tally, checkpoint, open_at, open_read_only_at, relative,
-      waiting_in,
-    },
+    index::{Error, Tally, checkpoint, open_at, open_read_only_at, waiting_in},
     service::Service,
   },
   ::logger_journal::{
-    Entry, ReadError, Reader, Record, Version, archive,
-    layout::{backfill_files, backfill_root, live_files},
-    record::v0::Body,
+    Entry, ReadError, Reader, Record, Version, archive, record::v0::Body,
   },
   ::rusqlite::{Connection, OptionalExtension, Transaction, params},
   ::serde_json::Value,
@@ -51,7 +46,11 @@ pub const SCHEMA_VERSION: Version = Version { major: 0, minor: 6 };
 const SCHEMA: &str = include_str!("../../schemas/index/v0.6.sql");
 
 /// Its file, in the data directory.
-pub const FILE: &str = "index.sqlite";
+pub const FILE: &str = "index-dgg.sqlite";
+
+/// Its file before dgg's journals had a directory of their own, which
+/// `migrate` renames.
+pub const LEGACY_FILE: &str = "index.sqlite";
 
 /// Records are committed in batches of this many, with their checkpoint.
 const BATCH: usize = 10_000;
@@ -109,31 +108,36 @@ pub fn open(path: &Path) -> Result<Connection, Error> {
   open_at(path, Dgg::NAME, SCHEMA, SCHEMA_VERSION)
 }
 
-/// How many records in the live and backfill files aren't indexed yet,
-/// counting up to `at_most`.
+/// How many records in the live and backfill files, in the journal
+/// directory `journal`, aren't indexed yet, counting up to `at_most`.
 pub fn waiting(
   db: &Connection,
-  journal_root: &Path,
+  journal: &Path,
   at_most: u64,
 ) -> Result<u64, Error> {
-  let files = live_files(journal_root)?
-    .into_iter()
-    .chain(backfill_files(journal_root)?)
-    .collect();
-  waiting_in(db, journal_root, files, at_most)
+  let mut files = Vec::new();
+  for root in Dgg::roots(&Dgg::dir(journal))? {
+    for file in root.live_files()? {
+      files.push((root.path(&file), file));
+    }
+  }
+  waiting_in(db, files, at_most)
 }
 
-/// Indexes everything in the journal at `journal_root` that isn't indexed
-/// yet.
-pub fn index(db: &mut Connection, journal_root: &Path) -> Result<Stats, Error> {
+/// Indexes everything in dgg's journals, in the journal directory
+/// `journal`, that isn't indexed yet: every root's live files, then their
+/// archives.
+pub fn index(db: &mut Connection, journal: &Path) -> Result<Stats, Error> {
   let mut stats = Stats::default();
-  let relative = |file: &Path| relative(journal_root, file);
+  let roots = Dgg::roots(&Dgg::dir(journal))?;
   let mut live = Vec::new();
-  let files = live_files(journal_root)?
-    .into_iter()
-    .chain(backfill_files(journal_root)?);
-  for file in files {
-    let path = relative(&file);
+  let mut files = Vec::new();
+  for root in &roots {
+    for file in root.live_files()? {
+      files.push((root.path(&file), file));
+    }
+  }
+  for (path, file) in files {
     let (offset, _) = checkpoint(db, &path)?;
     live.push(path.clone());
     let reader = match Reader::open(&file, offset) {
@@ -146,18 +150,13 @@ pub fn index(db: &mut Connection, journal_root: &Path) -> Result<Stats, Error> {
     };
     index_file(db, &path, None, reader, &mut stats)?;
   }
-  let backfill = backfill_root(journal_root);
-  let archives = archive::all(journal_root)?
-    .into_iter()
-    .map(|archive| (journal_root, archive))
-    .chain(
-      archive::all(&backfill)?
-        .into_iter()
-        .map(|archive| (backfill.as_path(), archive)),
-    );
+  let mut archives = Vec::new();
+  for root in &roots {
+    archives.extend(archive::all(&root.dir)?.into_iter().map(|a| (root, a)));
+  }
   for (root, archive) in archives {
-    let file = archive.path(root);
-    let path = relative(&file);
+    let file = archive.path(&root.dir);
+    let path = root.path(&file);
     let (offset, digest) = checkpoint(db, &path)?;
     let same = digest.as_deref() == Some(archive.sha256.as_str());
     if same && offset >= archive.bytes {

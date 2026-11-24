@@ -1,6 +1,9 @@
 use {
   ::common::temp_dir::TempDir,
-  ::logger::compact::{closed_days, compact_day},
+  ::logger::{
+    compact::{closed_days, compact_day},
+    service::Root,
+  },
   ::logger_journal::{
     Reader, Writer, archive,
     layout::{archive_file, backfill_root, live_day_dir, lock_file},
@@ -43,9 +46,14 @@ fn finds_closed_days() {
   let hour = Duration::from_secs(3600);
   // Half an hour into 01-03: 01-01 ended over an hour ago, 01-02 didn't.
   let now = 2 * 86_400_000 + 1_800_000;
-  assert_eq!(closed_days(root.path(), now, hour).unwrap(), ["1970-01-01"]);
   assert_eq!(
-    closed_days(root.path(), now, Duration::ZERO).unwrap().len(),
+    closed_days(&Root::at(root.path()), now, hour).unwrap(),
+    ["1970-01-01"]
+  );
+  assert_eq!(
+    closed_days(&Root::at(root.path()), now, Duration::ZERO)
+      .unwrap()
+      .len(),
     2
   );
 }
@@ -61,7 +69,9 @@ fn merges_a_day_into_a_verified_archive() {
   // A copy of a's file: every record an exact duplicate.
   live(&root, "c", &a);
 
-  let done = compact_day(root.path(), DAY, 3).unwrap().unwrap();
+  let done = compact_day(&Root::at(root.path()), DAY, 3)
+    .unwrap()
+    .unwrap();
   assert_eq!(
     (
       done.files,
@@ -106,12 +116,16 @@ fn merges_late_files_into_an_existing_archive() {
   let root = TempDir::new("logger-compact");
   let a = journal(&["10 a 1 frame MSG 1", "30 a 1 frame MSG 3"]);
   live(&root, "a", &a);
-  compact_day(root.path(), DAY, 3).unwrap().unwrap();
+  compact_day(&Root::at(root.path()), DAY, 3)
+    .unwrap()
+    .unwrap();
   // A late sync brings another instance's file for the same day, and a
   // second copy of a's.
   live(&root, "b", &journal(&["20 b 1 frame MSG 2"]));
   live(&root, "a", &a);
-  let done = compact_day(root.path(), DAY, 3).unwrap().unwrap();
+  let done = compact_day(&Root::at(root.path()), DAY, 3)
+    .unwrap()
+    .unwrap();
   assert!(done.remerged);
   assert_eq!((done.files, done.duplicates), (2, 2));
   assert_eq!(
@@ -124,7 +138,7 @@ fn merges_late_files_into_an_existing_archive() {
   );
   assert_eq!(archive::read_month(root.path(), DAY).unwrap()[0].records, 3);
   // Nothing left to do.
-  assert_eq!(compact_day(root.path(), DAY, 3).unwrap(), None);
+  assert_eq!(compact_day(&Root::at(root.path()), DAY, 3).unwrap(), None);
 }
 
 #[test]
@@ -139,7 +153,10 @@ fn refuses_unreadable_versions() {
     let root = TempDir::new("logger-compact");
     live(&root, "a", &journal(&["10 a 1 frame MSG 1"]));
     live(&root, "b", other);
-    assert!(compact_day(root.path(), DAY, 3).is_err(), "{other:?}");
+    assert!(
+      compact_day(&Root::at(root.path()), DAY, 3).is_err(),
+      "{other:?}"
+    );
     assert!(!archive_file(root.path(), DAY).exists());
   }
 }
@@ -153,7 +170,7 @@ fn leaves_unreadable_days_alone() {
     "b",
     "journal dgg.2.0\u{1e}\n20 b 1 something\u{1e}\n",
   );
-  assert!(compact_day(root.path(), DAY, 3).is_err());
+  assert!(compact_day(&Root::at(root.path()), DAY, 3).is_err());
   assert!(!archive_file(root.path(), DAY).exists());
   let left = fs::read_dir(live_day_dir(root.path(), DAY))
     .unwrap()
@@ -167,13 +184,17 @@ fn keeps_records_repeated_within_one_file() {
   // dgg really does send the same frame twice in one millisecond.
   let twice = journal(&["10 a 1 frame UPDATEUSER {}"; 2]);
   live(&root, "a", &twice);
-  let done = compact_day(root.path(), DAY, 3).unwrap().unwrap();
+  let done = compact_day(&Root::at(root.path()), DAY, 3)
+    .unwrap()
+    .unwrap();
   assert_eq!(done.duplicates, 0);
   assert_eq!(archived(&root), twice);
   // Merging the same file in again, twice, doesn't add more copies.
   live(&root, "a", &twice);
   live(&root, "b", &twice);
-  let again = compact_day(root.path(), DAY, 3).unwrap().unwrap();
+  let again = compact_day(&Root::at(root.path()), DAY, 3)
+    .unwrap()
+    .unwrap();
   assert_eq!(again.duplicates, 4);
   assert_eq!(archived(&root), twice);
 }
@@ -208,7 +229,7 @@ fn leaves_the_files_of_a_running_backfill() {
   assert!(dir.join("backfill-running.2.journal").exists());
 
   // Only the finished run's file is compacted.
-  let done = compact_day(&backfill, DAY, 3).unwrap().unwrap();
+  let done = compact_day(&Root::at(&backfill), DAY, 3).unwrap().unwrap();
   assert_eq!((done.files, done.busy, done.archive.records), (1, 2, 1));
   assert!(dir.join("backfill-running.journal").exists());
   assert!(dir.join("backfill-running.2.journal").exists());
@@ -216,7 +237,7 @@ fn leaves_the_files_of_a_running_backfill() {
   // Once the run is over, its file is merged in, and its lock is gone.
   drop(running);
   assert!(!lock_file(&backfill, "backfill-running").exists());
-  let done = compact_day(&backfill, DAY, 3).unwrap().unwrap();
+  let done = compact_day(&Root::at(&backfill), DAY, 3).unwrap().unwrap();
   assert_eq!((done.files, done.busy, done.remerged), (2, 0, true));
   assert_eq!(done.archive.records, 3);
   assert!(!dir.exists());
@@ -252,7 +273,9 @@ fn merges_a_kick_channels_day() {
     &kick_journal("0.1", "wss://two", &["20 a 2 open wss://two"]),
   );
 
-  let done = compact_day(root.path(), DAY, 3).unwrap().unwrap();
+  let done = compact_day(&Root::at(root.path()), DAY, 3)
+    .unwrap()
+    .unwrap();
   assert_eq!((done.files, done.archive.records), (2, 3));
   // In the newest version, keeping only what both headers say.
   assert_eq!(
@@ -273,7 +296,9 @@ fn merges_a_kick_channels_day() {
     "b",
     &kick_journal("0.1", "wss://one", &["40 b 1 open wss://one"]),
   );
-  let done = compact_day(root.path(), DAY, 3).unwrap().unwrap();
+  let done = compact_day(&Root::at(root.path()), DAY, 3)
+    .unwrap()
+    .unwrap();
   assert!(done.remerged);
   assert!(archived(&root).starts_with("journal kick.0.1 ; channel=c\u{1e}\n"));
 }
@@ -287,7 +312,7 @@ fn refuses_a_day_of_mixed_variants() {
     "b",
     &kick_journal("0.1", "wss://one", &["20 b 1 frame {}"]),
   );
-  assert!(compact_day(root.path(), DAY, 3).is_err());
+  assert!(compact_day(&Root::at(root.path()), DAY, 3).is_err());
   assert!(!archive_file(root.path(), DAY).exists());
 }
 
@@ -304,9 +329,38 @@ fn keeps_a_single_endpoint() {
     "b",
     &kick_journal("0.1", "wss://one", &["20 b 1 frame {}"]),
   );
-  compact_day(root.path(), DAY, 3).unwrap().unwrap();
+  compact_day(&Root::at(root.path()), DAY, 3)
+    .unwrap()
+    .unwrap();
   assert!(
     archived(&root)
       .starts_with("journal kick.0.1 ; endpoint=wss://one channel=c\u{1e}\n")
   );
+}
+
+/// A root's live files in its legacy directory (a capture from before
+/// dgg's journals moved into dgg/ wrote them) are its day's too: merged
+/// into its archive, and deleted from there.
+#[test]
+fn merges_live_files_where_they_were() {
+  let (root, legacy) = (
+    TempDir::new("logger-compact"),
+    TempDir::new("logger-compact"),
+  );
+  live(&root, "a", &journal(&["10 a 1 frame MSG 1"]));
+  live(&legacy, "b", &journal(&["20 b 1 frame MSG 2"]));
+  let both = Root {
+    legacy: Some(legacy.to_path_buf()),
+    ..Root::at(root.path())
+  };
+  let hour = Duration::from_secs(3600);
+  assert_eq!(closed_days(&both, 86_400_000 * 2, hour).unwrap(), [DAY]);
+  let done = compact_day(&both, DAY, 3).unwrap().unwrap();
+  assert_eq!((done.files, done.archive.records), (2, 2));
+  assert_eq!(
+    archived(&root),
+    journal(&["10 a 1 frame MSG 1", "20 b 1 frame MSG 2"])
+  );
+  assert!(!live_day_dir(legacy.path(), DAY).exists());
+  assert!(!archive_file(legacy.path(), DAY).exists());
 }
