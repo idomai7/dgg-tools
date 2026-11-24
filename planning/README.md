@@ -91,9 +91,11 @@ The layout is flat: each crate is a direct child of the root.
   environment variable. Planned 2026-11-25.
   - Each command has its own type of what it reads, and refuses fields it
     doesn't know. A missing field it needs is an error naming the field.
-  - Since they're written by hand, they may have comments, `//` to the end
-    of the line and `/* */`, outside strings. Files a program writes, such
-    as an install's `install.env.json`, don't: they'd be lost on the next
+  - Since they're written by hand, they're read as JSONC: comments, `//`
+    to the end of the line and `/* */`, outside strings, and trailing
+    commas. A hand-written one is named `.jsonc`, for editors, such as
+    `kick-mod.env.jsonc`. Files a program writes, such as an install's
+    `install.env.json`, are plain JSON: comments would be lost on the next
     write.
   - Secrets in it are `Secret`s (in `common`), which never print: their
     `Debug`, and anything shown of the config, say `<secret>`. Only

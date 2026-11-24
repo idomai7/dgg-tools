@@ -38,12 +38,12 @@ only, built on [kick-api](kick-api.md). See the [overall rules](README.md).
 - **Files:** settings in a config file, and what kick-mod learns or keeps in
   `data/kick-mod/`.
   - **Config:** JSON, as every config with secrets is (see the
-    [overall rules](README.md)): `kick-mod.env.json` (`--config-file` for
+    [overall rules](README.md)): `kick-mod.env.jsonc` (`--config-file` for
     another), or on stdin with `--config-stdin`. Gitignored, since it holds
     the app's secret and the logger's token. Only edited by hand; kick-mod
     never writes it. `kick-mod config` shows it, each secret as `<secret>`.
     It replaced `kick-mod.toml` on 2026-11-25, which replaced `.env`.
-    ```json
+    ```jsonc
     {
       "app": {"client_id": "...", "client_secret": "..."},
       "server": {"listen": "127.0.0.1:8787"},
