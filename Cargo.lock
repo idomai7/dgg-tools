@@ -725,15 +725,16 @@ dependencies = [
  "clap",
  "common",
  "ctrlc",
- "dotenvy",
  "logger",
  "logger-journal",
  "ratatui",
+ "serde",
  "serde_json",
  "sysinfo",
  "version-info",
  "win32job",
  "windows-service",
+ "zeroize",
 ]
 
 [[package]]
