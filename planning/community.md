@@ -11,6 +11,8 @@ the [archives](archives.md) know about chat. Notes only, not yet planned: noted
 - **Pastebin and file uploads:** posts by community members.
   - Content moderators can delete posts.
   - Other users can add emote reactions or upvotes, which may be worth karma.
+- **Betting ledger:** a record of bets between chatters and their terms:
+  who bet whom, on what, for what stakes, and how it was settled.
 - **Reputation:** a service of its own, which the others ask. It includes
   karma (see below).
 
