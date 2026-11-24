@@ -2,6 +2,7 @@
 
 use {
   ::clap::{Parser, Subcommand},
+  ::common::config::Source,
   ::kick_api::{
     channel,
     official::{Api, api},
@@ -30,9 +31,17 @@ const USER_AGENT: &str = concat!("gavelgab/", env!("CARGO_PKG_VERSION"));
 #[derive(Parser)]
 #[command(name = "kick-mod")]
 struct Args {
-  /// The settings.
-  #[arg(long, global = true, default_value = config::DEFAULT_PATH)]
-  config: PathBuf,
+  /// The settings and secrets, as JSON.
+  #[arg(
+    long,
+    global = true,
+    default_value = config::DEFAULT_PATH,
+    conflicts_with = "config_stdin"
+  )]
+  config_file: PathBuf,
+  /// Read the settings and secrets from stdin instead, as JSON.
+  #[arg(long, global = true)]
+  config_stdin: bool,
   /// The channels kick-mod knows.
   #[arg(long, global = true, default_value = channels::DEFAULT_PATH)]
   channels: PathBuf,
@@ -66,12 +75,18 @@ enum Command {
     #[arg(required = true)]
     slugs: Vec<String>,
   },
+  /// Show the settings, with their secrets left out.
+  Config,
 }
 
 #[::tokio::main]
 async fn main() -> ExitCode {
   let _ = ::rustls::crypto::ring::default_provider().install_default();
   let args = Args::parse();
+  let config = match args.config_stdin {
+    true => Source::Stdin,
+    false => Source::File(&args.config_file),
+  };
   let done = match args.command {
     Command::Serve => {
       let files = Files {
@@ -80,9 +95,10 @@ async fn main() -> ExitCode {
         modlog: args.modlog,
         journal: args.journal,
       };
-      run(&args.config, files).await
+      run(config, files).await
     }
-    Command::Ids { slugs } => ids(&args.config, &args.channels, &slugs).await,
+    Command::Ids { slugs } => ids(config, &args.channels, &slugs).await,
+    Command::Config => show(config),
   };
   match done {
     Ok(()) => ExitCode::SUCCESS,
@@ -101,14 +117,14 @@ struct Files {
   journal: PathBuf,
 }
 
-async fn run(config: &Path, files: Files) -> Result<(), String> {
+async fn run(config: Source<'_>, files: Files) -> Result<(), String> {
   let Files {
     channels,
     token,
     modlog,
     journal,
   } = files;
-  let config = Config::load(config)?;
+  let config = Config::read(config)?;
   let known = channels::load(&channels)?;
   let listen = config.server.listen;
   let redirect = format!("http://localhost:{}/oauth/callback", listen.port());
@@ -146,7 +162,7 @@ async fn run(config: &Path, files: Files) -> Result<(), String> {
 }
 
 async fn ids(
-  config: &Path,
+  config: Source<'_>,
   path: &Path,
   slugs: &[String],
 ) -> Result<(), String> {
@@ -162,7 +178,7 @@ async fn ids(
       Err(e) => {
         eprintln!("{slug}: the lookup failed: {e}");
         if api.is_none() {
-          let config = Config::load(config)?;
+          let config = Config::read(config)?;
           api = Some(Api::app(::reqwest::Client::new(), config.app()));
         }
         match broadcaster(api.as_ref().unwrap(), slug).await {
@@ -196,6 +212,15 @@ async fn ids(
   } else {
     Ok(())
   }
+}
+
+/// Prints the settings, as JSON, with `<secret>` for each secret.
+fn show(config: Source) -> Result<(), String> {
+  let config = Config::read(config)?;
+  let shown =
+    ::serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?;
+  println!("{shown}");
+  Ok(())
 }
 
 /// The broadcaster's id for `slug`, from the official API.

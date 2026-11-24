@@ -1,51 +1,55 @@
-//! The settings: `kick-mod.toml`, edited by hand and never written.
-//! It holds the app's secret, so it's kept out of git.
+//! The settings: `kick-mod.env.json`, edited by hand and never written, or
+//! the same JSON on stdin (see [`::common::config`]). It holds the app's
+//! secret and the logger's token, so it's kept out of git; `kick-mod
+//! config` shows it without them.
 //!
-//! ```toml
-//! [app]
-//! client_id = "..."
-//! client_secret = "..."
-//!
-//! [server]
-//! listen = "127.0.0.1:8787"
+//! ```json
+//! {
+//!   "app": {"client_id": "...", "client_secret": "..."},
+//!   "server": {"listen": "127.0.0.1:8787"},
+//!   "logger": {
+//!     "url": "https://pi:8788",
+//!     "token": "...",
+//!     "ca": "-----BEGIN CERTIFICATE-----\n..."
+//!   }
+//! }
 //! ```
+//!
+//! `server` is optional, and so, for now, is `logger`: the logger's `serve`
+//! that kick-mod reads Kick from, with its query token, and the mesh CA's
+//! certificate when it's served over HTTPS.
 
 use {
-  ::serde::Deserialize,
-  ::std::{fmt, fs, net::SocketAddr, path::Path},
+  ::common::config::{self as json, Secret, Source},
+  ::serde::{Deserialize, Serialize},
+  ::std::net::SocketAddr,
 };
 
-pub const DEFAULT_PATH: &str = "kick-mod.toml";
+pub const DEFAULT_PATH: &str = "kick-mod.env.json";
 
-/// Where the page is served unless `[server]` says otherwise.
+/// Where the page is served unless `server` says otherwise.
 pub const DEFAULT_LISTEN: &str = "127.0.0.1:8787";
 
-#[derive(Clone, Debug, Deserialize)]
+/// Shown with its secrets as `<secret>`.
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
   pub app: App,
   #[serde(default)]
   pub server: Server,
+  #[serde(default)]
+  pub logger: Option<Logger>,
 }
 
 /// The Kick app, as registered on kick.com.
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct App {
   pub client_id: String,
-  pub client_secret: String,
+  pub client_secret: Secret,
 }
 
-/// The secret isn't shown.
-impl fmt::Debug for App {
-  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    f.debug_struct("App")
-      .field("client_id", &self.client_id)
-      .finish_non_exhaustive()
-  }
-}
-
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Server {
   /// Where the page is served: a loopback address, while there's no login.
@@ -65,9 +69,31 @@ fn default_listen() -> SocketAddr {
   DEFAULT_LISTEN.parse().unwrap()
 }
 
+/// The logger's `serve`, which kick-mod reads Kick's chat from.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Logger {
+  /// Such as `https://pi:8788`.
+  pub url: String,
+  /// Its query token.
+  pub token: Secret,
+  /// The mesh CA's certificate (PEM): the only one trusted, and then only
+  /// over HTTPS.
+  #[serde(default)]
+  pub ca: Option<String>,
+}
+
 impl Config {
   pub fn parse(text: &str) -> Result<Self, String> {
-    let config: Self = ::toml::from_str(text).map_err(|e| e.to_string())?;
+    Self::check(json::parse(text)?)
+  }
+
+  pub fn read(source: Source) -> Result<Self, String> {
+    let config = json::read(source)?;
+    Self::check(config).map_err(|e| format!("{source}: {e}"))
+  }
+
+  fn check(config: Self) -> Result<Self, String> {
     let listen = config.server.listen;
     if !listen.ip().is_loopback() {
       return Err(format!(
@@ -75,20 +101,41 @@ impl Config {
          login yet"
       ));
     }
+    if let Some(logger) = &config.logger {
+      logger.check()?;
+    }
     Ok(config)
-  }
-
-  pub fn load(path: &Path) -> Result<Self, String> {
-    let text = fs::read_to_string(path)
-      .map_err(|e| format!("{}: {e}", path.display()))?;
-    Self::parse(&text).map_err(|e| format!("{}: {e}", path.display()))
   }
 
   /// The app, for kick-api.
   pub fn app(&self) -> ::kick_api::official::oauth::App {
     ::kick_api::official::oauth::App::new(
       &self.app.client_id,
-      &self.app.client_secret,
+      self.app.client_secret.expose(),
     )
+  }
+}
+
+impl Logger {
+  fn check(&self) -> Result<(), String> {
+    let url = &self.url;
+    let https = url.starts_with("https://");
+    if !https && !url.starts_with("http://") {
+      return Err(format!("logger.url: {url} isn't an http or https URL"));
+    }
+    if let Some(ca) = &self.ca {
+      if !https {
+        return Err(format!(
+          "logger.url: {url}: with a CA, the logger is reached over HTTPS \
+           only"
+        ));
+      }
+      let certs = ::reqwest::Certificate::from_pem_bundle(ca.as_bytes())
+        .map_err(|e| format!("logger.ca: can't read it: {e}"))?;
+      if certs.is_empty() {
+        return Err("logger.ca: no certificate in it".into());
+      }
+    }
+    Ok(())
   }
 }

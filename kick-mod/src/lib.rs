@@ -3,7 +3,8 @@
 //!
 //! - [`account`]: the moderator's Kick account, and signing in.
 //! - [`actions`]: what a moderator does from the page.
-//! - [`config`]: `kick-mod.toml`, the settings, edited by hand.
+//! - [`config`]: `kick-mod.env.json`, the settings and secrets, edited by
+//!   hand.
 //! - [`channels`]: `data/kick-mod/channels.json`, the channels kick-mod
 //!   knows, which it writes too.
 //! - [`chat`]: live chat, a connection per channel, journaled in
