@@ -48,8 +48,9 @@ An install lives in one folder:
   kick-channels            the Kick channels to capture, from `kick-ids`
 ```
 
-The journal is the record. The index can always be deleted and rebuilt with
-`dgg-logger index --rebuild`, and Kick's with `--rebuild-kick`. Logs are timestamped and rotated at 10 MB, keeping 5.
+The journal is the record. The indexes can always be deleted and rebuilt with
+`dgg-logger index --rebuild`, or only dgg's with `--rebuild-dgg` and only
+Kick's with `--rebuild-kick`. Logs are timestamped and rotated at 10 MB, keeping 5.
 
 ## Build
 
