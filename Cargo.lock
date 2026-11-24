@@ -1583,13 +1583,11 @@ dependencies = [
  "common",
  "futures-util",
  "kick-api",
- "logger-journal",
  "reqwest",
  "rustls",
  "serde",
  "serde_json",
  "tokio",
- "tokio-tungstenite",
 ]
 
 [[package]]
