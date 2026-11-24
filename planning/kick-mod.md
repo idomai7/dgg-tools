@@ -20,21 +20,17 @@ only, built on [kick-api](kick-api.md). See the [overall rules](README.md).
   ids) from the logger, which reads Kick's undocumented endpoints
   anonymously, with no token or login (see [logger](logger.md)). So nothing
   tied to the account or the app touches an undocumented endpoint.
-  - Until the logger serves Kick, kick-mod's own Centrifugo connection,
-    journal, gap filling and `ids` lookup stay as they are. They go once it
-    does; the steps below that use them are interim.
+  - Until the logger served Kick, kick-mod had its own Centrifugo
+    connection, journal, gap filling and `ids` lookup. They went on
+    2026-11-25 (step 8); the steps below that describe them are history.
 - **Interface:** a local web UI: axum serving plain-JS pages with no build step.
 - **Users:** for now one user (me), with one Kick OAuth token, on the local PC.
   It may later be hosted remotely and opened to other moderators, so this
   shouldn't be designed out.
-- **Connections:** one Centrifugo connection per channel.
-- **History:** kick-mod journals the chat it receives, locally, in the logger's
-  journal format (see [logger](logger.md)): Kick's variant, under
-  `data/kick-mod/journal/<slug>/` (`--journal` for another root), with an
-  instance per run, `kick-mod-<start unix ms>`.
-  - A separate always-on Kick logger, like dgg's, comes later. It and kick-mod
-    write compatible journals, so kick-mod's files can be merged into it.
-  - Until then, history covers only the times kick-mod was running.
+- **Connections:** one stream from the logger per channel.
+- **History:** the logger's, which captures Kick's chat always, not only
+  while kick-mod runs. kick-mod journals nothing. Journals it wrote before
+  (`data/kick-mod/journal/`) stay on disk, in the logger's format.
 - **Files:** settings in a config file, and what kick-mod learns or keeps in
   `data/kick-mod/`.
   - **Config:** JSON, as every config with secrets is (see the
@@ -54,23 +50,20 @@ only, built on [kick-api](kick-api.md). See the [overall rules](README.md).
       }
     }
     ```
-    - `server` is optional. `logger` is the logger's `serve` to read Kick
-      from, with its query token, and the mesh CA's certificate for HTTPS.
+    - `server` is optional. `logger` is required: the logger's `serve` to
+      read Kick from, with its query token, and the mesh CA's certificate
+      for HTTPS.
   - **Channels:** `data/kick-mod/channels.json`, an object per channel by slug,
     written by kick-mod and editable by hand:
     ```json
     {
-      "<slug>": {
-        "broadcaster_user_id": 456,
-        "channel_id": 789,
-        "chatroom_id": 123
-      }
+      "<slug>": {"broadcaster_user_id": 456}
     }
     ```
-    - kick-mod adds a channel when asked, by `kick-mod ids <slug>` now and from
-      the page later. The unofficial lookup (curl) has all three ids. If it
-      fails, `broadcaster_user_id` comes from the official API, with the app's
-      token, and the channel and chatroom ids are left for entering by hand.
+    - kick-mod adds a channel when asked, by `kick-mod add <slug>` now and
+      from the page later: `broadcaster_user_id` from the official API, with
+      the app's token. The channel and chatroom ids it once recorded stay in
+      old files, kept as fields it doesn't know.
     - Written whole, pretty-printed and sorted by slug. It's re-read just before
       each write, so hand edits made while kick-mod runs survive, and fields
       kick-mod doesn't know are kept.
@@ -191,9 +184,7 @@ Each is a pause for review.
      2. Live chat from the logger's events, per channel: Kick's events
         decoded as now; its connections' opens and closes as the column's
         status; a gap's history pages as `filled`. A dropped stream is
-        retried, and the page told that chat is missing. Done 2026-11-25:
-        only with the config's `logger` section, which then also stops
-        kick-mod's own connection and journal.
+        retried, and the page told that chat is missing. Done 2026-11-25.
         - A stream starts live: a capture's connection opened before it
           isn't known. A close leaves it down until an open.
         - Filled messages are those since following started, but those
@@ -202,8 +193,7 @@ Each is a pause for review.
           `400`, `401` or `403` stops the channel: the config needs fixing.
         - Not yet: the page doesn't show `filled` (step 7's page part).
      3. User history from the logger, with the mod log's actions added.
-        Done 2026-11-25: in the same shape as from the journal, only with
-        the config's `logger` section.
+        Done 2026-11-25: in the same shape as from the journal.
         - A channel the logger doesn't have (`404`) gives only the mod
           log's actions; a logger that can't be asked, `502` with why.
         - Not yet: the page has no history panel (step 6's page part);
@@ -211,7 +201,10 @@ Each is a pause for review.
      4. What's left goes: the Centrifugo connection, the journal, gap
         filling and `ids`, which becomes `kick-mod add <slug>`, from the
         official API only. Old journals stay on disk, in the logger's
-        format.
+        format. Done 2026-11-25: the config's `logger` section is required.
+        - `--journal` went, and so did history's `unreadable` and
+          `filled`'s `partial` and `error`, which only kick-mod's own
+          connection set.
 
 Later, each its own step:
 - Automod rules.
