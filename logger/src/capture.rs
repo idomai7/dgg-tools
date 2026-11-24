@@ -194,6 +194,7 @@ pub async fn run(
   let mut heartbeat = ::tokio::time::interval(handoff.interval);
   let mut connected = None;
   let mut health = Health::default();
+  let mut older = control::Older::default();
   let pusher = peer.clone().map(|peer| {
     let control = control.clone();
     ::tokio::spawn(push_status(peer, control, say.clone(), handoff.interval))
@@ -243,9 +244,15 @@ pub async fn run(
         // Control files are advisory: a failed round (e.g. Windows refusing
         // a rename while another instance reads the file) is retried next
         // tick rather than stopping capture.
-        match check_handoff(&control, &me, &handoff) {
-          Ok(Some(successor)) => break Exit::HandedOff(successor),
-          Ok(None) => {}
+        match check_handoff(&control, &me, &handoff, &mut older) {
+          Ok((successor, gone)) => {
+            for line in gone {
+              say.line(line);
+            }
+            if let Some(successor) = successor {
+              break Exit::HandedOff(successor);
+            }
+          }
           Err(e) => say.line(format_args!("control: {e}")),
         }
       }
@@ -352,12 +359,14 @@ fn check_handoff(
   control: &Path,
   me: &Status,
   handoff: &Handoff,
-) -> io::Result<Option<String>> {
+  older: &mut control::Older,
+) -> io::Result<(Option<String>, Vec<String>)> {
   control::write(control, me)?;
-  if handoff.keep_running {
-    return Ok(None);
-  }
   let others = control::read_all(control)?;
+  let gone = older.gone(me, &others);
+  if handoff.keep_running {
+    return Ok((None, gone));
+  }
   let successor = control::successor(
     me,
     &others,
@@ -365,5 +374,5 @@ fn check_handoff(
     handoff.grace,
     handoff.stale_after,
   );
-  Ok(successor.map(|status| status.instance.clone()))
+  Ok((successor.map(|status| status.instance.clone()), gone))
 }

@@ -127,6 +127,7 @@ pub async fn run(
     tasks.spawn(listening.run());
   }
   let mut heartbeat = interval(handoff.interval);
+  let mut older = control::Older::default();
   ::tokio::pin!(shutdown);
   let ended = loop {
     ::tokio::select! {
@@ -145,9 +146,15 @@ pub async fn run(
           build: Some(crate::BUILD.into()),
         };
         // Advisory, as dgg's: a failed round is retried next tick.
-        match check_handoff(&controls, &me, &handoff) {
-          Ok(Some(successor)) => break Ok(Exit::HandedOff(successor)),
-          Ok(None) => {}
+        match check_handoff(&controls, &me, &handoff, &mut older) {
+          Ok((successor, gone)) => {
+            for line in gone {
+              say.line(line);
+            }
+            if let Some(successor) = successor {
+              break Ok(Exit::HandedOff(successor));
+            }
+          }
           Err(e) => say.line(format_args!("control: {e}")),
         }
       }
@@ -193,16 +200,18 @@ fn check_handoff(
   controls: &[PathBuf],
   me: &Status,
   handoff: &Handoff,
-) -> io::Result<Option<String>> {
+  older: &mut control::Older,
+) -> io::Result<(Option<String>, Vec<String>)> {
   for dir in controls {
     control::write_as(dir, me, Variant::Kick)?;
-  }
-  if handoff.keep_running {
-    return Ok(None);
   }
   let mut others = Vec::new();
   for dir in controls {
     others.extend(control::read_all_as(dir, Variant::Kick)?);
+  }
+  let gone = older.gone(me, &others);
+  if handoff.keep_running {
+    return Ok((None, gone));
   }
   let successor = control::successor(
     me,
@@ -211,7 +220,7 @@ fn check_handoff(
     handoff.grace,
     handoff.stale_after,
   );
-  Ok(successor.map(|status| status.instance.clone()))
+  Ok((successor.map(|status| status.instance.clone()), gone))
 }
 
 /// One channel's capture.

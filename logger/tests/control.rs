@@ -1,6 +1,6 @@
 use {
   ::common::temp_dir::TempDir,
-  ::logger::control::{self, Status, successor},
+  ::logger::control::{self, Older, Status, successor},
   ::logger_journal::Variant,
   ::std::time::Duration,
 };
@@ -172,4 +172,33 @@ fn records_end_at_rs_lf() {
   ] {
     assert_eq!(Status::decode(&bad), None, "{bad:?}");
   }
+}
+
+#[test]
+fn says_which_older_instance_it_took_over_from() {
+  let mut old = status("old", 1, Some(2));
+  old.build = Some("0.0.1-abc".into());
+  let older = status("older", 0, Some(1));
+  let mut me = status("me", 5, None);
+  let mut seen = Older::default();
+  let all = [old.clone(), older.clone(), me.clone()];
+  assert_eq!(seen.gone(&me, &all), Vec::<String>::new());
+  // Gone while this one isn't healthy: only stopped.
+  assert_eq!(
+    seen.gone(&me, &[old.clone(), me.clone()]),
+    ["older (build not given) stopped"]
+  );
+  me.healthy_since = Some(6);
+  assert_eq!(
+    seen.gone(&me, std::slice::from_ref(&me)),
+    ["took over from old (build 0.0.1-abc)"]
+  );
+  // A newer one than this took over, not this.
+  let mut seen = Older::default();
+  let newer = status("newer", 9, Some(9));
+  seen.gone(&me, &[old.clone(), me.clone(), newer.clone()]);
+  assert_eq!(
+    seen.gone(&me, &[me.clone(), newer]),
+    ["old (build 0.0.1-abc) stopped"]
+  );
 }

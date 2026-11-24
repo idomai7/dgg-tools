@@ -304,3 +304,50 @@ pub fn successor<'a>(
     .filter(|other| other.healthy_since.is_some_and(|h| age(h) >= grace))
     .max_by_key(|other| (other.started, &other.instance))
 }
+
+/// The older instances one instance has seen, so it can say when each goes:
+/// see [`Older::gone`].
+#[derive(Clone, Debug, Default)]
+pub struct Older(Vec<Status>);
+
+impl Older {
+  /// What `me` makes of the statuses it reads this round, `others`: a line
+  /// for each older instance it saw before that's gone now, saying `me`
+  /// took over from it if `me` is healthy and the newest, else only that it
+  /// stopped. Statuses of the same instance, as Kick's channels each have,
+  /// count once.
+  pub fn gone(&mut self, me: &Status, others: &[Status]) -> Vec<String> {
+    let order = |status: &Status| (status.started, status.instance.clone());
+    let newest = others.iter().all(|other| order(other) <= order(me));
+    let took_over = newest && me.healthy_since.is_some();
+    let (stayed, went): (Vec<Status>, Vec<Status>) =
+      ::std::mem::take(&mut self.0).into_iter().partition(|seen| {
+        others.iter().any(|other| other.instance == seen.instance)
+      });
+    self.0 = stayed;
+    for other in others.iter().filter(|other| order(other) < order(me)) {
+      match self
+        .0
+        .iter_mut()
+        .find(|seen| seen.instance == other.instance)
+      {
+        Some(seen) => *seen = other.clone(),
+        None => self.0.push(other.clone()),
+      }
+    }
+    went
+      .iter()
+      .map(|status| gone_line(status, took_over))
+      .collect()
+  }
+}
+
+/// What an instance says of an older one, `status`, that's gone: that it
+/// took over from it, or only that it stopped.
+fn gone_line(status: &Status, took_over: bool) -> String {
+  let build = status.build.as_deref().unwrap_or("not given");
+  match took_over {
+    true => format!("took over from {} (build {build})", status.instance),
+    false => format!("{} (build {build}) stopped", status.instance),
+  }
+}
