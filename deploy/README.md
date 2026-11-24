@@ -7,7 +7,7 @@ directory:
 |---|---|---|
 | `capture` | Connects to dgg chat and writes everything to the journal | all the time |
 | `index` | Reads the journal into `index.sqlite` | all the time, with `--follow`: once 500 records are waiting (at most once a minute), or every 10 minutes |
-| `compact` | Packs each finished day into one compressed archive | every hour |
+| `compact` | Packs each finished day into one compressed archive, Kick's channels' too | every hour |
 | `gaps` | Lists when no capture was connected | when you want |
 | `backfill` | Fetches missed messages from public logs | after an outage |
 | `sync`, `serve` | Copy the journal between hosts | when moving hosts, or every 15 minutes from a peer |
@@ -191,8 +191,9 @@ meant to run for weeks and comes later.
 
 ## Syncing from other hosts
 
-An install can also pull other hosts' journals every 15 minutes, so it
-has whatever they captured while this one was off. Each other host runs
+An install can also pull other hosts' journals every 15 minutes, Kick's
+channels' included, so it has whatever they captured while this one was
+off. Each other host runs
 `dgg-logger serve` with a token (see below). Peers are synced from one
 after another; one that fails doesn't stop the rest.
 
