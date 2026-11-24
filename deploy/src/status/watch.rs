@@ -13,11 +13,12 @@
 use {
   super::{
     Report, Watcher, all_logs, capture_tail, gaps, health, journal_lines,
-    kick_lines, tail,
+    kick_lines, logged_at, tail,
   },
   crate::paths::Paths,
   ::common::{
     format,
+    log::Level,
     time::{now_ms, utc_timestamp},
   },
   ::ratatui::{
@@ -347,6 +348,35 @@ fn open(path: &Path) {
   let _ = Command::new(program).arg(path).spawn();
 }
 
+/// `line` drawn as a log's: its time dimmed, and its level in colour, the
+/// message too if it's a warning or an error. Lines that aren't a log's are
+/// drawn as they are.
+fn log_line(line: &str) -> Line<'_> {
+  let Some(time) = logged_at(line) else {
+    return Line::from(line);
+  };
+  let rest = &line[time.len()..];
+  let Some((level, message)) = Level::split(rest.trim_start()) else {
+    return Line::from(vec![Span::raw(time).dark_gray(), Span::raw(rest)]);
+  };
+  let colour = match level {
+    Level::Info => Style::new(),
+    Level::Warn => Style::new().fg(Color::Yellow),
+    Level::Error => Style::new().fg(Color::Red),
+  };
+  let name = match level {
+    Level::Info => Style::new().fg(Color::Green),
+    _ => colour.bold(),
+  };
+  Line::from(vec![
+    Span::raw(time).dark_gray(),
+    Span::raw(" "),
+    Span::styled(level.to_string(), name),
+    Span::raw(" "),
+    Span::styled(message, colour),
+  ])
+}
+
 fn heading(title: &str) -> Block<'_> {
   Block::bordered().title(Span::styled(
     format!(" {title} "),
@@ -490,7 +520,7 @@ pub fn draw(frame: &mut Frame, report: &Report, pane: &Pane) {
   if shown.is_empty() {
     body.push(Line::from(pane.empty.dark_gray()));
   } else {
-    body.extend(shown.iter().map(|line| Line::from(line.as_str())));
+    body.extend(shown.iter().map(|line| log_line(line)));
   }
   frame
     .render_widget(Paragraph::new(body).block(heading(&pane.title)), log_area);

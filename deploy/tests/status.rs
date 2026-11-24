@@ -159,7 +159,10 @@ fn draws_the_watch_screen() {
   let pane = ::deploy::status::watch::Pane {
     title: "capture.log".into(),
     header: None,
-    lines: vec!["2026-11-09 12:00:00.000Z capturing as a-1".to_owned()],
+    lines: vec![
+      "2026-11-09 12:00:00.000Z capturing as a-1".to_owned(),
+      "2026-11-09 12:00:01.000Z ERROR a-1: boom".to_owned(),
+    ],
     empty: "(empty)",
   };
   terminal
@@ -185,6 +188,14 @@ fn draws_the_watch_screen() {
   ] {
     assert!(screen.contains(expected), "{expected:?} not in\n{screen}");
   }
+  // An error's message is red.
+  let row = screen
+    .lines()
+    .position(|row| row.contains("a-1: boom"))
+    .unwrap();
+  let column = screen.lines().nth(row).unwrap().find("a-1: boom").unwrap();
+  let cell = &terminal.backend().buffer()[(column as u16, row as u16)];
+  assert_eq!(cell.fg, ::ratatui::style::Color::Red);
 }
 
 #[test]
@@ -412,9 +423,10 @@ fn merges_the_logs_in_time_order() {
   let dir = TempDir::new("deploy-status-all-logs");
   dir.write(
     "capture.log",
-    "2026-11-24 10:00:01.000Z a-1: capturing\n\
-     2026-11-24 10:00:03.000Z a-1: handed off to a-2\n",
+    "2026-11-24 10:00:01.000Z INFO  a-1: capturing\n\
+     2026-11-24 10:00:03.000Z WARN  a-1: control: busy\n",
   );
+  // From before levels.
   dir.write(
     "supervisor.log",
     "2026-11-24 10:00:00.000Z started\n\
@@ -425,11 +437,11 @@ fn merges_the_logs_in_time_order() {
   assert_eq!(
     all,
     [
-      "2026-11-24 10:00:00.000Z supervisor   started",
-      "2026-11-24 10:00:01.000Z capture      a-1: capturing",
-      "2026-11-24 10:00:02.000Z supervisor   capture: started, pid 1",
-      "                         supervisor   a line without a time",
-      "2026-11-24 10:00:03.000Z capture      a-1: handed off to a-2",
+      "2026-11-24 10:00:00.000Z       supervisor   started",
+      "2026-11-24 10:00:01.000Z INFO  capture      a-1: capturing",
+      "2026-11-24 10:00:02.000Z       supervisor   capture: started, pid 1",
+      "                               supervisor   a line without a time",
+      "2026-11-24 10:00:03.000Z WARN  capture      a-1: control: busy",
     ]
   );
   assert_eq!(all_logs(dir.path(), 2).len(), 2);

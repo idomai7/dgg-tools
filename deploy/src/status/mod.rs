@@ -9,11 +9,11 @@ pub mod watch;
 
 use {
   crate::{paths::Paths, peer, processes},
-  ::common::fs::MissingOk,
   ::common::{
     format,
     time::{now_ms, utc_day, utc_timestamp},
   },
+  ::common::{fs::MissingOk, log::Level},
   ::logger::{control, index, kick::channels},
   ::logger_journal::{
     Reader, Record, Variant, archive,
@@ -517,8 +517,8 @@ pub fn tail(path: &Path, lines: usize) -> io::Result<Vec<String>> {
 }
 
 /// The last `lines` lines of all the [`LOGS`] in `logs`, merged in time
-/// order, each after its time and its log's name. A line without a time of
-/// its own keeps its place after the line before it.
+/// order, each after its time, its level and its log's name. A line without
+/// a time of its own keeps its place after the line before it.
 pub fn all_logs(logs: &Path, lines: usize) -> Vec<String> {
   // Time, log, line in the log, and the line as shown.
   let mut all: Vec<(String, usize, usize, String)> = Vec::new();
@@ -528,12 +528,16 @@ pub fn all_logs(logs: &Path, lines: usize) -> Vec<String> {
     };
     let mut time = String::new();
     for (at, line) in tail.into_iter().enumerate() {
-      let shown = match logged_at(&line) {
+      let (own, rest) = match logged_at(&line) {
         Some(own) => {
           time = own.to_owned();
-          format!("{own} {name:<12} {}", line[own.len()..].trim_start())
+          (own, line[own.len()..].trim_start())
         }
-        None => format!("{:24} {name:<12} {line}", ""),
+        None => ("", line.as_str()),
+      };
+      let shown = match Level::split(rest) {
+        Some((level, rest)) => format!("{own:24} {level} {name:<12} {rest}"),
+        None => format!("{own:24} {:5} {name:<12} {rest}", ""),
       };
       all.push((time.clone(), log, at, shown));
     }
@@ -549,7 +553,7 @@ pub fn all_logs(logs: &Path, lines: usize) -> Vec<String> {
 
 /// The time a log line starts with, as [`utc_timestamp`] writes it
 /// (`YYYY-MM-DD HH:MM:SS.mmmZ`), if it starts with one.
-fn logged_at(line: &str) -> Option<&str> {
+pub fn logged_at(line: &str) -> Option<&str> {
   let time = line.get(..24)?;
   let shape = time.bytes().enumerate().all(|(at, byte)| match at {
     4 | 7 => byte == b'-',
