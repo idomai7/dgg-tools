@@ -6,7 +6,8 @@ use {
   ::deploy::{
     paths::Paths,
     status::{
-      Health, Watcher, all_logs, capture_tail, gaps, journal_lines, tail, text,
+      Health, Watcher, Which, all_logs, capture_tail, gaps, journal_lines,
+      tail, text,
     },
   },
 };
@@ -290,7 +291,11 @@ fn reports_the_peers() {
 fn tails_a_captures_frames() {
   let dir = TempDir::new("deploy-status-frames");
   let root = dir.path().join("journal");
-  assert!(capture_tail(&root, "a-1", 10).unwrap().is_empty());
+  let a1 = Which {
+    kick: None,
+    instance: "a-1".into(),
+  };
+  assert!(capture_tail(&root, &a1, 10).unwrap().is_empty());
   // 2026-11-09 12:00:00.000 UTC, then on.
   let at = 1_794_225_600_000_i64;
   let mut text =
@@ -309,7 +314,7 @@ fn tails_a_captures_frames() {
     "journal dgg.0.3\u{1e}\n",
   );
   assert_eq!(
-    capture_tail(&root, "a-1", 3).unwrap(),
+    capture_tail(&root, &a1, 3).unwrap(),
     [
       "12:00:00.002Z #1 MSG {\"n\":2}",
       "12:00:00.003Z #1 MSG {\"n\":3}",
@@ -317,7 +322,7 @@ fn tails_a_captures_frames() {
     ]
   );
   assert_eq!(
-    capture_tail(&root, "a-1", 10).unwrap()[0],
+    capture_tail(&root, &a1, 10).unwrap()[0],
     "12:00:00.000Z #1 (connected to wss://x)"
   );
   // A newer day's file is the one shown.
@@ -329,8 +334,29 @@ fn tails_a_captures_frames() {
     ),
   );
   assert_eq!(
-    capture_tail(&root, "a-1", 10).unwrap(),
+    capture_tail(&root, &a1, 10).unwrap(),
     ["12:00:00.000Z #2 PING {}"]
+  );
+
+  // A Kick channel's capture, of the same instance name.
+  dir.write(
+    "journal/kick/one/live/2026-11-09/a-1.journal",
+    format!(
+      "journal kick.0.1 ; channel=one\u{1e}\n{at} a-1 1 frame {{}}\u{1e}\n\
+       {} a-1 1 history - {{\"data\":[]}}\u{1e}\n",
+      at + 1
+    ),
+  );
+  let kick = Which {
+    kick: Some("one".into()),
+    instance: "a-1".into(),
+  };
+  assert_eq!(
+    capture_tail(&root, &kick, 10).unwrap(),
+    [
+      "12:00:00.000Z #1 {}",
+      "12:00:00.001Z #1 (history page, 11 bytes)"
+    ]
   );
 }
 

@@ -12,9 +12,9 @@
 
 use {
   super::{
-    Report, Watcher, all_logs, capture_tail, gaps, health, journal_lines,
-    listening, listening_width, logged_at, per_minute, program_width, service,
-    tail,
+    Report, Watcher, Which, all_logs, capture_tail, gaps, health,
+    journal_lines, listening, listening_width, logged_at, per_minute,
+    program_width, service, tail,
   },
   crate::paths::Paths,
   ::common::{
@@ -97,8 +97,8 @@ enum View {
   Logs,
   /// One of [`LOGS`](super::LOGS).
   Log(&'static str),
-  /// The newest records of a capture instance, if one is running.
-  Records(Option<String>),
+  /// The newest records of a capture, if one is running.
+  Records(Option<Which>),
   Gaps(Gaps),
 }
 
@@ -183,7 +183,7 @@ impl View {
     }
   }
 
-  fn pane(&self, paths: &Paths) -> Pane<'static> {
+  fn pane(&self, paths: &Paths, report: &Report) -> Pane<'static> {
     match self {
       Self::Logs => Pane {
         title: "every log, in time order".into(),
@@ -198,10 +198,10 @@ impl View {
           .unwrap_or_default(),
         empty: "(empty: shell runs print to their own windows)",
       },
-      Self::Records(Some(instance)) => Pane {
-        title: format!("records: {instance} (r again for the next capture)"),
+      Self::Records(Some(which)) => Pane {
+        title: records_title(which, report),
         header: None,
-        lines: capture_tail(&paths.data.join("journal"), instance, 500)
+        lines: capture_tail(&paths.data.join("journal"), which, 500)
           .unwrap_or_else(|e| vec![format!("(can't read: {e})")]),
         empty: "(no live file yet)",
       },
@@ -223,24 +223,34 @@ impl View {
     }
   }
 
-  /// The newest capture's records, or if a capture's are shown, the next
-  /// older one's.
+  /// The records of the capture at the top of the captures box, or if a
+  /// capture's are shown, the next one's: dgg's, then Kick's by channel,
+  /// each by instance, so that however the box is sorted, pressing on
+  /// comes round to every one.
   fn next_records(&self, report: &Report) -> Self {
-    let instances: Vec<&str> = report
+    let mut all: Vec<Which> = report
       .captures
       .iter()
-      .rev()
-      .map(|capture| capture.instance.as_str())
+      .map(|capture| capture.which())
       .collect();
-    let next = match self {
-      Self::Records(Some(current)) => instances
-        .iter()
-        .position(|instance| instance == current)
-        .map_or(0, |at| (at + 1) % instances.len()),
-      Self::Records(None) | Self::Logs | Self::Log(_) | Self::Gaps(_) => 0,
+    let Self::Records(Some(current)) = self else {
+      return Self::Records(all.into_iter().next());
     };
-    Self::Records(instances.get(next).map(|instance| (*instance).to_owned()))
+    all.sort();
+    let next = all.iter().find(|which| *which > current);
+    Self::Records(next.or(all.first()).cloned())
   }
+}
+
+/// The records page's title: the capture, and what it listens to.
+fn records_title(which: &Which, report: &Report) -> String {
+  let capture = report.captures.iter().find(|c| c.which() == *which);
+  let listening = capture.map_or("?", listening);
+  let what = match &which.kick {
+    Some(_) => format!("kick {}, channel {listening}", which.instance),
+    None => format!("dgg {}, {listening}", which.instance),
+  };
+  format!("records: {what} (r again for the next capture)")
 }
 
 /// Runs the screen until the user quits.
@@ -264,7 +274,7 @@ fn event_loop(
     if let View::Gaps(gaps) = &mut view {
       gaps.refresh(paths.data.join(Dgg::INDEX));
     }
-    let pane = view.pane(paths);
+    let pane = view.pane(paths, &report);
     terminal.draw(|frame| draw(frame, &report, &pane))?;
 
     let until = Instant::now() + interval;

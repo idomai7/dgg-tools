@@ -546,7 +546,8 @@ Planned 2026-11-25. Each step a pause for review.
    rate is shown too (`12/min`), blank until a second snapshot.
 2. **Records:** `r` cycles through every capture, Kick's too, and the
    page's title names what it listens to (the Kick channel, or dgg's
-   endpoint).
+   endpoint). Done: the first press shows the capture at the top of the
+   box, and pressing on goes round dgg's, then Kick's by channel.
 3. **Log pages:** `3` capture shows every capture's log, dgg's and
    Kick's, in time order, each line naming its channel; a key narrows it
    to one channel, cycling. `8` goes. The rest (index, migrate, compact,

@@ -206,17 +206,25 @@ pub struct Watcher {
   system: System,
   previous: Option<(String, i64, u64)>,
   counted: HashMap<PathBuf, Counted>,
-  /// Each capture's frames at each snapshot (unix ms), by [`rate_key`].
-  frames: HashMap<RateKey, VecDeque<(i64, u64)>>,
+  /// Each capture's frames at each snapshot (unix ms).
+  frames: HashMap<Which, VecDeque<(i64, u64)>>,
 }
 
-/// Which capture a count of frames is: Kick's or dgg's, its instance, and
-/// for Kick's, its channel.
-type RateKey = (bool, String, Option<String>);
+/// Which capture one is: its Kick channel (none for dgg's), then its
+/// instance. Kick's captures of different channels share instance names.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Which {
+  pub kick: Option<String>,
+  pub instance: String,
+}
 
-fn rate_key(capture: &Capture) -> RateKey {
-  let slug = capture.kick.then(|| capture.listening.clone()).flatten();
-  (capture.kick, capture.instance.clone(), slug)
+impl Capture {
+  pub fn which(&self) -> Which {
+    Which {
+      kick: self.kick.then(|| self.listening.clone()).flatten(),
+      instance: self.instance.clone(),
+    }
+  }
 }
 
 /// How unhealthy a capture is, the most first.
@@ -412,7 +420,7 @@ impl Watcher {
   fn rate(&mut self, captures: &mut [Capture], now: i64) {
     let mut frames = HashMap::new();
     for capture in captures {
-      let key = rate_key(capture);
+      let key = capture.which();
       let mut seen = self.frames.remove(&key).unwrap_or_default();
       // Fewer than before, as files were compacted away: counted afresh.
       if seen
@@ -698,17 +706,21 @@ pub fn logged_at(line: &str) -> Option<&str> {
   shape.then_some(time)
 }
 
-/// The last `lines` records dgg's capture `instance` wrote to its newest
-/// live file, in the journal directory `journal`, one line each: receive time (`HH:MM:SS.mmmZ`, UTC), connection, and the frame as received
-/// (or what happened to the connection). Reads at most the last 64 KB.
+/// The last `lines` records capture `which` wrote to its newest live file,
+/// in the journal directory `journal`, one line each: receive time
+/// (`HH:MM:SS.mmmZ`, UTC), connection, and the frame as received (or what
+/// happened to the connection). Reads at most the last 64 KB.
 pub fn capture_tail(
   journal: &Path,
-  instance: &str,
+  which: &Which,
   lines: usize,
 ) -> io::Result<Vec<String>> {
-  let [root, _] = dgg_roots(journal)?;
-  let Some(file) = root.live_files()?.into_iter().rfind(|file| {
-    live_file_instance(file).is_some_and(|(theirs, _)| theirs == instance)
+  let files = match &which.kick {
+    Some(slug) => live_files(&channel_root(&kick_root(journal), slug))?,
+    None => dgg_roots(journal)?[0].live_files()?,
+  };
+  let Some(file) = files.into_iter().rfind(|file| {
+    live_file_instance(file).is_some_and(|(theirs, _)| theirs == which.instance)
   }) else {
     return Ok(Vec::new());
   };
@@ -718,33 +730,60 @@ pub fn capture_tail(
     other => io::Error::other(format!("{}: {other:?}", file.display())),
   })?;
   // Starting mid-file, the first line may be cut: it doesn't decode.
-  let records: Vec<v0::Record> = reader
+  let records: Vec<Record> = reader
     .filter_map(Result::ok)
-    .filter_map(|entry| match entry.record {
-      Record::V0(record) => Some(record),
-      Record::Kick0(_) => None,
-    })
+    .map(|entry| entry.record)
     .collect();
   let skip = records.len().saturating_sub(lines);
   Ok(records[skip..].iter().map(record_line).collect())
 }
 
 /// One record, as [`capture_tail`] shows it.
-fn record_line(record: &v0::Record) -> String {
-  let time = utc_timestamp(record.receive_time);
+fn record_line(record: &Record) -> String {
+  let (receive_time, connection, what) = match record {
+    Record::V0(record) => (
+      record.receive_time,
+      record.connection,
+      match &record.body {
+        v0::Body::Frame(frame) => frame.clone(),
+        v0::Body::Binary(bytes) => binary(bytes),
+        v0::Body::Open(url) => format!("(connected to {url})"),
+        v0::Body::Close(why) => format!("(disconnected: {why})"),
+        v0::Body::Fetched { source, nick, .. } => {
+          format!("(fetched from {source}: {nick})")
+        }
+        v0::Body::FetchRange { source, .. } => {
+          format!("(fetched from {source})")
+        }
+      },
+    ),
+    Record::Kick0(record) => (
+      record.receive_time,
+      record.connection,
+      match &record.body {
+        kick::v0::Body::Frame(frame) => frame.clone(),
+        kick::v0::Body::Binary(bytes) => binary(bytes),
+        kick::v0::Body::Open(url) => format!("(connected to {url})"),
+        kick::v0::Body::Close(why) => format!("(disconnected: {why})"),
+        kick::v0::Body::History { cursor, page } => format!(
+          "(history page{}, {} bytes)",
+          cursor
+            .as_ref()
+            .map(|cursor| format!(" before {cursor}"))
+            .unwrap_or_default(),
+          page.len()
+        ),
+      },
+    ),
+  };
+  let time = utc_timestamp(receive_time);
   // Just the time of day: `HH:MM:SS.mmmZ`.
   let time = time.get(11..).unwrap_or(&time);
-  let what = match &record.body {
-    v0::Body::Frame(frame) => frame.clone(),
-    v0::Body::Binary(bytes) => format!("(binary frame, {} bytes)", bytes.len()),
-    v0::Body::Open(url) => format!("(connected to {url})"),
-    v0::Body::Close(why) => format!("(disconnected: {why})"),
-    v0::Body::Fetched { source, nick, .. } => {
-      format!("(fetched from {source}: {nick})")
-    }
-    v0::Body::FetchRange { source, .. } => format!("(fetched from {source})"),
-  };
-  format!("{time} #{} {what}", record.connection)
+  format!("{time} #{connection} {what}")
+}
+
+fn binary(bytes: &[u8]) -> String {
+  format!("(binary frame, {} bytes)", bytes.len())
 }
 
 /// The gaps in what the index at `path` holds, as `dgg-gaps` reports them: its
