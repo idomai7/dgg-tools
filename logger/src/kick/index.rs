@@ -182,6 +182,42 @@ pub fn index(db: &mut Connection, journal_root: &Path) -> Result<Stats, Error> {
   Ok(stats)
 }
 
+/// An index, in memory, of what channel `slug`'s live files hold past
+/// their checkpoints in `db` (all of a file it has none for, or of every
+/// file without `db`): what Kick's index hasn't reached yet, small enough
+/// to build for each query.
+pub(crate) fn recent(
+  db: Option<&Connection>,
+  journal_root: &Path,
+  slug: &str,
+) -> Result<Connection, Error> {
+  let mut recent = Connection::open_in_memory()?;
+  recent.execute_batch(SCHEMA)?;
+  let root = channel_root(&kick_root(journal_root), slug);
+  let mut stats = Stats::default();
+  for file in live_files(&root)? {
+    let path = relative(journal_root, &file);
+    let offset = match db {
+      Some(db) => checkpoint(db, &path)?.0,
+      None => 0,
+    };
+    let reader = match Reader::open(&file, offset) {
+      Ok(reader) => reader,
+      Err(ReadError::Io(e)) if e.kind() != io::ErrorKind::NotFound => {
+        return Err(e.into());
+      }
+      // Compacted away meanwhile, or one a round would skip.
+      Err(_) => continue,
+    };
+    let origin = Origin {
+      channel: slug,
+      path: &path,
+    };
+    index_file(&mut recent, &origin, None, reader, &mut stats)?;
+  }
+  Ok(recent)
+}
+
 /// Drops what the index holds of live files that no longer exist
 /// (compacted away): their checkpoints and their unparsed rows.
 fn forget_gone(db: &mut Connection, live: &[String]) -> Result<(), Error> {

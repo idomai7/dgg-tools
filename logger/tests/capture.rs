@@ -211,6 +211,7 @@ async fn hands_off_to_an_instance_on_another_host() {
   let tokens = ::logger::serve::Tokens {
     read: "reader".into(),
     control: Some("secret".into()),
+    query: None,
   };
   let router = ::logger::serve::router(old_host.to_path_buf(), tokens);
   let serving =

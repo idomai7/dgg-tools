@@ -36,13 +36,25 @@ fn pushed_statuses_move_onto_the_receivers_clock() {
 #[test]
 fn tokens_must_be_long_and_differ() {
   let long = |c: char| c.to_string().repeat(32);
-  let tokens = |read: String, control: Option<String>| Tokens { read, control };
+  let tokens = |read: String, control: Option<String>| Tokens {
+    read,
+    control,
+    query: None,
+  };
+  let query = |query: String| Tokens {
+    query: Some(query),
+    ..tokens(long('a'), Some(long('b')))
+  };
   assert!(tokens(long('a'), None).check().is_ok());
   assert!(tokens(long('a'), Some(long('b'))).check().is_ok());
+  assert!(query(long('c')).check().is_ok());
   for bad in [
     tokens("a".repeat(31), None),
     tokens(long('a'), Some("b".repeat(31))),
     tokens(long('a'), Some(long('a'))),
+    query("c".repeat(31)),
+    query(long('a')),
+    query(long('b')),
   ] {
     assert!(bad.check().is_err(), "{bad:?}");
   }
@@ -65,6 +77,7 @@ async fn control_endpoints() {
   let tokens = Tokens {
     read: "reader".into(),
     control: Some("secret".into()),
+    query: None,
   };
   let base = serve(&root, tokens).await;
   let client = ::reqwest::Client::new();
@@ -145,6 +158,7 @@ async fn without_a_control_token_nothing_pushes() {
   let tokens = Tokens {
     read: "reader".into(),
     control: None,
+    query: None,
   };
   let base = serve(&root, tokens).await;
   let client = ::reqwest::Client::new();
@@ -175,6 +189,7 @@ async fn serves_a_few_requests_at_once() {
   let tokens = Tokens {
     read: "reader".into(),
     control: None,
+    query: None,
   };
   let base = serve(&root, tokens).await;
   let client = ::reqwest::Client::new();
@@ -211,6 +226,7 @@ async fn serve_tls(root: &TempDir, host: &str) -> (String, String) {
   let tokens = Tokens {
     read: "reader".into(),
     control: None,
+    query: None,
   };
   let app = router(root.to_path_buf(), tokens);
   ::tokio::spawn(

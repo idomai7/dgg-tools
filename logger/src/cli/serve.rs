@@ -16,8 +16,9 @@ use {
 };
 
 /// Serve this host's journal over HTTPS, for other hosts: for `sync` to
-/// pull from, and (given `--control-token`) for a capture on another host
-/// (`capture --peer`) to take over from the ones here.
+/// pull from, (given `--control-token`) for a capture on another host
+/// (`capture --peer`) to take over from the ones here, and Kick's history
+/// and live chat for kick-mod.
 #[derive(Args)]
 pub struct Serve {
   /// Address to listen on. Use 0.0.0.0 to accept other hosts, with
@@ -39,6 +40,10 @@ pub struct Serve {
   /// and not `--token`. Without it, nothing can push.
   #[arg(long, env = "LOGGER_CONTROL_TOKEN", hide_env_values = true)]
   control_token: Option<String>,
+  /// Bearer token that reads only Kick's history and live chat, for
+  /// kick-mod; at least 32 characters, and none of the others.
+  #[arg(long, env = "LOGGER_QUERY_TOKEN", hide_env_values = true)]
+  query_token: Option<String>,
 }
 
 impl Serve {
@@ -51,12 +56,13 @@ impl Serve {
     let tokens = Tokens {
       read: self.token,
       control: self.control_token.filter(|token| !token.is_empty()),
+      query: self.query_token.filter(|token| !token.is_empty()),
     };
     if let Err(why) = tokens.check() {
       error!(
         "{why} (--token or LOGGER_TOKEN, --control-token or \
-         LOGGER_CONTROL_TOKEN; a random {MIN_TOKEN}+ character string will \
-         do)"
+         LOGGER_CONTROL_TOKEN, --query-token or LOGGER_QUERY_TOKEN; a random \
+         {MIN_TOKEN}+ character string will do)"
       );
       return ExitCode::FAILURE;
     }

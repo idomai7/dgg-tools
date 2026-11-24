@@ -3,4 +3,6 @@
 
 pub mod capture;
 pub mod channels;
+pub mod history;
 pub mod index;
+pub mod tail;

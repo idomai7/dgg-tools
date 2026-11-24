@@ -29,6 +29,7 @@ async fn serve(root: &TempDir) -> String {
   let tokens = Tokens {
     read: "secret".into(),
     control: None,
+    query: None,
   };
   let app = router(root.to_path_buf(), tokens);
   ::tokio::spawn(async move { ::axum::serve(listener, app).await.unwrap() });
@@ -174,6 +175,7 @@ async fn serve_tls(root: &TempDir) -> (String, String) {
   let tokens = Tokens {
     read: "secret".into(),
     control: None,
+    query: None,
   };
   let app = router(root.to_path_buf(), tokens);
   ::tokio::spawn(
