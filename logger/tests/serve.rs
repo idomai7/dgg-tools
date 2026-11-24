@@ -19,6 +19,7 @@ fn status(instance: &str) -> Status {
     heartbeat: 2_000,
     healthy_since: Some(1_500),
     build: Some("0.1.0+abc".into()),
+    listening: None,
   }
 }
 

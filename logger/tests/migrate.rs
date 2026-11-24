@@ -101,6 +101,7 @@ fn says_each_kind_of_file() {
     heartbeat: now,
     healthy_since: Some(now - 500),
     build: Some(build.into()),
+    listening: None,
   };
   let control = control::dir(&dgg_dir);
   control::write(&control, &status("old", "0.0.1-abc")).unwrap();

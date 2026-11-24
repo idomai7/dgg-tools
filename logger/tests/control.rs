@@ -12,6 +12,7 @@ fn status(instance: &str, started: i64, healthy_since: Option<i64>) -> Status {
     heartbeat: 1_000,
     healthy_since,
     build: None,
+    listening: None,
   }
 }
 
@@ -139,6 +140,28 @@ fn remove_waits_out_a_reader_that_blocks_deletion() {
   // Already gone is fine.
   control::remove(&dir, "a").unwrap();
   fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn says_what_it_listens_to() {
+  let listening = Status {
+    listening: Some("wss://chat.example/ws".into()),
+    ..status("a", 5, None)
+  };
+  let text = listening.encode();
+  let line = "listening wss://chat.example/ws\u{1e}\n";
+  assert!(text.ends_with(line), "{text}");
+  assert_eq!(Status::decode(&text), Some(listening));
+  // Left out if it isn't one token.
+  let spaced = Status {
+    listening: Some("two words".into()),
+    ..status("a", 5, None)
+  };
+  assert!(!spaced.encode().contains("listening"));
+  // A reader that doesn't know an entry skips it, as an older one skips
+  // this.
+  let unknown = status("a", 5, None).encode() + "later x\u{1e}\n";
+  assert_eq!(Status::decode(&unknown), Some(status("a", 5, None)));
 }
 
 #[test]

@@ -329,6 +329,7 @@ async fn hands_off_to_a_newer_instance() {
     heartbeat: now_ms(),
     healthy_since: Some(now_ms() - 60_000),
     build: None,
+    listening: None,
   };
   let dir = control_dir(&root, "one");
   control::write_as(&dir, &newer, Variant::Kick).unwrap();

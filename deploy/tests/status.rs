@@ -23,6 +23,7 @@ fn status(
     heartbeat,
     healthy_since: healthy,
     build: None,
+    listening: None,
   };
   status.encode()
 }
@@ -374,6 +375,7 @@ fn reports_kicks_captures_and_channels() {
       heartbeat,
       healthy_since: Some(now - 50_000),
       build: None,
+      listening: None,
     };
     status.encode_as(Variant::Kick)
   };
@@ -455,6 +457,27 @@ fn reports_kicks_captures_and_channels() {
   let report = Watcher::new().unwrap().gather(&paths).unwrap();
   let problem = report.kick.problem.as_deref().unwrap();
   assert!(problem.contains("line 1"), "{problem}");
+}
+
+#[test]
+fn says_what_a_capture_listens_to() {
+  let dir = TempDir::new("deploy-status-listening");
+  let now = now_ms();
+  let status = ::logger::control::Status {
+    instance: "a-1".into(),
+    started: now - 1000,
+    heartbeat: now,
+    healthy_since: None,
+    build: None,
+    listening: Some("wss://chat.example/ws".into()),
+  };
+  dir.write("data/journal/dgg/control/a-1.status", status.encode());
+  let paths = Paths::under(dir.to_path_buf());
+  let report = Watcher::new().unwrap().gather(&paths).unwrap();
+  // From its status, with no live file to say.
+  let listening = report.captures[0].listening.as_deref();
+  assert_eq!(listening, Some("wss://chat.example/ws"));
+  assert!(text(&report).join("\n").contains("a-1"));
 }
 
 #[test]

@@ -88,9 +88,9 @@ pub struct Capture {
   pub build: Option<String>,
   /// Frames it has captured in its live files (those not yet compacted).
   pub frames: u64,
-  /// What it listens to: dgg's WebSocket URL (as its live files' last
-  /// connection opened has it, once there is one), or the Kick channel's
-  /// slug.
+  /// What it listens to: dgg's WebSocket URL, or the Kick channel's slug.
+  /// As its status says, or for a capture from before statuses said, as
+  /// its live files' last connection opened has it, once there is one.
   pub listening: Option<String>,
   /// Whether it's Kick's, not dgg's.
   pub kick: bool,
@@ -363,7 +363,8 @@ impl Watcher {
         counted.offset = reader.offset();
       }
       capture.frames += counted.frames;
-      if !capture.kick && counted.opened.is_some() {
+      // From before captures said.
+      if capture.listening.is_none() {
         capture.listening = counted.opened.clone();
       }
     }
@@ -482,7 +483,7 @@ fn capture(status: control::Status, now: i64) -> Capture {
     started: status.started,
     build: status.build,
     frames: 0,
-    listening: None,
+    listening: status.listening,
     kick: false,
   }
 }

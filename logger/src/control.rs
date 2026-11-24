@@ -48,7 +48,10 @@ use {
   ::common::{atomic_file, fs::MissingOk},
   ::logger_journal::{
     Format, Header, Variant, Version,
-    record::{split, v0::valid_instance},
+    record::{
+      split,
+      v0::{valid_instance, valid_token},
+    },
   },
   ::std::{
     fs, io,
@@ -92,6 +95,10 @@ pub struct Status {
   pub healthy_since: Option<i64>,
   /// The build it runs, if it says.
   pub build: Option<String>,
+  /// What it listens to, if it says: dgg's WebSocket URL, or the Kick
+  /// channel's slug. Left out unless it's one token (see
+  /// [`valid_token`]).
+  pub listening: Option<String>,
 }
 
 impl Status {
@@ -113,6 +120,11 @@ impl Status {
     }
     if let Some(build) = &self.build {
       text += &format!("build {build}{end}");
+    }
+    if let Some(listening) = &self.listening
+      && valid_token(listening)
+    {
+      text += &format!("listening {listening}{end}");
     }
     text
   }
@@ -142,7 +154,7 @@ impl Status {
       .ok()?;
     let (mut instance, mut started, mut heartbeat, mut healthy_since) =
       (None, None, None, None);
-    let mut build = None;
+    let (mut build, mut listening) = (None, None);
     for line in lines {
       let (key, value) = line.split_once(' ')?;
       let slot = match key {
@@ -154,6 +166,12 @@ impl Status {
         }
         "build" => {
           if value.is_empty() || build.replace(value).is_some() {
+            return None;
+          }
+          continue;
+        }
+        "listening" => {
+          if value.is_empty() || listening.replace(value).is_some() {
             return None;
           }
           continue;
@@ -177,6 +195,7 @@ impl Status {
       heartbeat: heartbeat?,
       healthy_since,
       build: build.map(str::to_owned),
+      listening: listening.map(str::to_owned),
     })
   }
 

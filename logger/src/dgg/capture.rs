@@ -132,6 +132,7 @@ pub async fn run(
           heartbeat: now_ms(),
           healthy_since: health.since,
           build: Some(crate::BUILD.into()),
+          listening: Some(url.clone()),
         };
         // Control files are advisory: a failed round (e.g. Windows refusing
         // a rename while another instance reads the file) is retried next

@@ -232,6 +232,7 @@ pub async fn run(
           heartbeat: now_ms(),
           healthy_since: *captured.subscribed.borrow(),
           build: Some(crate::BUILD.into()),
+          listening: Some(slug.clone()),
         };
         // Advisory, as dgg's: a failed round is retried next tick.
         match check_handoff(&controls, &me, &handoff, &mut older) {

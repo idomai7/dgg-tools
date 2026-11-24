@@ -83,6 +83,7 @@ fn waits_for_a_new_healthy_capture() {
       heartbeat: now,
       healthy_since: healthy.then_some(started),
       build: None,
+      listening: None,
     };
     fs::write(control.join(format!("{instance}.status")), status.encode())
       .unwrap();
@@ -116,6 +117,7 @@ fn waits_for_a_new_healthy_kick_capture() {
       heartbeat: now,
       healthy_since: Some(now),
       build: None,
+      listening: None,
     };
     let text = status.encode_as(variant);
     fs::write(control.join(format!("{instance}.status")), text).unwrap();
