@@ -728,6 +728,7 @@ dependencies = [
  "logger",
  "logger-journal",
  "ratatui",
+ "rcgen",
  "serde",
  "serde_json",
  "sysinfo",
