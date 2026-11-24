@@ -88,10 +88,10 @@ The logger, codenamed ledgerline: `logger-journal` and `logger`, run as
       locks, and starts those only once it succeeds. For now it only checks,
       and logs what an upgrade touches: first the build, then each kind of
       file in each journal root with its version (a file this build can't
-      read gets a line of its own, and is left as it was), the index's
-      schema, which must be 0.6, and each capture running, with its build.
-      The next format change that needs a migration fills it in. Its log is
-      `migrate.log`, key `3` in `status --watch`.
+      read gets a line of its own, and is left as it was), then the index's
+      schema, which must be 0.6. How the captures hand over is theirs to
+      say, in their own logs. The next format change that needs a migration
+      fills it in. Its log is `migrate.log`, key `3` in `status --watch`.
 
 ## Design
 - **Journal layout:**
