@@ -226,11 +226,11 @@ fn reports_the_peers() {
   assert!(!text(&report).join("\n").contains("sync"));
 
   dir.write(
-    "peer.env",
-    "LOGGER_PEER_URL=http://peer:8788\nLOGGER_PEER_TOKEN=secret\n",
+    "install.env.json",
+    r#"{"mesh": {"node": "me", "token": "mesh"},
+        "peers": {"peer": {"url": "http://peer:8788", "token": "secret"}}}"#,
   );
   dir.write("nodes", "do https://do:8788\nme push\n");
-  dir.write("mesh.env", "LOGGER_NODE=me\nLOGGER_PEER_TOKEN=mesh\n");
   let lines = journal_lines(&watcher.gather(&paths).unwrap());
   assert_eq!(
     lines[lines.len() - 2..],
@@ -256,11 +256,19 @@ fn reports_the_peers() {
     "{all}"
   );
   assert!(!all.contains("secret") && !all.contains("mesh "), "{all}");
-  // A broken file says so, and the rest are still shown.
+  // A file from before the config says so, and the peers are still shown.
   dir.write("peer.env", "LOGGER_PEER_URL=http://peer:8788\n");
   let sync = watcher.gather(&paths).unwrap().sync.unwrap();
-  assert_eq!(sync.peers.len(), 1);
+  assert_eq!(sync.peers.len(), 2);
   assert!(sync.problems[0].contains("peer.env"), "{:?}", sync.problems);
+  // A broken config says so.
+  dir.write("install.env.json", "{");
+  let sync = watcher.gather(&paths).unwrap().sync.unwrap();
+  assert!(
+    sync.problems[0].contains("install.env.json"),
+    "{:?}",
+    sync.problems
+  );
 }
 
 #[test]

@@ -40,9 +40,9 @@ enum Command {
     /// Minutes between compactions.
     #[arg(long, default_value_t = 60)]
     compact_every: u64,
-    /// Where the peers to sync from are: a directory holding a node list
-    /// (`nodes` and `mesh.env`), `peers\<name>.env` files or `peer.env`
-    /// (see the README), looked at before each round.
+    /// Where the peers to sync from are: an install's root, holding its
+    /// config (`install.env.json`) and node list (`nodes`; see the
+    /// README), looked at before each round.
     #[arg(long)]
     peers: Option<PathBuf>,
     /// A single peer file, as older installs ran: its directory is taken as
@@ -78,35 +78,32 @@ enum Command {
     #[arg(long, default_value_t = 3)]
     keep: usize,
     /// Be this node of a mesh, syncing from every other node in
-    /// `--nodes` with the mesh's token from `--mesh-token`. Kept in
-    /// `<root>\mesh.env` until changed or removed.
-    #[arg(long, requires = "mesh_token")]
+    /// `--nodes` with the mesh's token, `mesh_token` in the config given.
+    /// Kept in `<root>\install.env.json` until changed or removed.
+    #[arg(long)]
     name: Option<String>,
-    /// The mesh's read token, for `--name`.
-    #[arg(long, env = "LOGGER_MESH_TOKEN", hide_env_values = true)]
-    mesh_token: Option<String>,
     /// The mesh's node list (see the README), copied to `<root>\nodes`.
     #[arg(long)]
     nodes: Option<PathBuf>,
-    /// Leave the mesh: its node list and `mesh.env` are removed.
+    /// Leave the mesh: its node list and the config's mesh are removed.
     #[arg(long, conflicts_with_all = ["name", "nodes"])]
     no_mesh: bool,
-    /// The mesh CA's certificate (from `cert ca`), copied to
-    /// `<root>\ca.pem`: `https://` peers are then trusted on its word
-    /// alone.
+    /// The mesh CA's certificate (from `cert ca`), kept in the config:
+    /// `https://` peers are then trusted on its word alone.
     #[arg(long)]
     ca: Option<PathBuf>,
     /// Also sync from this host's `serve` every 15 minutes (e.g.
-    /// `https://old-host:8788`), with its token from `--peer-token`. Kept
-    /// in `<root>\peers\<name>.env` until changed or removed.
+    /// `https://old-host:8788`), with its token, `peer_token` in the
+    /// config given. Kept in the config until changed or removed.
     #[arg(long)]
     peer: Option<String>,
     /// The name for `--peer` (default: its host).
     #[arg(long, requires = "peer")]
     peer_name: Option<String>,
-    /// The token for `--peer`.
-    #[arg(long, env = "LOGGER_PEER_TOKEN", hide_env_values = true)]
-    peer_token: Option<String>,
+    /// The secrets for `--name` and `--peer`: `{"mesh_token": "...",
+    /// "peer_token": "..."}`, each only with its flag.
+    #[command(flatten)]
+    secrets: cli::ConfigFrom,
     /// Stop syncing from the peer of this name.
     #[arg(long)]
     no_peer: Vec<String>,
@@ -120,6 +117,14 @@ enum Command {
   #[cfg(windows)]
   Uninstall {
     /// Where to clean up if nothing is installed (after shell runs).
+    #[arg(long)]
+    root: Option<PathBuf>,
+  },
+  /// Show the install's config, `install.env.json`, with every secret as
+  /// `<secret>`, and anything wrong with it.
+  Config {
+    /// The install's root (default: the installed one, else the user
+    /// install's).
     #[arg(long)]
     root: Option<PathBuf>,
   },
@@ -203,9 +208,44 @@ impl<T: ::clap::Args> WithRoot<T> {
   }
 }
 
+/// What `install --config-file` or `--config-stdin` gives.
+#[cfg(windows)]
+#[derive(::serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct InstallSecrets {
+  /// The mesh's read token, for `--name`.
+  mesh_token: Option<::common::config::Secret>,
+  /// The token for `--peer`.
+  peer_token: Option<::common::config::Secret>,
+}
+
+/// Prints the install's config without its secrets, then anything wrong
+/// with it, as `status` sees it.
+fn show_config(root: Option<PathBuf>) -> ExitCode {
+  use ::deploy::peer::{CONFIG, gather, read_config};
+  let root = root.unwrap_or_else(|| installed().root);
+  let failed = match read_config(&root) {
+    Ok(Some(config)) => {
+      // Every secret shows as <secret>.
+      println!("{}", ::serde_json::to_string_pretty(&config).unwrap());
+      false
+    }
+    Ok(None) => {
+      println!("no {CONFIG} in {}", root.display());
+      false
+    }
+    Err(_) => true,
+  };
+  for problem in gather(&root).problems {
+    eprintln!("{problem}");
+  }
+  match failed {
+    true => ExitCode::FAILURE,
+    false => ExitCode::SUCCESS,
+  }
+}
+
 fn main() -> ExitCode {
-  // A peer token, for `install --peer`, may be in .env.
-  let _ = ::dotenvy::dotenv();
   match Args::parse().command {
     Command::Supervise {
       data,
@@ -233,17 +273,37 @@ fn main() -> ExitCode {
       logs,
       keep,
       name,
-      mesh_token,
       nodes,
       no_mesh,
       ca,
       peer,
       peer_name,
-      peer_token,
+      secrets,
       no_peer,
       no_peers,
     } => {
       use ::deploy::peer::{self, Change, Mesh, Peer};
+      let secrets = match secrets.read::<InstallSecrets>() {
+        Ok(secrets) => secrets.unwrap_or(InstallSecrets {
+          mesh_token: None,
+          peer_token: None,
+        }),
+        Err(e) => {
+          eprintln!("{e}");
+          return ExitCode::FAILURE;
+        }
+      };
+      let needs = |flag: &str, key: &str| {
+        eprintln!(
+          "{flag} needs {key} in a config given with --config-file or \
+           --config-stdin: {{\"{key}\": \"...\"}}"
+        );
+        ExitCode::FAILURE
+      };
+      let unused = |key: &str, flag: &str| {
+        eprintln!("the config's {key} is only for {flag}");
+        ExitCode::FAILURE
+      };
       let mut peers = Vec::new();
       if no_mesh {
         peers.push(Change::NoMesh);
@@ -276,14 +336,19 @@ fn main() -> ExitCode {
         }
         peers.push(Change::Ca(text));
       }
-      if let (Some(node), Some(token)) = (name, mesh_token) {
-        peers.push(Change::Mesh(Mesh { node, token }));
+      match (name, secrets.mesh_token) {
+        (Some(node), Some(token)) => {
+          peers.push(Change::Mesh(Mesh { node, token }))
+        }
+        (Some(_), None) => return needs("--name", "mesh_token"),
+        (None, Some(_)) => return unused("mesh_token", "--name"),
+        (None, None) => {}
       }
       if no_peers {
         peers.push(Change::NoPeers);
       }
       peers.extend(no_peer.into_iter().map(Change::NoPeer));
-      match (peer, peer_token) {
+      match (peer, secrets.peer_token) {
         (Some(url), _)
           if !url.starts_with("http://") && !url.starts_with("https://") =>
         {
@@ -294,14 +359,9 @@ fn main() -> ExitCode {
           name: peer_name.unwrap_or_else(|| peer::name_of(&url)),
           peer: Peer { url, token },
         }),
-        (Some(_), None) => {
-          eprintln!(
-            "--peer needs --peer-token (or LOGGER_PEER_TOKEN, in the \
-             environment or .env)"
-          );
-          return ExitCode::FAILURE;
-        }
-        (None, _) => {}
+        (Some(_), None) => return needs("--peer", "peer_token"),
+        (None, Some(_)) => return unused("peer_token", "--peer"),
+        (None, None) => {}
       }
       install(&install::Options {
         scope: if machine {
@@ -319,6 +379,7 @@ fn main() -> ExitCode {
     }
     #[cfg(windows)]
     Command::Uninstall { root } => uninstall(root),
+    Command::Config { root } => show_config(root),
     Command::Status {
       root,
       data,

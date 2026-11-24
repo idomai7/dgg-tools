@@ -28,9 +28,10 @@
 //! warned of, and the install carries on without it.
 //!
 //! An install syncs from the peers in its root (see [`crate::peer`]):
-//! [`Options::peers`] changes them. They move with the root, and in a
-//! machine install only administrators and the service can read the files
-//! holding tokens. The Kick channel list, `kick-channels`, moves with the
+//! [`Options::peers`] changes them, in its config, `install.env.json`,
+//! which an older install's files are folded into. They move with the
+//! root, and in a machine install only administrators and the service can
+//! read the config. The Kick channel list, `kick-channels`, moves with the
 //! root too.
 
 #[cfg(windows)]
@@ -470,7 +471,7 @@ pub fn install(options: &Options) -> io::Result<Done> {
     }
     moving::merge_logs(&old.logs, &paths.logs)?;
     if !same(&old.root, &paths.root) {
-      peer::move_all(&old.root, &paths.root)?;
+      problems.extend(peer::move_all(&old.root, &paths.root)?);
       if options.scope == Scope::Machine {
         allow_service(&paths)?;
       }
@@ -488,13 +489,12 @@ pub fn install(options: &Options) -> io::Result<Done> {
     }
   }
 
-  peer::migrate(&paths.root)?;
-  for change in &options.peers {
-    peer::apply(&paths.root, change, &|file| match options.scope {
-      Scope::Machine => acl::secret(file, &[&service::account(service::NAME)]),
-      Scope::User => Ok(()),
-    })?;
-  }
+  let secure = |file: &Path| match options.scope {
+    Scope::Machine => acl::secret(file, &[&service::account(service::NAME)]),
+    Scope::User => Ok(()),
+  };
+  problems.extend(peer::migrate(&paths.root, &secure)?);
+  peer::apply(&paths.root, &options.peers, &secure)?;
 
   // 4. The new install starts, and takes over from the bridge.
   let since = now_ms() - 1000;

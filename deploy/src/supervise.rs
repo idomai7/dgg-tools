@@ -342,8 +342,20 @@ pub fn run(config: &Config, stop: &Stop) -> io::Result<Exit> {
         };
         // What the peers were last round, to report only changes.
         let last = Mutex::new(None::<String>);
+        // The last that could be read, kept while the config can't be.
+        let good = Mutex::new(None::<peer::Peers>);
         periodically(&schedule, sync_log, context, || {
-          let found = peer::gather(peers);
+          let mut found = peer::gather(peers);
+          let mut good = good.lock().unwrap();
+          match (found.unreadable, &*good) {
+            (true, Some(good)) => {
+              found.pull.clone_from(&good.pull);
+              found.ca.clone_from(&good.ca);
+              found.problems.push("syncing as before".into());
+            }
+            (true, None) => {}
+            (false, _) => *good = Some(found.clone()),
+          }
           let mut said = if found.pull.is_empty() {
             format!("sync: no peers in {}", peers.display())
           } else {
@@ -366,14 +378,13 @@ pub fn run(config: &Config, stop: &Stop) -> io::Result<Exit> {
             log_line(supervisor, level, &said);
             *last = Some(said);
           }
-          let ca = peer::ca(peers);
           found
             .pull
             .iter()
             .map(|named| {
               (
                 Some(named.name.clone()),
-                sync_from(&config.sync, &named.peer, ca.as_deref()),
+                sync_from(&config.sync, &named.peer, found.ca.as_deref()),
               )
             })
             .collect()
@@ -468,19 +479,18 @@ fn capture_kick(
 }
 
 /// `sync` pulling from `peer`, its token in its config on stdin; if it's
-/// `https://`, trusting the CA certificate `ca` alone, if given.
-fn sync_from(sync: &Program, peer: &peer::Peer, ca: Option<&Path>) -> Program {
+/// `https://`, trusting the CA certificate `ca` (PEM) alone, if given.
+fn sync_from(sync: &Program, peer: &peer::Peer, ca: Option<&str>) -> Program {
   let mut program = sync.clone();
-  program
-    .args
-    .extend(["--peer".into(), peer.url.clone().into()]);
+  program.args.extend([
+    "--peer".into(),
+    peer.url.clone().into(),
+    "--config-stdin".into(),
+  ]);
+  let mut config = ::serde_json::json!({ "token": peer.token.expose() });
   if let Some(ca) = ca.filter(|_| peer.url.starts_with("https://")) {
-    program
-      .args
-      .extend(["--peer-ca".into(), ca.as_os_str().to_owned()]);
+    config["ca"] = ca.into();
   }
-  program.args.push("--config-stdin".into());
-  let config = ::serde_json::json!({ "token": peer.token });
   program.config = Some(Secret::new(config.to_string()));
   program
 }

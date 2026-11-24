@@ -252,9 +252,8 @@ fn run_with_sync(dir: &TempDir, peers: Option<PathBuf>) {
 fn syncs_from_the_peer_file() {
   let dir = TempDir::new("deploy-supervise-sync");
   fs::write(
-    dir.path().join("peer.env"),
-    "# the old host\nLOGGER_PEER_URL=http://peer:8788\n\
-     LOGGER_PEER_TOKEN=\"secret\"\n",
+    dir.path().join("install.env.json"),
+    r#"{"peers": {"peer": {"url": "http://peer:8788", "token": "secret"}}}"#,
   )
   .unwrap();
   run_with_sync(&dir, Some(dir.to_path_buf()));
@@ -283,31 +282,22 @@ fn syncs_from_every_node_in_turn() {
     "a https://a:8788\nb https://b:8788\nme https://me:8788\npi push\n",
   )
   .unwrap();
-  fs::write(
-    dir.path().join("mesh.env"),
-    "LOGGER_NODE=me\nLOGGER_PEER_TOKEN=mesh\n",
-  )
-  .unwrap();
   // With the mesh's CA, HTTPS peers trust it alone; others can't.
-  fs::write(dir.path().join("ca.pem"), "the CA").unwrap();
-  fs::create_dir(dir.path().join("peers")).unwrap();
   fs::write(
-    dir.path().join("peers").join("old.env"),
-    "LOGGER_PEER_URL=http://old:8788\nLOGGER_PEER_TOKEN=old\n",
+    dir.path().join("install.env.json"),
+    r#"{"ca": "the CA", "mesh": {"node": "me", "token": "mesh"},
+        "peers": {"old": {"url": "http://old:8788", "token": "old"}}}"#,
   )
   .unwrap();
   run_with_sync(&dir, Some(dir.to_path_buf()));
   let sync = log(&dir, "sync");
   let at = |text: &str| sync.find(text).unwrap_or_else(|| panic!("{sync}"));
-  let ca = dir.path().join("ca.pem");
-  let a = at(&format!(
-    r#" a: sync --peer https://a:8788 --peer-ca {} --config-stdin {{"token":"mesh"}}"#,
-    ca.display()
-  ));
-  let b = at(&format!(
-    r#" b: sync --peer https://b:8788 --peer-ca {} --config-stdin {{"token":"mesh"}}"#,
-    ca.display()
-  ));
+  let a = at(
+    r#" a: sync --peer https://a:8788 --config-stdin {"ca":"the CA","token":"mesh"}"#,
+  );
+  let b = at(
+    r#" b: sync --peer https://b:8788 --config-stdin {"ca":"the CA","token":"mesh"}"#,
+  );
   assert!(a < b, "{sync}");
   at(r#" old: sync --peer http://old:8788 --config-stdin {"token":"old"}"#);
   // Not itself, and not a node that can't be reached.
@@ -315,6 +305,39 @@ fn syncs_from_every_node_in_turn() {
     !sync.contains("me:8788") && !sync.contains(" pi: "),
     "{sync}"
   );
+}
+
+#[test]
+fn keeps_the_last_config_it_could_read() {
+  let dir = TempDir::new("deploy-supervise-broken");
+  let path = dir.path().join("install.env.json");
+  fs::write(
+    &path,
+    r#"{"peers": {"peer": {"url": "http://peer:8788", "token": "secret"}}}"#,
+  )
+  .unwrap();
+  let capture = script(dir.path(), "capture", &[Step::Sleep(4), Step::Exit(0)]);
+  let index = script(dir.path(), "index", &[Step::Sleep(20)]);
+  let mut config = config(&dir, capture, index);
+  let mut sync = script(dir.path(), "sync", &[Step::SayArgsAndStdin]);
+  sync.args = vec!["sync".into()];
+  config.sync = sync;
+  config.peers = Some(dir.to_path_buf());
+  config.sync_first = Duration::from_millis(100);
+  config.sync_every = Duration::from_millis(1500);
+  // Broken after the first round.
+  let breaking = thread::spawn(move || {
+    thread::sleep(Duration::from_millis(800));
+    fs::write(path, "{").unwrap();
+  });
+  assert_eq!(run(&config, &Stop::new()).unwrap(), Exit::HandedOff);
+  breaking.join().unwrap();
+  let sync = log(&dir, "sync");
+  let rounds = sync.matches(r#"{"token":"secret"}"#).count();
+  assert!(rounds >= 2, "{sync}");
+  let supervisor = log(&dir, "supervisor");
+  assert!(supervisor.contains("syncing as before"), "{supervisor}");
+  assert!(!supervisor.contains("secret"), "{supervisor}");
 }
 
 #[test]
