@@ -1,14 +1,24 @@
-//! Migrating, while there's nothing to migrate: it checks the index's
-//! schema, under a supervisor's locks.
+//! Migrating, while there's nothing to migrate: it checks the version of
+//! each kind of file, and the index's schema, under a supervisor's locks.
 
 use {
-  ::common::temp_dir::TempDir,
+  ::common::{temp_dir::TempDir, time::now_ms},
   ::logger::{
+    BUILD, control,
     index::{SCHEMA_VERSION, open, user_version},
     migrate::{Report, migrate},
   },
-  ::logger_journal::Version,
-  ::std::{fs::File, path::Path, sync::mpsc, thread, time::Duration},
+  ::logger_journal::{
+    Header, Variant, Version,
+    record::{kick, v0},
+  },
+  ::std::{
+    fs::{self, File},
+    path::Path,
+    sync::mpsc,
+    thread,
+    time::Duration,
+  },
 };
 
 fn run(data: &Path, dry_run: bool) -> Report {
@@ -56,4 +66,66 @@ fn waits_for_a_supervisors_locks() {
   run(dir.path(), true);
   drop(lock);
   migrating.join().unwrap();
+}
+
+/// Writes `text` at `path`, making its directory.
+fn put(path: &Path, text: &str) {
+  fs::create_dir_all(path.parent().unwrap()).unwrap();
+  fs::write(path, text).unwrap();
+}
+
+#[test]
+fn says_each_kind_of_file_and_capture() {
+  let dir = TempDir::new("logger-migrate");
+  let journal = dir.path().join("journal");
+  let dgg = Header::new(Variant::Dgg, v0::VERSION).text();
+  let old = Header::new(Variant::Dgg, Version { major: 0, minor: 2 }).text();
+  put(&journal.join("live/2026-11-24/a.journal"), &dgg);
+  put(&journal.join("live/2026-11-24/b.journal"), &old);
+  put(&journal.join("backfill/live/2026-11-20/c.journal"), &dgg);
+  let kick = Header::new(Variant::Kick, kick::v0::VERSION).text();
+  put(
+    &journal.join("kick/someone/live/2026-11-24/d.journal"),
+    &kick,
+  );
+  let now = now_ms();
+  let status = |instance: &str, build: &str| control::Status {
+    instance: instance.into(),
+    started: now - 1000,
+    heartbeat: now,
+    healthy_since: Some(now - 500),
+    build: Some(build.into()),
+  };
+  control::write(&control::dir(&journal), &status("old", "0.0.1-abc")).unwrap();
+  control::write(&control::dir(&journal), &status("new", BUILD)).unwrap();
+
+  let mut said = Vec::new();
+  let report =
+    migrate(dir.path(), false, &mut |line| said.push(line.to_owned())).unwrap();
+  let said = said.join(
+    "
+",
+  );
+  assert!(said.starts_with(&format!("build {BUILD}:")), "{said}");
+  for line in [
+    "journal: 2 live files, journal dgg.0.3; 1 at another version",
+    "journal: live/2026-11-24/b.journal is journal dgg.0.2",
+    "journal: 2 capture statuses, capture-status dgg.0.2",
+    "backfill: 1 live file, journal dgg.0.3",
+    "kick someone: 1 live file, journal kick.0.1",
+    "index: none yet",
+    "capture old: build 0.0.1-abc, older: hands off",
+    "capture new: this build",
+  ] {
+    assert!(
+      said.contains(line),
+      "{line:?} not in:
+{said}"
+    );
+  }
+  assert_eq!(
+    report.unreadable,
+    [journal.join("live/2026-11-24/b.journal")]
+  );
+  assert_eq!(report.failed, Vec::<String>::new());
 }

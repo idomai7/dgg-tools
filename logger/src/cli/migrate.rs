@@ -7,7 +7,8 @@ use {
 };
 
 /// Bring the journal and the index up to this build's formats, in place.
-/// There's nothing to migrate yet: it only checks the index's schema. Waits
+/// There's nothing to migrate yet: it only checks, saying the version of
+/// each kind of file, the index's schema and the captures running. Waits
 /// for, and holds, the index, compact and sync locks, as a supervisor does.
 #[derive(Args)]
 pub struct Migrate {
@@ -29,10 +30,14 @@ impl Migrate {
       }
     };
     if report.failed.is_empty() {
+      let unreadable = match report.unreadable.len() {
+        0 => String::new(),
+        n => format!("; {n} files this build can't read, left as they were"),
+      };
       if self.dry_run {
-        eprintln!("nothing would be migrated");
+        eprintln!("nothing would be migrated{unreadable}");
       } else {
-        eprintln!("nothing to migrate");
+        eprintln!("nothing to migrate{unreadable}");
       }
       ExitCode::SUCCESS
     } else {
