@@ -22,7 +22,8 @@
 //! 3. If the data directory changed, the old data and logs are
 //!    [moved](moving) in.
 //! 4. The new task or service starts. Its captures, the newest, take over
-//!    from the bridges, which exit.
+//!    from the bridges, which exit. Each is waited on until it's healthy:
+//!    dgg's must be; a Kick channel's that isn't is warned of.
 //!
 //! dgg's capture comes first: a Kick bridge that isn't healthy is only
 //! warned of, by its channel, and the install carries on without it.
@@ -190,8 +191,9 @@ pub struct Done {
   pub replaced: Option<Installed>,
   /// The new capture instance.
   pub capture: String,
-  /// How many Kick channels it captures.
-  pub kick_channels: usize,
+  /// Each Kick channel it captures, by its slug, with its new capture
+  /// instance if that was healthy in time.
+  pub kick: Vec<(String, Option<String>)>,
   /// Old builds still in use, left for next time.
   pub left: Vec<PathBuf>,
   /// The peers it syncs from: `<name> (<URL>)`.
@@ -535,6 +537,23 @@ pub fn install(options: &Options) -> io::Result<Done> {
       paths.logs.display()
     )));
   };
+  // Each Kick channel's new capture, waited on together: one that isn't
+  // healthy in time is only warned of.
+  let until = Instant::now() + options.healthy_within;
+  let mut kick = Vec::new();
+  for channel in &kick_channels {
+    let slug = &channel.slug;
+    let left = until.saturating_duration_since(Instant::now());
+    let healthy = wait_kick_healthy(&kick_root, slug, since, left)?;
+    if healthy.is_none() {
+      problems.push(format!(
+        "{slug}: the new install's Kick capture wasn't healthy within {}s; \
+         see supervisor.log and kick-capture.log",
+        options.healthy_within.as_secs()
+      ));
+    }
+    kick.push((slug.clone(), healthy));
+  }
   bridge::wait_gone(&mut bridge, options.handoff_within);
   for (slug, child) in &mut kick_bridges {
     if !bridge::wait_gone(child, options.handoff_within) {
@@ -558,7 +577,7 @@ pub fn install(options: &Options) -> io::Result<Done> {
     build,
     replaced: current,
     capture,
-    kick_channels: kick_channels.len(),
+    kick,
     left,
     peers,
     problems: problems.into_iter().chain(found.problems).collect(),
