@@ -1,6 +1,6 @@
 use {
   ::common::temp_dir::TempDir,
-  ::logger::backfill::{
+  ::logger::dgg::backfill::{
     Message, Options, Page, Source, linkers, run, rustlesearch,
   },
   ::logger_journal::{

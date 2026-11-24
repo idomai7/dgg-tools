@@ -26,10 +26,8 @@
 
 use {
   crate::{
-    BUILD, control,
-    index::{SCHEMA_VERSION, schema_version},
-    kick::index as kick_index,
-    taken,
+    BUILD, control, dgg::index::SCHEMA_VERSION, index::schema_version,
+    kick::index as kick_index, taken,
   },
   ::common::{fs::MissingOk, log::Level},
   ::logger_journal::{

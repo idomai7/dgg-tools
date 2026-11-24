@@ -5,7 +5,8 @@ use {
   ::common::{temp_dir::TempDir, time::now_ms},
   ::logger::{
     BUILD, control,
-    index::{SCHEMA_VERSION, open, user_version},
+    dgg::index::{SCHEMA_VERSION, open},
+    index::user_version,
     migrate::{Report, migrate},
   },
   ::logger_journal::{

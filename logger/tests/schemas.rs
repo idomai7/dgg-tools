@@ -2,7 +2,7 @@
 //! the one the index uses.
 
 use {
-  ::logger::index::{SCHEMA_VERSION, open},
+  ::logger::dgg::index::{SCHEMA_VERSION, open},
   ::logger_journal::Version,
   ::rusqlite::Connection,
   ::std::{fs, path::PathBuf},

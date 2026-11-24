@@ -4,12 +4,14 @@
 
 use {
   crate::{
-    backfill::{
-      Options, Source, linkers::Linkers, run, rustlesearch::Rustlesearch,
-    },
     capture::instance_id,
-    gaps::{coverage, unfetched},
-    index::{index, open},
+    dgg::{
+      backfill::{
+        Options, Source, linkers::Linkers, run, rustlesearch::Rustlesearch,
+      },
+      gaps::{coverage, unfetched},
+      index::{index, open},
+    },
   },
   ::clap::{Args, ValueEnum},
   ::common::{error, info, warn},

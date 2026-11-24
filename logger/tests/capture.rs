@@ -3,10 +3,9 @@ use {
   ::dgg_api::chat::Options,
   ::futures_util::{SinkExt, StreamExt},
   ::logger::{
-    capture::{
-      Config, Exit, HANDOFF, Handoff, Peer, SHUTDOWN, instance_id, run,
-    },
+    capture::{Exit, HANDOFF, Handoff, Peer, SHUTDOWN, instance_id},
     control,
+    dgg::capture::{Config, run},
   },
   ::logger_journal::{
     Reader, Record,

@@ -1,8 +1,11 @@
 use {
   ::common::temp_dir::TempDir,
-  ::logger::index::{
-    Error, Pace, SCHEMA_VERSION, follow, index, open, rebuild, user_version,
-    waiting,
+  ::logger::{
+    dgg::{
+      Dgg,
+      index::{SCHEMA_VERSION, index, open, waiting},
+    },
+    index::{Error, Pace, follow, rebuild, user_version},
   },
   ::logger_journal::{Version, Writer, record::v0::Body},
   ::rusqlite::Connection,
@@ -177,7 +180,7 @@ fn resumes_from_checkpoints() {
   // A rebuild from scratch gives the same index.
   let incremental = messages(&db);
   drop(db);
-  let mut db = rebuild(&database(&root)).unwrap();
+  let mut db = rebuild::<Dgg>(&database(&root)).unwrap();
   index(&mut db, &journal(&root)).unwrap();
   assert_eq!(messages(&db), incremental);
 }
@@ -194,8 +197,12 @@ fn refuses_other_schema_versions() {
     .unwrap();
   drop(db);
   let error = open(&database(&root)).unwrap_err();
-  assert!(matches!(error, Error::Schema(v) if v == next));
-  assert!(rebuild(&database(&root)).is_ok());
+  assert!(matches!(
+    error,
+    Error::Schema { service: "dgg", found, wanted }
+      if found == next && wanted == SCHEMA_VERSION
+  ));
+  assert!(rebuild::<Dgg>(&database(&root)).is_ok());
 }
 
 /// Runs [`follow`] on `root` at `pace` until the flag is cleared, when it
@@ -207,7 +214,7 @@ fn follower(root: &TempDir, pace: Pace) -> (Arc<AtomicBool>, JoinHandle<u64>) {
   let follower = ::std::thread::spawn(move || {
     let mut db = open(&database).unwrap();
     let mut messages = 0;
-    follow(
+    follow::<Dgg>(
       &mut db,
       &journal,
       pace,
@@ -434,7 +441,7 @@ fn backfill_yields_to_native_messages() {
   // Rebuilding indexes the files in one go, in path order, and agrees.
   let incremental = messages(&db);
   drop(db);
-  let mut db = rebuild(&database(&root)).unwrap();
+  let mut db = rebuild::<Dgg>(&database(&root)).unwrap();
   index(&mut db, &journal(&root)).unwrap();
   assert_eq!(messages(&db), incremental);
 }
@@ -516,7 +523,7 @@ fn truncated_timestamps_match_within_their_second() {
   // Rebuilding agrees.
   let incremental = messages(&db);
   drop(db);
-  let mut db = rebuild(&database(&root)).unwrap();
+  let mut db = rebuild::<Dgg>(&database(&root)).unwrap();
   index(&mut db, &journal(&root)).unwrap();
   assert_eq!(messages(&db), incremental);
 }
@@ -573,7 +580,7 @@ fn follows_files_into_archives() {
   // Rebuilding from archives alone gives the same index.
   let incremental = messages(&db);
   drop(db);
-  let mut db = rebuild(&database(&root)).unwrap();
+  let mut db = rebuild::<Dgg>(&database(&root)).unwrap();
   index(&mut db, &journal(&root)).unwrap();
   assert_eq!(messages(&db), incremental);
   assert_eq!(incremental.len(), 3);

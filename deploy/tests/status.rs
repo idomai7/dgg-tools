@@ -322,8 +322,8 @@ fn reports_gaps_without_writing_the_index() {
     "journal dgg.0.3\u{1e}\n1000 a 1 open wss://x\u{1e}\n2000 a 1 close reset\u{1e}\n\
      5000 a 2 open wss://x\u{1e}\n6000 a 2 close shutdown\u{1e}\n",
   );
-  let mut db = ::logger::index::open(&index).unwrap();
-  ::logger::index::index(&mut db, &dir.path().join("journal")).unwrap();
+  let mut db = ::logger::dgg::index::open(&index).unwrap();
+  ::logger::dgg::index::index(&mut db, &dir.path().join("journal")).unwrap();
   drop(db);
   let (summary, lines) = gaps(&index).unwrap().unwrap();
   assert!(summary.ends_with("1 gaps, 3.0s in all; 1 not filled, 3.0s"));

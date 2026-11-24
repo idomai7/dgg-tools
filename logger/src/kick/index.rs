@@ -21,11 +21,14 @@
 //! record that isn't Kick's are noted in `unparsed`.
 
 use {
-  crate::index::{
-    Error, Pace, checkpoint, open_at, open_read_only_at, paced, relative,
-    remove, waiting_in,
+  crate::{
+    index::{
+      Error, Tally, checkpoint, open_at, open_read_only_at, relative,
+      waiting_in,
+    },
+    kick::{Kick, channels},
+    service::Service,
   },
-  crate::kick::channels,
   ::kick_api::{
     realtime::{Event, Frame},
     web,
@@ -73,9 +76,41 @@ pub struct Stats {
   pub skipped: Vec<(String, String)>,
 }
 
+impl Tally for Stats {
+  fn records(&self) -> u64 {
+    self.records
+  }
+
+  fn skipped(&self) -> &[(String, String)] {
+    &self.skipped
+  }
+
+  fn add(&mut self, other: &Self) {
+    self.records += other.records;
+    self.messages += other.messages;
+    self.recovered += other.recovered;
+    self.deletions += other.deletions;
+    self.bans += other.bans;
+    self.unparsed += other.unparsed;
+  }
+
+  fn summary(&self) -> String {
+    format!(
+      "{} records, {} new messages ({} from history), {} deletions, {} \
+       bans and unbans, {} unparsed",
+      self.records,
+      self.messages,
+      self.recovered,
+      self.deletions,
+      self.bans,
+      self.unparsed
+    )
+  }
+}
+
 /// Opens Kick's index at `path`, creating it if needed.
 pub fn open(path: &Path) -> Result<Connection, Error> {
-  open_at(path, SCHEMA, SCHEMA_VERSION, Error::KickSchema)
+  open_at(path, Kick::NAME, SCHEMA, SCHEMA_VERSION)
 }
 
 /// Opens Kick's index at `path` only to read it, as it is: it must exist,
@@ -84,33 +119,7 @@ pub fn open_read_only(
   path: &Path,
   busy: Duration,
 ) -> Result<Connection, Error> {
-  open_read_only_at(path, busy, SCHEMA_VERSION, Error::KickSchema)
-}
-
-/// Deletes Kick's index at `path` (and its WAL files), then opens a fresh
-/// one.
-pub fn rebuild(path: &Path) -> Result<Connection, Error> {
-  remove(path)?;
-  open(path)
-}
-
-/// Keeps Kick's index up to date while `running()` is true, as
-/// [`index::follow`](crate::index::follow) does dgg's.
-pub fn follow(
-  db: &mut Connection,
-  journal_root: &Path,
-  pace: Pace,
-  running: impl Fn() -> bool,
-  report: impl FnMut(Result<&Stats, &Error>),
-) -> Result<(), Error> {
-  paced(
-    db,
-    pace,
-    running,
-    |db, at_most| waiting(db, journal_root, at_most),
-    |db| index(db, journal_root),
-    report,
-  )
+  open_read_only_at(path, busy, Kick::NAME, SCHEMA_VERSION)
 }
 
 /// How many records in every channel's live files aren't indexed yet,

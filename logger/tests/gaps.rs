@@ -1,6 +1,6 @@
 use {
   ::common::temp_dir::TempDir,
-  ::logger::{
+  ::logger::dgg::{
     gaps::{Gap, coverage, unfetched},
     index::{index, open},
   },

@@ -29,8 +29,10 @@
 //! `kind` is `ban`, `timeout` or `unban`.
 
 use {
-  super::index::{self, recent},
-  crate::index::Error,
+  crate::{
+    index::Error,
+    kick::index::{self, recent},
+  },
   ::rusqlite::{Connection, OptionalExtension, params},
   ::serde_json::{Value, json},
   ::std::{collections::HashMap, path::Path, time::Duration},

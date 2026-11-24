@@ -14,7 +14,7 @@ use {
     time::{now_ms, utc_day, utc_timestamp},
   },
   ::common::{fs::MissingOk, log::Level},
-  ::logger::{control, index, kick::channels},
+  ::logger::{control, dgg::index, kick::channels},
   ::logger_journal::{
     Reader, Record, Variant, archive,
     layout::{
@@ -626,7 +626,8 @@ pub fn gaps(path: &Path) -> Result<Option<(String, Vec<String>)>, String> {
   }
   let db = index::open_read_only(path, Duration::from_secs(2))
     .map_err(|e| e.to_string())?;
-  let coverage = ::logger::gaps::coverage(&db).map_err(|e| e.to_string())?;
+  let coverage =
+    ::logger::dgg::gaps::coverage(&db).map_err(|e| e.to_string())?;
   Ok(coverage.map(|coverage| (coverage.summary(), coverage.lines(0))))
 }
 

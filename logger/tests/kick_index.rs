@@ -5,8 +5,11 @@ use {
   ::common::temp_dir::TempDir,
   ::logger::{
     compact::compact_day,
-    index::{Error, user_version},
-    kick::index::{SCHEMA_VERSION, index, open, rebuild, waiting},
+    index::{Error, rebuild, user_version},
+    kick::{
+      Kick,
+      index::{SCHEMA_VERSION, index, open, waiting},
+    },
   },
   ::logger_journal::{
     Version,
@@ -311,7 +314,7 @@ fn reads_archives_once() {
   assert_eq!(again.records, 0);
   // Rebuilt from the archive alone, it's the same.
   drop(db);
-  let mut fresh = rebuild(&database(&dir)).unwrap();
+  let mut fresh = rebuild::<Kick>(&database(&dir)).unwrap();
   let stats = index(&mut fresh, &journal(&dir)).unwrap();
   assert_eq!((stats.messages, stats.deletions, stats.bans), (2, 1, 2));
 }
@@ -337,9 +340,9 @@ fn an_index_at_another_schema_is_refused() {
   drop(db);
   assert!(matches!(
     open(&database(&dir)),
-    Err(Error::KickSchema(version)) if version == old
+    Err(Error::Schema { service: "kick", found, .. }) if found == old
   ));
-  let db = rebuild(&database(&dir)).unwrap();
+  let db = rebuild::<Kick>(&database(&dir)).unwrap();
   let version: i64 = db
     .pragma_query_value(None, "user_version", |row| row.get(0))
     .unwrap();

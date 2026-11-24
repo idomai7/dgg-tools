@@ -1,7 +1,7 @@
 //! Report gaps in what was captured.
 
 use {
-  crate::{
+  crate::dgg::{
     gaps::coverage,
     index::{index, open},
   },
