@@ -36,11 +36,7 @@ fn reads_a_list() {
   );
   assert_eq!(channels::parse("").unwrap(), []);
   assert_eq!(
-    channels::parse(
-      "@bot 1 2
-"
-    )
-    .unwrap(),
+    channels::parse("@bot 1 2\n").unwrap(),
     [channel("@bot", 1, 2)]
   );
 }

@@ -536,25 +536,13 @@ fn runs_a_kick_capture_per_channel() {
     &[Step::SayArgsAndStdin, Step::Sleep(20)],
   );
   kick.args = vec!["kick-capture".into()];
-  let config = with_kick(
-    &dir,
-    config(&dir, capture, index),
-    kick,
-    "one 2 1
-",
-  );
+  let config = with_kick(&dir, config(&dir, capture, index), kick, "one 2 1\n");
   let list = dir.path().join("kick-channels");
   thread::scope(|scope| {
     // A channel added while it runs.
     scope.spawn(|| {
       thread::sleep(Duration::from_millis(500));
-      fs::write(
-        &list,
-        "one 2 1
-two 4 3
-",
-      )
-      .unwrap();
+      fs::write(&list, "one 2 1\ntwo 4 3\n").unwrap();
     });
     assert_eq!(run(&config, &Stop::new()).unwrap(), Exit::HandedOff);
   });
@@ -577,28 +565,14 @@ fn starts_an_ended_kick_capture_once_its_channel_is_back() {
   let capture = script(dir.path(), "capture", &[Step::Sleep(3), Step::Exit(0)]);
   let index = script(dir.path(), "index", &[Step::Sleep(20)]);
   let kick = script(dir.path(), "kick", &[Step::Exit(0)]);
-  let config = with_kick(
-    &dir,
-    config(&dir, capture, index),
-    kick,
-    "a 2 1
-",
-  );
+  let config = with_kick(&dir, config(&dir, capture, index), kick, "a 2 1\n");
   let list = dir.path().join("kick-channels");
   thread::scope(|scope| {
     scope.spawn(|| {
       thread::sleep(Duration::from_millis(1000));
-      fs::write(
-        &list, "# none
-",
-      )
-      .unwrap();
+      fs::write(&list, "# none\n").unwrap();
       thread::sleep(Duration::from_millis(500));
-      fs::write(
-        &list, "a 2 1
-",
-      )
-      .unwrap();
+      fs::write(&list, "a 2 1\n").unwrap();
     });
     assert_eq!(run(&config, &Stop::new()).unwrap(), Exit::HandedOff);
   });

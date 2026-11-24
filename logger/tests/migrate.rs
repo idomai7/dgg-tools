@@ -111,10 +111,7 @@ fn says_each_kind_of_file() {
   let report =
     migrate(dir.path(), false, &mut |_, line| said.push(line.to_owned()))
       .unwrap();
-  let said = said.join(
-    "
-",
-  );
+  let said = said.join("\n");
   assert!(said.starts_with(&format!("build {BUILD}:")), "{said}");
   for line in [
     "dgg: 2 live files, journal dgg.0.3; 1 at another version",
@@ -125,11 +122,7 @@ fn says_each_kind_of_file() {
     "dgg's index: none yet",
     "Kick's index: none yet",
   ] {
-    assert!(
-      said.contains(line),
-      "{line:?} not in:
-{said}"
-    );
+    assert!(said.contains(line), "{line:?} not in:\n{said}");
   }
   assert_eq!(
     report.unreadable,

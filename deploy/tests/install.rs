@@ -417,69 +417,19 @@ mod moving {
   #[test]
   fn renames_a_programs_logs() {
     let dir = TempDir::new("deploy-install-rename-logs");
-    write(
-      &dir,
-      "capture.log",
-      "old
-",
-    );
-    write(
-      &dir,
-      "capture.1.log",
-      "older
-",
-    );
-    write(
-      &dir,
-      "dgg-capture.log",
-      "new
-",
-    );
-    write(
-      &dir,
-      "kick-capture.log",
-      "kick
-",
-    );
-    write(
-      &dir,
-      "capture.notes",
-      "kept
-",
-    );
+    write(&dir, "capture.log", "old\n");
+    write(&dir, "capture.1.log", "older\n");
+    write(&dir, "dgg-capture.log", "new\n");
+    write(&dir, "kick-capture.log", "kick\n");
+    write(&dir, "capture.notes", "kept\n");
     rename_logs(dir.path(), "capture", "dgg-capture").unwrap();
     let read = |name: &str| fs::read_to_string(dir.path().join(name)).ok();
-    assert_eq!(
-      read("dgg-capture.log").as_deref(),
-      Some(
-        "old
-new
-"
-      )
-    );
-    assert_eq!(
-      read("dgg-capture.1.log").as_deref(),
-      Some(
-        "older
-"
-      )
-    );
+    assert_eq!(read("dgg-capture.log").as_deref(), Some("old\nnew\n"));
+    assert_eq!(read("dgg-capture.1.log").as_deref(), Some("older\n"));
     assert_eq!(read("capture.log"), None);
     assert_eq!(read("capture.1.log"), None);
-    assert_eq!(
-      read("kick-capture.log").as_deref(),
-      Some(
-        "kick
-"
-      )
-    );
-    assert_eq!(
-      read("capture.notes").as_deref(),
-      Some(
-        "kept
-"
-      )
-    );
+    assert_eq!(read("kick-capture.log").as_deref(), Some("kick\n"));
+    assert_eq!(read("capture.notes").as_deref(), Some("kept\n"));
   }
 }
 

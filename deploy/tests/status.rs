@@ -693,32 +693,21 @@ fn merges_the_logs_in_time_order() {
 #[test]
 fn merges_the_captures_logs() {
   let dir = TempDir::new("deploy-status-capture-logs");
-  dir.write(
-    "kick-channels",
-    "one 2 1
-",
-  );
+  dir.write("kick-channels", "one 2 1\n");
   dir.write(
     "logs/dgg-capture.log",
-    "2026-11-24 10:00:01.000Z INFO  a-1: capturing
-",
+    "2026-11-24 10:00:01.000Z INFO  a-1: capturing\n",
   );
   dir.write(
     "logs/kick-capture.one.log",
-    "2026-11-24 10:00:02.000Z WARN  a-1: one: dropped
-",
+    "2026-11-24 10:00:02.000Z WARN  a-1: one: dropped\n",
   );
   // Shared by every channel, before each had its own.
   dir.write(
     "logs/kick-capture.log",
-    "2026-11-24 10:00:00.000Z INFO  a-0: one: capturing
-",
+    "2026-11-24 10:00:00.000Z INFO  a-0: one: capturing\n",
   );
-  dir.write(
-    "logs/index.log",
-    "2026-11-24 10:00:01.500Z INFO  indexed
-",
-  );
+  dir.write("logs/index.log", "2026-11-24 10:00:01.500Z INFO  indexed\n");
   let paths = Paths::under(dir.to_path_buf());
   let report = Watcher::new().unwrap().gather(&paths).unwrap();
   let logs = capture_logs(&report);

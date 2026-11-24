@@ -671,13 +671,7 @@ async fn looks_up_a_users_history() {
     "reason": null,
     "answer": {"result": "done"},
   });
-  server.dir.write(
-    "modlog.jsonl",
-    format!(
-      "{entry}
-"
-    ),
-  );
+  server.dir.write("modlog.jsonl", format!("{entry}\n"));
 
   let (status, body) = server.get("/api/history?channel=one&user=9", &[]).await;
   assert_eq!(status, 200, "{body}");
