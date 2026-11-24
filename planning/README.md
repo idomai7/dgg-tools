@@ -15,6 +15,8 @@ decisions live in its own document here:
 - [kick-api](kick-api.md): Kick's APIs.
 - [kick-mod](kick-mod.md) (codename gavelgab): the Kick chat client and
   moderation tools.
+- [community](community.md): vouching, a pastebin and file uploads,
+  reputation and karma (notes only).
 
 Major components get codenames, by which they name themselves to others, as
 in a `User-Agent`: so far the logger's, ledgerline, kick-mod's, gavelgab, and
@@ -116,6 +118,8 @@ The layout is flat: each crate is a direct child of the root.
 4. **Archives and stats, not yet ordered:** see [archives](archives.md).
 5. **Kick moderation tools** (in planning): see [kick-mod](kick-mod.md), and
    the logger's Kick capture, which it builds on (see [logger](logger.md#kick)).
+6. **Community services, not yet ordered:** vouching, a pastebin and file
+   uploads, reputation and karma; see [community](community.md).
 
 ## Status
 - **Workspace restructure:** done.
