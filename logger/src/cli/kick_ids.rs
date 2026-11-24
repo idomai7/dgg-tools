@@ -10,9 +10,9 @@ use {
 
 /// Look up Kick channels' ids, the channel's and the chatroom's, with
 /// Kick's unofficial lookup (anonymously), and record them in
-/// the install's `kick-channels`, the Kick channels to capture. A channel
-/// the lookup fails for can be added by hand: `<slug> <channel id>
-/// <chatroom id>`.
+/// the install's `kick-channels`, the Kick channels to capture: a running
+/// `kick-capture` picks the change up within a minute. A channel the lookup
+/// fails for can be added by hand: `<slug> <channel id> <chatroom id>`.
 #[derive(Args)]
 pub struct KickIds {
   /// The channels, as in their URLs.
@@ -56,6 +56,9 @@ impl KickIds {
       ExitCode::FAILURE
     } else {
       println!("recorded in {}", list.display());
+      println!(
+        "a running kick-capture picks the change up within a minute; one          from a build before this needs a restart (run install again)"
+      );
       ExitCode::SUCCESS
     }
   }
