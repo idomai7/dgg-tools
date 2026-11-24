@@ -12,7 +12,8 @@
 //!   file at another version, which this build can't read, gets a line of
 //!   its own, and is left as it was;
 //! - the index's schema, which must be [`SCHEMA_VERSION`] (or there's none
-//!   yet).
+//!   yet), and Kick's index's, which must be its own
+//!   [`SCHEMA_VERSION`](kick::index::SCHEMA_VERSION).
 //!
 //! How the captures hand over is theirs to say, in their own logs.
 //!
@@ -27,6 +28,7 @@ use {
   crate::{
     BUILD, control,
     index::{SCHEMA_VERSION, schema_version},
+    kick::index as kick_index,
     taken,
   },
   ::common::{fs::MissingOk, log::Level},
@@ -55,6 +57,8 @@ pub struct Report {
   pub failed: Vec<String>,
   /// The index's schema, if there's an index.
   pub index: Option<Version>,
+  /// Kick's index's schema, if there's one.
+  pub kick_index: Option<Version>,
   /// Files at a version this build can't read, left as they were.
   pub unreadable: Vec<PathBuf>,
 }
@@ -70,10 +74,12 @@ pub fn migrate(
   say(
     Level::Info,
     &format!(
-      "build {BUILD}: writes journal dgg.{}, journal kick.{}, index schema {}",
+      "build {BUILD}: writes journal dgg.{}, journal kick.{}, index schema \
+       {}, Kick's index schema {}",
       dotted(v0::VERSION),
       dotted(kick::v0::VERSION),
-      dotted(SCHEMA_VERSION)
+      dotted(SCHEMA_VERSION),
+      dotted(kick_index::SCHEMA_VERSION)
     ),
   );
   let _locks = if dry_run {
@@ -95,28 +101,52 @@ pub fn migrate(
     check_root(name, root, *variant, &mut report, say)?;
   }
 
-  match index_schema(&data.join("index.sqlite"))? {
-    None => say(Level::Info, "index: none yet"),
-    Some(version) => {
-      report.index = Some(version);
-      if version == SCHEMA_VERSION {
-        say(
-          Level::Info,
-          &format!("index: schema {}, as it should be", dotted(version)),
-        );
-      } else {
-        let why = format!(
-          "schema {}, not {}; rebuild it",
-          dotted(version),
-          dotted(SCHEMA_VERSION)
-        );
-        say(Level::Error, &format!("index: {why}"));
-        report.failed.push(format!("index: {why}"));
-      }
-    }
-  }
+  report.index = check_index(
+    "index",
+    &data.join("index.sqlite"),
+    SCHEMA_VERSION,
+    &mut report.failed,
+    say,
+  )?;
+  report.kick_index = check_index(
+    "Kick's index",
+    &data.join(kick_index::FILE),
+    kick_index::SCHEMA_VERSION,
+    &mut report.failed,
+    say,
+  )?;
 
   Ok(report)
+}
+
+/// Checks the index at `path`, `name` in what it says, is at `wanted`, if
+/// there is one; its schema. One that isn't is added to `failed`.
+fn check_index(
+  name: &str,
+  path: &Path,
+  wanted: Version,
+  failed: &mut Vec<String>,
+  say: &mut dyn FnMut(Level, &str),
+) -> io::Result<Option<Version>> {
+  let Some(version) = index_schema(path)? else {
+    say(Level::Info, &format!("{name}: none yet"));
+    return Ok(None);
+  };
+  if version == wanted {
+    say(
+      Level::Info,
+      &format!("{name}: schema {}, as it should be", dotted(version)),
+    );
+  } else {
+    let why = format!(
+      "schema {}, not {}; rebuild it",
+      dotted(version),
+      dotted(wanted)
+    );
+    say(Level::Error, &format!("{name}: {why}"));
+    failed.push(format!("{name}: {why}"));
+  }
+  Ok(Some(version))
 }
 
 /// Checks each kind of file under journal `root`, `name` in what it says.

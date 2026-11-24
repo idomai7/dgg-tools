@@ -115,6 +115,7 @@ fn says_each_kind_of_file() {
     "backfill: 1 live file, journal dgg.0.3",
     "kick someone: 1 live file, journal kick.0.1",
     "index: none yet",
+    "Kick's index: none yet",
   ] {
     assert!(
       said.contains(line),

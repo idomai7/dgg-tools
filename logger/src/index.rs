@@ -40,7 +40,7 @@ use {
   ::std::{
     collections::HashMap,
     fs, io,
-    path::Path,
+    path::{Path, PathBuf},
     time::{Duration, Instant},
   },
 };
@@ -77,6 +77,15 @@ pub enum Error {
   Sqlite(::rusqlite::Error),
   /// The index was built with another schema version; rebuild it.
   Schema(Version),
+  /// Kick's index was, `index-kick.sqlite` (see [`crate::kick::index`]).
+  KickSchema(Version),
+}
+
+impl Error {
+  /// Whether no retry can fix it.
+  pub fn fatal(&self) -> bool {
+    matches!(self, Self::Schema(_) | Self::KickSchema(_))
+  }
 }
 
 impl From<io::Error> for Error {
@@ -104,6 +113,15 @@ impl ::std::fmt::Display for Error {
         SCHEMA_VERSION.major,
         SCHEMA_VERSION.minor,
       ),
+      Self::KickSchema(version) => {
+        let wanted = crate::kick::index::SCHEMA_VERSION;
+        write!(
+          f,
+          "Kick's index has schema {}.{}, not {}.{}; run `index \
+           --rebuild-kick`",
+          version.major, version.minor, wanted.major, wanted.minor,
+        )
+      }
     }
   }
 }
@@ -129,21 +147,43 @@ pub fn open_read_only(
   path: &Path,
   busy: Duration,
 ) -> Result<Connection, Error> {
+  open_read_only_at(path, busy, SCHEMA_VERSION, Error::Schema)
+}
+
+/// Opens the database at `path` only to read it: it must exist, at schema
+/// `version`; one at another is `wrong`.
+pub(crate) fn open_read_only_at(
+  path: &Path,
+  busy: Duration,
+  version: Version,
+  wrong: fn(Version) -> Error,
+) -> Result<Connection, Error> {
   let db = Connection::open_with_flags(
     path,
     OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
   )?;
   db.busy_timeout(busy)?;
-  let version: i64 =
+  let found: i64 =
     db.pragma_query_value(None, "user_version", |row| row.get(0))?;
-  if version != user_version(SCHEMA_VERSION) {
-    return Err(Error::Schema(schema_version(version)));
+  if found != user_version(version) {
+    return Err(wrong(schema_version(found)));
   }
   Ok(db)
 }
 
 /// Opens the index at `path`, creating it if needed.
 pub fn open(path: &Path) -> Result<Connection, Error> {
+  open_at(path, SCHEMA, SCHEMA_VERSION, Error::Schema)
+}
+
+/// Opens the database at `path`, creating it with `schema`, at `version`,
+/// if needed; one at another version is `wrong`.
+pub(crate) fn open_at(
+  path: &Path,
+  schema: &str,
+  version: Version,
+  wrong: fn(Version) -> Error,
+) -> Result<Connection, Error> {
   let mut db = Connection::open(path)?;
   // Other processes (a follower, a report) may hold the lock briefly; wait
   // for it rather than failing at once.
@@ -154,16 +194,15 @@ pub fn open(path: &Path) -> Result<Connection, Error> {
   // opening a new index at once can't both try to create it.
   let transaction =
     db.transaction_with_behavior(TransactionBehavior::Immediate)?;
-  let version: i64 =
+  let found: i64 =
     transaction.pragma_query_value(None, "user_version", |row| row.get(0))?;
-  match version {
+  match found {
     0 => {
-      transaction.execute_batch(SCHEMA)?;
-      let version = user_version(SCHEMA_VERSION);
-      transaction.pragma_update(None, "user_version", version)?;
+      transaction.execute_batch(schema)?;
+      transaction.pragma_update(None, "user_version", user_version(version))?;
     }
-    version if version == user_version(SCHEMA_VERSION) => {}
-    other => return Err(Error::Schema(schema_version(other))),
+    found if found == user_version(version) => {}
+    other => return Err(wrong(schema_version(other))),
   }
   transaction.commit()?;
   Ok(db)
@@ -195,12 +234,18 @@ fn set_wal(db: &Connection) -> Result<(), Error> {
 
 /// Deletes the index at `path` (and its WAL files), then opens a fresh one.
 pub fn rebuild(path: &Path) -> Result<Connection, Error> {
+  remove(path)?;
+  open(path)
+}
+
+/// Deletes the database at `path`, and its WAL files.
+pub(crate) fn remove(path: &Path) -> io::Result<()> {
   for suffix in ["", "-wal", "-shm"] {
     let mut file = path.as_os_str().to_owned();
     file.push(suffix);
     fs::remove_file(file).missing_ok()?;
   }
-  open(path)
+  Ok(())
 }
 
 /// How often [`follow`] indexes: a round once `batch` records are waiting,
@@ -219,14 +264,36 @@ pub struct Pace {
 /// once, then as often as `pace` says, passing each run's stats to `report`.
 ///
 /// Errors from a run are passed to `report` and retried next round (a file
-/// briefly locked by another process, say), except [`Error::Schema`], which
-/// no retry can fix and so is returned.
+/// briefly locked by another process, say), except [`fatal`](Error::fatal)
+/// ones, which no retry can fix and so are returned.
 pub fn follow(
   db: &mut Connection,
   journal_root: &Path,
   pace: Pace,
   running: impl Fn() -> bool,
-  mut report: impl FnMut(Result<&Stats, &Error>),
+  report: impl FnMut(Result<&Stats, &Error>),
+) -> Result<(), Error> {
+  paced(
+    db,
+    pace,
+    running,
+    |db, at_most| waiting(db, journal_root, at_most),
+    |db| index(db, journal_root),
+    report,
+  )
+}
+
+/// Runs `round` on `db` at once, then as often as `pace` says while
+/// `running()` is true, passing each one's stats to `report`; `waiting`
+/// counts the records waiting, up to the count it's given. As [`follow`]
+/// otherwise.
+pub(crate) fn paced<S>(
+  db: &mut Connection,
+  pace: Pace,
+  running: impl Fn() -> bool,
+  waiting: impl Fn(&Connection, u64) -> Result<u64, Error>,
+  round: impl Fn(&mut Connection) -> Result<S, Error>,
+  mut report: impl FnMut(Result<&S, &Error>),
 ) -> Result<(), Error> {
   let mut last = None::<Instant>;
   while running() {
@@ -236,15 +303,15 @@ pub fn follow(
       Some(since) if since >= pace.max_wait => true,
       Some(since) if since >= pace.min_wait => {
         // A failure to look is the round's to report.
-        waiting(db, journal_root, pace.batch).map_or(true, |n| n >= pace.batch)
+        waiting(db, pace.batch).map_or(true, |n| n >= pace.batch)
       }
       Some(_) => false,
     };
     if due {
       last = Some(Instant::now());
-      match index(db, journal_root) {
+      match round(db) {
         Ok(stats) => report(Ok(&stats)),
-        Err(e @ Error::Schema(_)) => return Err(e),
+        Err(e) if e.fatal() => return Err(e),
         Err(e) => report(Err(&e)),
       }
     }
@@ -261,10 +328,22 @@ pub fn waiting(
   journal_root: &Path,
   at_most: u64,
 ) -> Result<u64, Error> {
-  let mut count = 0;
   let files = live_files(journal_root)?
     .into_iter()
-    .chain(backfill_files(journal_root)?);
+    .chain(backfill_files(journal_root)?)
+    .collect();
+  waiting_in(db, journal_root, files, at_most)
+}
+
+/// How many records in `files`, live files under `journal_root`, aren't
+/// indexed in `db` yet, counting up to `at_most`.
+pub(crate) fn waiting_in(
+  db: &Connection,
+  journal_root: &Path,
+  files: Vec<PathBuf>,
+  at_most: u64,
+) -> Result<u64, Error> {
+  let mut count = 0;
   for file in files {
     if count >= at_most {
       break;
@@ -347,13 +426,13 @@ pub fn index(db: &mut Connection, journal_root: &Path) -> Result<Stats, Error> {
 }
 
 /// `file`'s path under `journal_root`, as the index names it.
-fn relative(journal_root: &Path, file: &Path) -> String {
+pub(crate) fn relative(journal_root: &Path, file: &Path) -> String {
   let relative = file.strip_prefix(journal_root).unwrap_or(file);
   relative.to_string_lossy().replace('\\', "/")
 }
 
 /// A file's checkpoint: where to resume, and the digest it was read at.
-fn checkpoint(
+pub(crate) fn checkpoint(
   db: &Connection,
   path: &str,
 ) -> Result<(u64, Option<String>), Error> {
