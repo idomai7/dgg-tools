@@ -23,7 +23,7 @@ use {
   },
   ::logger_journal::{
     Reader, Record, Variant, archive,
-    layout::{channel_root, kick_root, live_files},
+    layout::{channel_root, kick_root, live_file_instance, live_files},
     record::{kick, v0},
   },
   ::std::{
@@ -327,8 +327,7 @@ impl Watcher {
       .counted
       .retain(|file, _| files.iter().any(|(live, _)| live == file));
     for (file, slug) in files {
-      let Some(instance) = file.file_stem().map(|stem| stem.to_string_lossy())
-      else {
+      let Some((instance, _)) = live_file_instance(&file) else {
         continue;
       };
       let Some(capture) = captures.iter_mut().find(|capture| {
@@ -640,11 +639,9 @@ pub fn capture_tail(
   lines: usize,
 ) -> io::Result<Vec<String>> {
   let [root, _] = dgg_roots(journal)?;
-  let Some(file) = root
-    .live_files()?
-    .into_iter()
-    .rfind(|file| file.file_stem().is_some_and(|stem| stem == instance))
-  else {
+  let Some(file) = root.live_files()?.into_iter().rfind(|file| {
+    live_file_instance(file).is_some_and(|(theirs, _)| theirs == instance)
+  }) else {
     return Ok(Vec::new());
   };
   let start = fs::metadata(&file)?.len().saturating_sub(64 << 10);
