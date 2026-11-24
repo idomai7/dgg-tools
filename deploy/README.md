@@ -6,7 +6,7 @@ directory:
 | Command | Job | Runs |
 |---|---|---|
 | `capture` | Connects to dgg chat and writes everything to the journal | all the time |
-| `index` | Reads the journal into `index.sqlite` | all the time, with `--follow`: once 500 records are waiting (at most once a minute), or every 10 minutes |
+| `index` | Reads the journal into `index.sqlite`, and Kick's into `index-kick.sqlite` | all the time, with `--follow`: once 500 records are waiting (at most once a minute), or every 10 minutes |
 | `compact` | Packs each finished day into one compressed archive, Kick's channels' too | every hour |
 | `gaps` | Lists when no capture was connected | when you want |
 | `backfill` | Fetches missed messages from public logs | after an outage |
@@ -39,6 +39,7 @@ An install lives in one folder:
       control\             each running capture's status
       kick\<slug>\         each Kick channel's journal, laid out the same
     index.sqlite           the searchable index; can be rebuilt from the journal
+    index-kick.sqlite      Kick's, likewise
   logs\                    capture.log, index.log, compact.log, supervisor.log,
                            sync.log, migrate.log, kick-capture.log
   nodes, mesh.env          the mesh this node is in, if any (mesh.env holds
@@ -48,7 +49,7 @@ An install lives in one folder:
 ```
 
 The journal is the record. The index can always be deleted and rebuilt with
-`dgg-logger index --rebuild`. Logs are timestamped and rotated at 10 MB, keeping 5.
+`dgg-logger index --rebuild`, and Kick's with `--rebuild-kick`. Logs are timestamped and rotated at 10 MB, keeping 5.
 
 ## Build
 
