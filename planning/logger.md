@@ -535,7 +535,7 @@ yet, so old peers need no compatibility. Planned 2026-11-24.
   Kick's journals, Kick's index, and `serve`'s Kick endpoints (4 to 6 not
   yet run on a host).
   - `serve` is still started by hand: nothing passes it the query token
-    yet.
+    yet. The supervisor will run it (see [deploy](deploy.md#install-config)).
   - The supervisor finds the list in the install's root (its `--peers`,
     which every install passes), and runs `kick-capture` once it has
     channels. A list's changes take effect at the supervisor's next start.
@@ -545,9 +545,8 @@ yet, so old peers need no compatibility. Planned 2026-11-24.
     `kick-capture --bridge`, and waits for the old one to hand off to it.
     A Kick bridge that isn't healthy in time is only warned of: dgg's
     capture comes first. `kick-channels` moves with the root.
-- **By service:** dgg and Kick each a service, with dgg's journals moved
-  into `journal/dgg/` by `migrate` while capture runs (see
-  [By service](#by-service)). Not yet run on a host.
+- **By service:** done: dgg and Kick each a service, dgg's journals in
+  `journal/dgg/` (see [By service](#by-service)), on both hosts.
 - **Cross-host handoff:** done. Tested live: the old instance retired about 38 s
   after the new one started.
 - **`serve` / `sync`:** done. The supervisor's side is in [deploy](deploy.md).

@@ -85,6 +85,17 @@ The layout is flat: each crate is a direct child of the root.
     bump, which readers without that major's module refuse.
   - Everything was re-versioned from 1.x to 0.x on 2026-11-09, and existing
     files were rewritten to match.
+- **Config and secrets:** a command that needs configuration beyond its
+  flags, or any secret, reads it as JSON, from `--config-file <path>` or
+  `--config-stdin` (one or the other). Never from a flag's value or an
+  environment variable. Planned 2026-11-25.
+  - Each command has its own type of what it reads, and refuses fields it
+    doesn't know. A missing field it needs is an error naming the field.
+  - Secrets in it are `Secret`s (in `common`), which never print: their
+    `Debug`, and anything shown of the config, say `<secret>`. Only
+    reading one's value on purpose gets it.
+  - Run by hand, either works; the supervisor uses stdin, so nothing it
+    passes on is in an environment or on a command line.
 - **Kick:** its own crates, separate from dgg's: [kick-api](kick-api.md) and
   [kick-mod](kick-mod.md).
 - **Every outside service has its own API crate,** `<service>-api`, as dgg's and
