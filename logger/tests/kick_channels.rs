@@ -96,20 +96,23 @@ fn updates_the_file() {
   assert_eq!(fs::read_to_string(&path).unwrap(), "a 5\n");
 }
 
-#[test]
-fn looks_up_a_channel() {
+#[::tokio::test]
+async fn looks_up_a_channel() {
   let mut asked = None;
-  let looked_up = channels::look_up(" Some-Channel ", |slug| {
+  let looked_up = channels::look_up(" Some-Channel ", async |slug: &str| {
     asked = Some(slug.to_owned());
     found(slug)
   });
+  let looked_up = looked_up.await;
   assert_eq!(looked_up.unwrap(), channel("some-channel", 789, 123));
   assert_eq!(asked.as_deref(), Some("some-channel"));
 
-  let e = channels::look_up("a/b", |_| panic!("not asked")).unwrap_err();
+  let not_asked = async |_: &str| panic!("not asked");
+  let e = channels::look_up("a/b", not_asked).await.unwrap_err();
   assert!(e.contains("a slug"), "{e}");
-  let e = channels::look_up("a", |_| found("b")).unwrap_err();
-  assert_eq!(e, r#"the lookup answered for "b""#);
-  let e = channels::look_up("a", |_| Err("curl: timed out".into()));
-  assert_eq!(e.unwrap_err(), "curl: timed out");
+  let e = channels::look_up("a", async |_: &str| found("b")).await;
+  assert_eq!(e.unwrap_err(), r#"the lookup answered for "b""#);
+  let timed_out = async |_: &str| Err("timed out".into());
+  let e = channels::look_up("a", timed_out).await;
+  assert_eq!(e.unwrap_err(), "timed out");
 }

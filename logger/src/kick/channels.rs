@@ -108,15 +108,15 @@ fn parse_line(line: &str) -> Result<Option<Channel>, &'static str> {
 
 /// `slug`'s ids, asked of `look_up`: in practice [`channel::look_up`],
 /// Kick's unofficial lookup. The slug is taken in any case.
-pub fn look_up(
+pub async fn look_up(
   slug: &str,
-  look_up: impl FnOnce(&str) -> Result<channel::Channel, String>,
+  look_up: impl AsyncFnOnce(&str) -> Result<channel::Channel, String>,
 ) -> Result<Channel, String> {
   let slug = slug.trim().to_ascii_lowercase();
   if !valid_slug(&slug) {
     return Err("a slug is letters, digits, - and _".into());
   }
-  let found = look_up(&slug)?;
+  let found = look_up(&slug).await?;
   if found.slug != slug {
     return Err(format!("the lookup answered for {:?}", found.slug));
   }

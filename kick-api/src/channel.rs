@@ -1,9 +1,10 @@
 //! The unofficial channel lookup, `GET kick.com/api/v2/channels/<slug>`.
 //!
 //! Kick's official API has no chatroom ids, and chat is read by chatroom.
-//! Cloudflare refuses some HTTP clients here (reqwest among them), so this
-//! decodes the answer, and feature `lookup`'s [`look_up`] asks with curl,
-//! which it lets through.
+//! This decodes the answer, and feature `lookup`'s [`look_up`] asks.
+//! Cloudflare refuses some clients here: reqwest without a `User-Agent`,
+//! or with curl's, as it does on `web.kick.com`. So the asking tool names
+//! itself, by its codename.
 
 use ::serde::Deserialize;
 
@@ -35,19 +36,40 @@ pub fn parse(json: &str) -> Result<Channel, ::serde_json::Error> {
   ::serde_json::from_str(json)
 }
 
-/// Asks the lookup for `slug` with curl, anonymously, waiting at most 20
-/// seconds. A failure says why, with what was answered.
+/// Asks the lookup for `slug` with `http`, anonymously, as `user_agent`,
+/// which names the tool (such as `ledgerline/0.1.0`), waiting at most 20
+/// seconds. A failure says why, with the start of what was answered.
 #[cfg(feature = "lookup")]
-pub fn look_up(slug: &str) -> Result<Channel, String> {
-  let output = ::std::process::Command::new("curl")
-    .args(["-sS", "-m", "20", "-H", "Accept: application/json"])
-    .arg(url(slug))
-    .output()
-    .map_err(|e| format!("running curl: {e}"))?;
-  if !output.status.success() {
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    return Err(format!("curl: {}", stderr.trim()));
+pub async fn look_up(
+  http: &::reqwest::Client,
+  user_agent: &str,
+  slug: &str,
+) -> Result<Channel, String> {
+  use ::reqwest::header::{ACCEPT, USER_AGENT};
+  let response = http
+    .get(url(slug))
+    .header(USER_AGENT, user_agent)
+    .header(ACCEPT, "application/json")
+    .timeout(::std::time::Duration::from_secs(20))
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+  let status = response.status();
+  let body = response.text().await.map_err(|e| e.to_string())?;
+  let start = start(&body);
+  if !status.is_success() {
+    return Err(format!("answered {status}: {start}"));
   }
-  let body = String::from_utf8_lossy(&output.stdout);
-  parse(&body).map_err(|e| format!("{e}: {}", body.trim()))
+  parse(&body).map_err(|e| format!("{e}: {start}"))
+}
+
+/// The start of `body`, enough to say what it is: a refusal's page can be
+/// long.
+#[cfg(feature = "lookup")]
+fn start(body: &str) -> &str {
+  let body = body.trim();
+  match body.char_indices().nth(300) {
+    Some((at, _)) => &body[..at],
+    None => body,
+  }
 }
