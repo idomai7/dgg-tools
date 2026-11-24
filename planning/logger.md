@@ -594,11 +594,15 @@ WebSocket URL of its own. Each step a pause for review.
   relative to the channel's directory, so today's index becomes
   destiny's by a rename, with no rebuild and no schema change. Its
   deduplication (timestamp and nick), connections, gaps and fetched
-  ranges stay those of one chat, as they are now. (Kick's stays one index
-  for every channel: its rows are keyed by Kick's own ids, unique across
-  channels.) `index --follow` keeps each channel's on its own, picking up
-  a channel added to the list at its next look. `--rebuild-dgg` rebuilds
-  every channel's.
+  ranges stay those of one chat, as they are now. `index --follow` keeps
+  each channel's on its own, picking up a channel added to the list at its
+  next look. `--rebuild-dgg` rebuilds every channel's.
+  - Kick's index is split per channel too, `index-kick-<slug>.sqlite`,
+    its paths relative to the channel's directory, so every service's
+    indexes are alike. Its rows are already keyed by Kick's own ids, so
+    nothing about them changes; each channel's is rebuilt from its
+    journal once, and `index-kick.sqlite` deleted. Its own step, after
+    dgg's (decided 2026-11-25).
 - **Routes,** both services alike, every channel's under `channels/` as
   Kick's queries are now:
   - `GET /<service>/v0/channels`: the channels with journals here, a
@@ -682,8 +686,10 @@ WebSocket URL of its own. Each step a pause for review.
   4. A `dgg-capture` per channel: `--channels` and `--channel`, the
      supervisor, the install's bridges, the logs.
   5. Status.
-  6. Docs.
-  7. Removing the old-control heartbeat and the move, once both hosts
+  6. Kick's index per channel: `serve`'s history route and `status`
+     reading the channel's.
+  7. Docs.
+  8. Removing the old-control heartbeat and the move, once both hosts
      have moved.
 - **To decide:**
   - The first channel's name: `destiny`.
