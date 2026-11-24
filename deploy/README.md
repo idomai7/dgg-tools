@@ -113,13 +113,11 @@ Anything involving a machine install needs an administrator prompt.
 If anything goes wrong, `install` says what, and the capture that was
 running (or the bridge) keeps running.
 
-The first install of a build with `journal\dgg\` moves dgg's journal
-there, and `index.sqlite` to `index-dgg.sqlite`, as its supervisor starts
-(`migrate.log` says what moved). Capture keeps running throughout: the
-bridge also writes its status where the old capture looks, so the old one
-hands off to it as before. Should a capture from before still be writing
-then, its files stay where they are, and are read there until compacted;
-the next start moves the rest.
+dgg's journal is in `journal\dgg\` and its index in `index-dgg.sqlite`.
+Builds `ed46061` to `52d088d` moved them there from `journal\` and
+`index.sqlite`; later builds don't, so upgrading from a build older than
+`ed46061` goes through one of those first. `migrate.log` warns of
+anything left in the old places, which nothing reads.
 
 A minute after it starts, the supervisor runs `compact --early`, which
 also compacts days still open: the files of captures that have stopped
