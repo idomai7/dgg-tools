@@ -20,8 +20,8 @@ config), restarts them after failures, and runs compact (and sync, given a
 peer); it's `dgg-logger
 supervise` without a window, for the logon task and the service. It runs
 `kick-capture` too once `kick-channels` has channels (it looks every
-minute until then). A change to the list takes effect when the supervisor
-next starts. In Task Manager, both show as "dgg-tools: ..."; the Details tab's Command line
+minute until then). Once running, it reads the list again every minute:
+channels added are captured, and channels removed stop. In Task Manager, both show as "dgg-tools: ..."; the Details tab's Command line
 column tells the commands apart.
 
 The commands that work on the data (`capture` to `serve`) take `--data`,
