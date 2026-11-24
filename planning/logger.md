@@ -517,7 +517,10 @@ Planned 2026-11-25. Each step a pause for review.
    runs one per listed channel, each restarted on its own, reading the
    list every minute to start the added. All log to `kick-capture.log`,
    each line naming its channel. Capturing every channel in one process
-   goes: one code path.
+   goes: one code path. Done 2026-11-25 (`8ec7447`): a capture that ended
+   cleanly (handed off, or removed) starts again only once its channel
+   has left the list and come back. `install` already starts a bridge per
+   channel and waits on them together.
 3. **`install` waits for every Kick channel:** a bridge per channel,
    waited on together, and the new install's Kick captures waited on too,
    not only dgg's. A channel not healthy in time is warned of, by name:
@@ -569,8 +572,9 @@ Planned 2026-11-25. Each step a pause for review.
   - The supervisor runs `serve`, given its section of the install's config,
     query token included (see [deploy](deploy.md#install-config)).
   - The supervisor finds the list in the install's root (its `--peers`,
-    which every install passes), and runs `kick-capture` once it has
-    channels. A list's changes take effect at the supervisor's next start.
+    which every install passes), and runs a `kick-capture` per channel in
+    it, reading it every minute (see
+    [A capture per Kick channel](#a-capture-per-kick-channel)).
   - When dgg's capture hands off, `kick-capture` gets 90 s to hand off too
     before it's stopped.
   - `install` bridges Kick's capture as it does dgg's, with
