@@ -14,7 +14,10 @@
 //!   at a time (`index.lock` in the data directory), so during a handoff the
 //!   new one waits for the old one to exit.
 //! - `dgg-logger compact` runs every `compact_every` (the first time a minute after
-//!   start), by whichever supervisor holds `compact.lock`.
+//!   start), by whichever supervisor holds `compact.lock`. The first time,
+//!   it's `compact --early`: what captures from before the upgrade (or
+//!   restart) left on days still open is compacted then, not once the day
+//!   ends.
 //! - Given where its peers are (see [`crate::peer`]), `dgg-logger sync`
 //!   pulls from each peer in turn every `sync_every` (the first time two
 //!   minutes after start), by whichever supervisor holds `sync.lock`. They
@@ -93,6 +96,8 @@ pub struct Config {
   pub migrate: Program,
   pub index: Program,
   pub compact: Program,
+  /// `compact`'s first run after start.
+  pub compact_early: Program,
   /// `sync`, without its peer: that's added from `peers`.
   pub sync: Program,
   /// Where the peers to sync from are, if anywhere: the install's root
@@ -130,6 +135,7 @@ impl Config {
       migrate: command(&["migrate"]),
       index: command(&["index", "--follow"]),
       compact: command(&["compact"]),
+      compact_early: command(&["compact", "--early"]),
       sync: command(&["sync"]),
       peers: None,
       kick_capture: command(&["kick-capture"]),
@@ -315,8 +321,13 @@ pub fn run(config: &Config, stop: &Stop) -> io::Result<Exit> {
           first: config.compact_first,
           every: config.compact_every,
         };
+        let first = AtomicBool::new(true);
         periodically(&schedule, compact_log, context, || {
-          vec![(None, config.compact.clone())]
+          let program = match first.swap(false, Ordering::SeqCst) {
+            true => &config.compact_early,
+            false => &config.compact,
+          };
+          vec![(None, program.clone())]
         });
       });
       let (Some(peers), Some(sync_log)) = (&config.peers, sync_log) else {
