@@ -363,13 +363,29 @@ undocumented endpoints anonymously: no token, no login, no app. Planned
   - `migrate` checks its schema too, and `status` shows its size and last
     write.
 - **Serving kick-mod:**
-  - `GET /kick/<slug>/users/<id>`: a user's history in the channel, from the
-    Kick index.
+  - `GET /kick/<slug>/users/<id>`: a user's history in the channel, as JSON:
+    their messages (the newest 500, each with its deletion), and the bans,
+    timeouts and unbans on them, with the newest name seen.
+    - From the Kick index, and from what it hasn't reached yet: the
+      channel's live files past its checkpoints, indexed in memory for the
+      query (the same code, into an in-memory database). Both are read in
+      one snapshot of the index, so a round finishing meanwhile can't count
+      anything twice, and the index's lag never shows.
   - `GET /kick/<slug>/events`: live chat as server-sent events, by tailing the
-    channel's live files, apart from the capture process; about a quarter of
-    a second behind.
-  - A third token, a query token, reads only Kick's history and live chat.
-    kick-mod holds only that, and the mesh CA's certificate for TLS.
+    channel's live files every 250 ms, apart from the capture process.
+    - From now on: nothing written before is replayed. A new file (another
+      instance's, or the next day's) is read from its start.
+    - Events are `open`, `close`, `event` (Kick's event name and data, as
+      Kick sent them, for kick-mod to decode with `kick-api`) and `history`
+      (a gap's page, as sent), each with its receive time, instance and
+      connection. An `error` ends the stream.
+    - An event Kick gave an id (a message, deletion, ban or unban) is passed
+      on once, however many captures' files have it.
+    - Streams don't count against the 8 requests at once; at most 16 run.
+  - A third token, a query token (`--query-token`, `LOGGER_QUERY_TOKEN`),
+    reads only Kick's history and live chat. The read and control tokens
+    read them too. kick-mod holds only the query token, and the mesh CA's
+    certificate for TLS.
   - kick-mod is pointed at one node's `serve`, with others to fall back on.
 - **Steps,** each a pause for review:
   1. The channel list and `kick-ids`.
@@ -413,9 +429,12 @@ undocumented endpoints anonymously: no token, no login, no app. Planned
   - Live test: after backfill, the index holds exactly a reference capture's 583
     messages over the same span. 16 nicks stay lowercase because those users
     were never seen natively.
-- **Kick:** steps 1 to 5 done: `kick-channels`, `kick-ids`, `kick-capture`,
+- **Kick:** steps 1 to 6 done: `kick-channels`, `kick-ids`, `kick-capture`,
   the supervisor running it, `status` showing it, compact and sync covering
-  Kick's journals, and Kick's index (4 and 5 not yet run on a host).
+  Kick's journals, Kick's index, and `serve`'s Kick endpoints (4 to 6 not
+  yet run on a host).
+  - `serve` is still started by hand: nothing passes it the query token
+    yet.
   - The supervisor finds the list in the install's root (its `--peers`,
     which every install passes), and runs `kick-capture` once it has
     channels. A list's changes take effect at the supervisor's next start.
