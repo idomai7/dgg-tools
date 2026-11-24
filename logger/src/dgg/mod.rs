@@ -3,6 +3,7 @@
 
 pub mod backfill;
 pub mod capture;
+pub mod channels;
 pub mod gaps;
 pub mod index;
 
