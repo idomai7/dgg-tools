@@ -145,6 +145,19 @@ impl Frame {
   ) -> impl Iterator<Item = Result<Reply, ::serde_json::Error>> + '_ {
     centrifugo::replies(&self.raw)
   }
+
+  /// The events published in the frame. Replies that don't decode, and
+  /// those that aren't publications, are skipped.
+  #[cfg(feature = "protocol")]
+  pub fn events(&self) -> impl Iterator<Item = super::Event> + '_ {
+    self.replies().filter_map(|reply| match reply.ok()?.body? {
+      reply::Body::Push(push::Push {
+        body: Some(push::Body::Publication(publication)),
+        ..
+      }) => super::Event::from_publication(&publication.data),
+      _ => None,
+    })
+  }
 }
 
 /// Which step of connecting failed.

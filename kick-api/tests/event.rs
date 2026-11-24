@@ -284,3 +284,14 @@ fn from_publication_needs_kicks_shape() {
     })
   );
 }
+
+#[cfg(feature = "client")]
+#[test]
+fn a_frames_events() {
+  use ::kick_api::realtime::Frame;
+  let found: Vec<Event> = FRAMES
+    .lines()
+    .flat_map(|raw| Frame::new(1, raw.into()).events().collect::<Vec<_>>())
+    .collect();
+  assert_eq!(found, events());
+}
