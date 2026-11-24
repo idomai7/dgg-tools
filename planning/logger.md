@@ -503,7 +503,8 @@ yet, so old peers need no compatibility. Planned 2026-11-24.
     left being written on either host: both moved everything at once.
 
 ## A capture per Kick channel
-Planned 2026-11-25. Each step a pause for review.
+Planned 2026-11-25. Each step a pause for review. All four, and the
+captures saying what they listen to, upgraded on both hosts 2026-11-25.
 1. **Names by service:** dgg's own commands name their service, as Kick's
    do: `capture` becomes `dgg-capture`, `backfill` `dgg-backfill` and
    `gaps` `dgg-gaps`, with no aliases. `capture.log` becomes
