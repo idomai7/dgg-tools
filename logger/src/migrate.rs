@@ -1,14 +1,13 @@
 //! Migrate: brings the journal and the index up to this build's layout and
 //! formats, in place, as a supervisor starts.
 //!
-//! Every host is on this build's formats (`journal dgg.0.3`, index schema
-//! 0.6), but dgg's journals move into a directory of their own,
-//! `journal/dgg/`, and its index to `index-dgg.sqlite`, while capture keeps
-//! running (see [`crate::dgg::migrate`]). It logs what an
+//! Every host is on this build's layout and formats (`journal dgg.0.3`,
+//! index schema 0.6), so there's nothing to migrate. It logs what an
 //! upgrade touches, so its log shows how one went:
 //!
 //! - first, the build, and the versions it writes;
-//! - what moved, and what was left where it was;
+//! - anything left of the layout from before dgg's journals had a
+//!   directory of their own (see [`OLD_LAYOUT`]), which nothing reads now;
 //! - for each service's journal roots (dgg's, the backfill journal's and
 //!   each Kick channel's), a line for each kind of file in it, with its
 //!   version: live files, archive manifests, `synced-archives` and capture
@@ -28,7 +27,7 @@
 use {
   crate::{
     BUILD, control,
-    dgg::{self, Dgg, index::SCHEMA_VERSION},
+    dgg::{Dgg, index::SCHEMA_VERSION},
     index::schema_version,
     kick::{Kick, index as kick_index},
     service::{Root, Service},
@@ -53,15 +52,23 @@ use {
 /// The locks in the data directory it holds, a supervisor's.
 pub const LOCKS: [&str; 3] = ["index.lock", "compact.lock", "sync.lock"];
 
+/// What the layout from before dgg's journals had a directory of their own
+/// had in the data directory, and this one doesn't.
+pub const OLD_LAYOUT: [&str; 5] = [
+  "journal/live",
+  "journal/archive",
+  "journal/control",
+  "journal/backfill",
+  "index.sqlite",
+];
+
 /// What a [`migrate`] did, or with a dry run would do.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Report {
   /// What was left as it was, with why.
   pub failed: Vec<String>,
-  /// Files moved into their service's directory.
-  pub moved: u64,
-  /// Live files left where they were, still being written.
-  pub left: Vec<PathBuf>,
+  /// What's left of the [old layout](OLD_LAYOUT), which nothing reads now.
+  pub old: Vec<PathBuf>,
   /// dgg's index's schema, if there's an index.
   pub index: Option<Version>,
   /// Kick's index's schema, if there's one.
@@ -94,11 +101,10 @@ pub fn migrate(
   } else {
     hold(data, say)?
   };
-  let mut report = Report::default();
-  let moved = dgg::migrate::move_in(data, dry_run, say)?;
-  report.moved = moved.files;
-  report.left = moved.left;
-  report.failed = moved.failed;
+  let mut report = Report {
+    old: old_layout(data, say),
+    ..Report::default()
+  };
   let journal = data.join("journal");
   check_service::<Dgg>(&journal, &mut report, say)?;
   check_service::<Kick>(&journal, &mut report, say)?;
@@ -119,6 +125,26 @@ pub fn migrate(
   )?;
 
   Ok(report)
+}
+
+/// What's left in `data` of the [old layout](OLD_LAYOUT), each said.
+fn old_layout(data: &Path, say: &mut dyn FnMut(Level, &str)) -> Vec<PathBuf> {
+  let left: Vec<PathBuf> = OLD_LAYOUT
+    .iter()
+    .map(|old| data.join(old))
+    .filter(|path| path.exists())
+    .collect();
+  for path in &left {
+    say(
+      Level::Warn,
+      &format!(
+        "{} is left from before dgg's journals had a directory of their \
+         own; nothing reads it now",
+        path.display()
+      ),
+    );
+  }
+  left
 }
 
 /// Checks the index at `path`, `name` in what it says, is at `wanted`, if

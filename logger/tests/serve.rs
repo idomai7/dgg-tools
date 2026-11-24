@@ -76,9 +76,6 @@ async fn serve(root: &TempDir, tokens: Tokens) -> String {
 #[::tokio::test]
 async fn control_endpoints() {
   let root = TempDir::new("logger-serve");
-  // Where captures from before dgg's journals moved into dgg/ look.
-  let old_control = control::dir(root.path());
-  ::std::fs::create_dir_all(&old_control).unwrap();
   let tokens = Tokens {
     read: "reader".into(),
     control: Some("secret".into()),
@@ -139,13 +136,11 @@ async fn control_endpoints() {
     204
   );
 
-  // It's written where local instances look, older ones too.
+  // It's written where local instances look.
   let control = control::dir(&Dgg::dir(root.path()));
-  for dir in [&control, &old_control] {
-    let written = control::read_all(dir).unwrap();
-    assert_eq!(written.len(), 1);
-    assert_eq!(written[0].instance, "remote");
-  }
+  let written = control::read_all(&control).unwrap();
+  assert_eq!(written.len(), 1);
+  assert_eq!(written[0].instance, "remote");
   let listed = client
     .get(url("/dgg/v0/control"))
     .bearer_auth("secret")
@@ -169,7 +164,6 @@ async fn control_endpoints() {
     .unwrap();
   assert_eq!(code(deleted), 204);
   assert_eq!(control::read_all(&control).unwrap(), []);
-  assert_eq!(control::read_all(&old_control).unwrap(), []);
 }
 
 #[::tokio::test]

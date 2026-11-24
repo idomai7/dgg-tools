@@ -3,7 +3,6 @@
 use {
   crate::{
     capture::{Exit, Handoff, Peer, Say, instance_id},
-    control,
     dgg::{
       Dgg,
       capture::{Config, run},
@@ -112,7 +111,6 @@ impl Capture {
         ..Handoff::default()
       },
       peer,
-      legacy_control: Some(control::dir(&journal)),
       bridge: self.bridge,
     };
     match run(config, shutdown()).await {

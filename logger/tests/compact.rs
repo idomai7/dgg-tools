@@ -401,30 +401,3 @@ fn keeps_a_single_endpoint() {
       .starts_with("journal kick.0.1 ; endpoint=wss://one channel=c\u{1e}\n")
   );
 }
-
-/// A root's live files in its legacy directory (a capture from before
-/// dgg's journals moved into dgg/ wrote them) are its day's too: merged
-/// into its archive, and deleted from there.
-#[test]
-fn merges_live_files_where_they_were() {
-  let (root, legacy) = (
-    TempDir::new("logger-compact"),
-    TempDir::new("logger-compact"),
-  );
-  live(&root, "a", &journal(&["10 a 1 frame MSG 1"]));
-  live(&legacy, "b", &journal(&["20 b 1 frame MSG 2"]));
-  let both = Root {
-    legacy: Some(legacy.to_path_buf()),
-    ..Root::at(root.path())
-  };
-  let hour = Duration::from_secs(3600);
-  assert_eq!(closed_days(&both, 86_400_000 * 2, hour).unwrap(), [DAY]);
-  let done = compact_day(&both, DAY, 3).unwrap().unwrap();
-  assert_eq!((done.files, done.archive.records), (2, 2));
-  assert_eq!(
-    archived(&root),
-    journal(&["10 a 1 frame MSG 1", "20 b 1 frame MSG 2"])
-  );
-  assert!(!live_day_dir(legacy.path(), DAY).exists());
-  assert!(!archive_file(legacy.path(), DAY).exists());
-}

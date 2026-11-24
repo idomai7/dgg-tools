@@ -133,8 +133,7 @@ fn valid_sha256(text: &str) -> bool {
 }
 
 /// Every file of `S`'s in its directory `dir`, with its size: each journal
-/// root's live files (with those in its legacy directory), then its
-/// archives.
+/// root's live files, then its archives.
 pub fn list<S: Service>(dir: &Path) -> io::Result<Vec<File>> {
   let mut files = Vec::new();
   for root in S::roots(dir)? {

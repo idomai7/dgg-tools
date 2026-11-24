@@ -1,5 +1,5 @@
 use {
-  ::common::{temp_dir::TempDir, time::now_ms},
+  ::common::temp_dir::TempDir,
   ::dgg_api::chat::Options,
   ::futures_util::{SinkExt, StreamExt},
   ::logger::{
@@ -16,7 +16,7 @@ use {
     layout::live_files,
     record::v0::{self, Body},
   },
-  ::std::{fs, path::Path, time::Duration},
+  ::std::{path::Path, time::Duration},
   ::tokio::{net::TcpListener, sync::oneshot},
   ::tokio_tungstenite::tungstenite::Message,
 };
@@ -98,7 +98,6 @@ async fn journals_connections_and_shutdown() {
     started: 1,
     handoff: Handoff::default(),
     peer: None,
-    legacy_control: None,
     bridge: false,
   };
   assert_eq!(run(config, shutdown).await.unwrap(), Exit::Shutdown);
@@ -172,7 +171,6 @@ async fn hands_off_to_a_newer_instance() {
     started,
     handoff: quick_handoff(),
     peer: None,
-    legacy_control: None,
     bridge: false,
   };
 
@@ -234,7 +232,6 @@ async fn hands_off_to_an_instance_on_another_host() {
     started,
     handoff: quick_handoff(),
     peer,
-    legacy_control: None,
     bridge: false,
   };
   let old = config(&old_host, "old", 1, None);
@@ -268,134 +265,4 @@ async fn hands_off_to_an_instance_on_another_host() {
   // The new instance withdrew its status from the old host on exit.
   let control = control::dir(&Dgg::dir(old_host.path()));
   assert_eq!(control::read_all(&control).unwrap(), []);
-}
-
-/// While dgg's journals move into `dgg/`: a capture from before, writing
-/// the journal directory itself, hands off to one from this build, which
-/// writes its status in the old control directory too.
-#[::tokio::test]
-async fn hands_off_across_the_move() {
-  let (url, server) = chat_server().await;
-  let journal = TempDir::new("logger-capture");
-  let old_control = control::dir(journal.path());
-  let config = |journal_root, instance: &str, started, legacy| Config {
-    chat: Options {
-      url: url.clone(),
-      origin: None,
-      ..Options::default()
-    },
-    journal_root,
-    instance: instance.into(),
-    started,
-    handoff: quick_handoff(),
-    peer: None,
-    legacy_control: legacy,
-    bridge: false,
-  };
-  let old = config(journal.to_path_buf(), "old", 1, None);
-  let old = ::tokio::spawn(run(old, ::std::future::pending()));
-  ::tokio::time::sleep(Duration::from_millis(300)).await;
-  let (stop, stopped) = oneshot::channel::<()>();
-  let new = config(
-    Dgg::dir(journal.path()),
-    "new",
-    2,
-    Some(old_control.clone()),
-  );
-  let new = ::tokio::spawn(run(new, async {
-    let _ = stopped.await;
-  }));
-
-  let old_exit = ::tokio::time::timeout(Duration::from_secs(5), old)
-    .await
-    .expect("old instance didn't retire")
-    .unwrap()
-    .unwrap();
-  assert_eq!(old_exit, Exit::HandedOff("new".into()));
-  // Once the old control directory is gone, nothing is written there.
-  fs::remove_dir_all(&old_control).unwrap();
-  ::tokio::time::sleep(Duration::from_millis(300)).await;
-  assert!(!old_control.exists());
-  stop.send(()).unwrap();
-  assert_eq!(new.await.unwrap().unwrap(), Exit::Shutdown);
-  server.abort();
-
-  let old = bodies(journal.path(), "old");
-  assert_eq!(old.last(), Some(&Body::Close(format!("{HANDOFF}new"))));
-  let new = bodies(&Dgg::dir(journal.path()), "new");
-  assert_eq!(new.last(), Some(&Body::Close(SHUTDOWN.into())));
-  let control = control::dir(&Dgg::dir(journal.path()));
-  assert_eq!(control::read_all(&control).unwrap(), []);
-}
-
-/// Across hosts while they move: pushing to a host whose `serve` is from
-/// before dgg's routes had a prefix, at `/control/<instance>`.
-#[::tokio::test]
-async fn hands_off_to_an_older_host() {
-  use ::axum::{extract, http::StatusCode, routing::put};
-  let (url, server) = chat_server().await;
-  let (old_host, new_host) = (
-    TempDir::new("logger-capture"),
-    TempDir::new("logger-capture"),
-  );
-  let old_control = control::dir(old_host.path());
-  let (pushed, removed) = (old_control.clone(), old_control.clone());
-  let routes = ::axum::Router::new().route(
-    "/control/{instance}",
-    put(|body: String| async move {
-      let status = control::parse_push(&body, now_ms()).unwrap();
-      control::write(&pushed, &status).unwrap();
-      StatusCode::NO_CONTENT
-    })
-    .delete(
-      |extract::Path(instance): extract::Path<String>| async move {
-        control::remove(&removed, &instance).unwrap();
-        StatusCode::NO_CONTENT
-      },
-    ),
-  );
-  let serve = TcpListener::bind("127.0.0.1:0").await.unwrap();
-  let serve_url = format!("http://{}", serve.local_addr().unwrap());
-  let serving =
-    ::tokio::spawn(async move { ::axum::serve(serve, routes).await.unwrap() });
-
-  let config = |journal_root, instance: &str, started, peer| Config {
-    chat: Options {
-      url: url.clone(),
-      origin: None,
-      ..Options::default()
-    },
-    journal_root,
-    instance: instance.into(),
-    started,
-    handoff: quick_handoff(),
-    peer,
-    legacy_control: None,
-    bridge: false,
-  };
-  let old = config(old_host.to_path_buf(), "old", 1, None);
-  let old = ::tokio::spawn(run(old, ::std::future::pending()));
-  ::tokio::time::sleep(Duration::from_millis(300)).await;
-  let peer = Peer {
-    url: serve_url,
-    token: "secret".into(),
-    ca: None,
-  };
-  let (stop, stopped) = oneshot::channel::<()>();
-  let new = config(Dgg::dir(new_host.path()), "new", 2, Some(peer));
-  let new = ::tokio::spawn(run(new, async {
-    let _ = stopped.await;
-  }));
-
-  let old_exit = ::tokio::time::timeout(Duration::from_secs(5), old)
-    .await
-    .expect("old instance didn't retire")
-    .unwrap()
-    .unwrap();
-  assert_eq!(old_exit, Exit::HandedOff("new".into()));
-  stop.send(()).unwrap();
-  assert_eq!(new.await.unwrap().unwrap(), Exit::Shutdown);
-  server.abort();
-  serving.abort();
-  assert_eq!(control::read_all(&old_control).unwrap(), []);
 }

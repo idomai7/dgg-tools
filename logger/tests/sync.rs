@@ -302,40 +302,6 @@ async fn pulls_backfill_files() {
   );
 }
 
-/// A capture from before dgg's journals moved into dgg/ writes where they
-/// were: served from there, and appended to there if that's where the file
-/// is here too.
-#[::tokio::test]
-async fn pulls_live_files_where_they_were() {
-  let (remote, local) =
-    (TempDir::new("logger-sync"), TempDir::new("logger-sync"));
-  let peer = Peer {
-    url: serve(&remote).await,
-    token: "secret".into(),
-    ca: None,
-  };
-  let mut writer = Writer::new(remote.to_path_buf(), "a");
-  writer.write(0, 1, Body::Frame("MSG 1".into())).unwrap();
-  let stats = sync(&peer, local.path()).await.unwrap();
-  assert_eq!((stats.files, stats.updated), (1, 1));
-  let path = "live/1970-01-01/a.journal";
-  let read = |path: ::std::path::PathBuf| fs::read(path).unwrap();
-  assert_eq!(read(dgg(&local).join(path)), read(remote.path().join(path)));
-
-  // Here too, where it was.
-  fs::create_dir_all(local.path().join("live/1970-01-01")).unwrap();
-  fs::rename(dgg(&local).join(path), local.path().join(path)).unwrap();
-  writer.write(1, 1, Body::Frame("MSG 2".into())).unwrap();
-  drop(writer);
-  let stats = sync(&peer, local.path()).await.unwrap();
-  assert_eq!(stats.updated, 1);
-  assert_eq!(
-    read(local.path().join(path)),
-    read(remote.path().join(path))
-  );
-  assert!(!dgg(&local).join(path).exists());
-}
-
 /// dgg's journal root in `root`'s journal directory.
 fn dgg(root: &TempDir) -> ::std::path::PathBuf {
   Dgg::dir(root.path())

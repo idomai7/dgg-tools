@@ -48,10 +48,6 @@ const SCHEMA: &str = include_str!("../../schemas/index/v0.6.sql");
 /// Its file, in the data directory.
 pub const FILE: &str = "index-dgg.sqlite";
 
-/// Its file before dgg's journals had a directory of their own, which
-/// `migrate` renames.
-pub const LEGACY_FILE: &str = "index.sqlite";
-
 /// Records are committed in batches of this many, with their checkpoint.
 const BATCH: usize = 10_000;
 

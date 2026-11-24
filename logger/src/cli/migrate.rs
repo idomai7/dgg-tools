@@ -8,11 +8,10 @@ use {
 };
 
 /// Bring the journal and the indexes up to this build's layout and formats,
-/// in place: dgg's journals move into `journal/dgg/`, and its index to
-/// `index-dgg.sqlite`, leaving live files still being written where they
-/// are. Then it checks, saying the version of each kind of file and each
-/// index's schema. Waits for, and holds, the index, compact and sync locks,
-/// as a supervisor does.
+/// in place; for now, they all are. It checks, saying the version of each
+/// kind of file and each index's schema, and anything left of an older
+/// layout. Waits for, and holds, the index, compact and sync locks, as a
+/// supervisor does.
 #[derive(Args)]
 pub struct Migrate {
   /// Check, but change nothing; take no locks.
@@ -33,15 +32,11 @@ impl Migrate {
       }
     };
     if report.failed.is_empty() {
-      let done = match (self.dry_run, report.moved) {
-        (true, 0) => "nothing would be migrated".to_owned(),
-        (false, 0) => "nothing to migrate".to_owned(),
-        (true, n) => format!("{n} files would be moved"),
-        (false, n) => format!("{n} files moved"),
-      };
-      match report.unreadable.len() {
-        0 => info!("{done}"),
-        n => {
+      let done = "nothing to migrate";
+      match (report.unreadable.len(), report.old.len()) {
+        (0, 0) => info!("{done}"),
+        (0, n) => warn!("{done}; {n} left of the old layout, unread"),
+        (n, _) => {
           warn!("{done}; {n} files this build can't read, left as they were")
         }
       }

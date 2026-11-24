@@ -625,39 +625,3 @@ fn forgets_compacted_files_unparsed_rows() {
   index(&mut db, &journal(&root)).unwrap();
   assert_eq!(rows(&db), ["archive/1970/01/1970-01-01.journal.zst"]);
 }
-
-/// A live file a capture from before dgg's journals moved into dgg/ wrote
-/// where they were is read there, under the same path, so once it's moved
-/// its checkpoint still holds.
-#[test]
-fn reads_live_files_where_they_were() {
-  let root = TempDir::new("logger-index");
-  let mut a = Writer::new(journal(&root), "a");
-  a.write(100, 1, Body::Open("wss://x".into())).unwrap();
-  a.write(
-    101,
-    1,
-    frame(format!("MSG {}", message(101, "Alice", "one"))),
-  )
-  .unwrap();
-  drop(a);
-  let mut db = open(&database(&root)).unwrap();
-  let stats = index(&mut db, &journal(&root)).unwrap();
-  assert_eq!((stats.records, stats.messages), (2, 1));
-
-  let path = "live/1970-01-01/a.journal";
-  let moved = dgg(&root).join(path);
-  ::std::fs::create_dir_all(moved.parent().unwrap()).unwrap();
-  ::std::fs::rename(journal(&root).join(path), &moved).unwrap();
-  assert_eq!(waiting(&db, &journal(&root), 1000).unwrap(), 0);
-  let again = index(&mut db, &journal(&root)).unwrap();
-  assert_eq!(again.records, 0);
-  let paths: Vec<String> = db
-    .prepare("SELECT path FROM files")
-    .unwrap()
-    .query_map([], |row| row.get(0))
-    .unwrap()
-    .map(Result::unwrap)
-    .collect();
-  assert_eq!(paths, [path]);
-}

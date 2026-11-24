@@ -32,9 +32,6 @@
 //! a run still going (holding its lock, see [`writing`]) are left alone, to
 //! be merged once it's done.
 //!
-//! A root's live files in its [legacy](Root::legacy) directory are its
-//! day's too: merged into the root's archive, and deleted from there.
-//!
 //! A day still open can be compacted early ([`compact_open_day`]), to tidy
 //! up after an upgrade without waiting for the day to end: only the files
 //! no capture may still write are merged, into an archive the rest join
@@ -118,21 +115,18 @@ pub fn open_days(
 
 /// The days with live files in journal `root`, oldest first.
 fn live_days(root: &Root) -> io::Result<Vec<String>> {
+  let Some(entries) = fs::read_dir(live_dir(&root.dir)).missing_ok()? else {
+    return Ok(Vec::new());
+  };
   let mut days = Vec::new();
-  for dir in root.dirs() {
-    let Some(entries) = fs::read_dir(live_dir(dir)).missing_ok()? else {
-      continue;
-    };
-    for entry in entries {
-      let entry = entry?;
-      let day = entry.file_name().to_string_lossy().into_owned();
-      if entry.file_type()?.is_dir() && valid_day(&day) {
-        days.push(day);
-      }
+  for entry in entries {
+    let entry = entry?;
+    let day = entry.file_name().to_string_lossy().into_owned();
+    if entry.file_type()?.is_dir() && valid_day(&day) {
+      days.push(day);
     }
   }
   days.sort();
-  days.dedup();
   Ok(days)
 }
 
@@ -324,28 +318,23 @@ fn compact(
     });
   }
   let (mut live, mut busy, mut capturing) = (Vec::new(), 0, 0);
-  for dir in root.dirs() {
-    let Some(entries) = fs::read_dir(live_day_dir(dir, day)).missing_ok()?
-    else {
+  let entries = fs::read_dir(live_day_dir(journal_root, day)).missing_ok()?;
+  for entry in entries.into_iter().flatten() {
+    let path = entry?.path();
+    if !path
+      .extension()
+      .is_some_and(|extension| extension == EXTENSION)
+    {
       continue;
-    };
-    for entry in entries {
-      let path = entry?.path();
-      if !path
-        .extension()
-        .is_some_and(|extension| extension == EXTENSION)
-      {
-        continue;
-      }
-      if busy_file(dir, &path)? {
-        busy += 1;
-      } else if let Some(now) = open
-        && captured(dir, &path, now)?
-      {
-        capturing += 1;
-      } else {
-        live.push(path);
-      }
+    }
+    if busy_file(journal_root, &path)? {
+      busy += 1;
+    } else if let Some(now) = open
+      && captured(journal_root, &path, now)?
+    {
+      capturing += 1;
+    } else {
+      live.push(path);
     }
   }
   if live.is_empty() {
@@ -432,9 +421,7 @@ fn compact(
       grown += 1;
     }
   }
-  for dir in root.dirs() {
-    let _ = fs::remove_dir(live_day_dir(dir, day));
-  }
+  let _ = fs::remove_dir(live_day_dir(journal_root, day));
   Ok(Some(Day {
     day: day.into(),
     files,

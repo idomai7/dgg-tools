@@ -35,7 +35,7 @@ use {
     dgg::Dgg,
     kick::Kick,
     manifest::{self, archive_root},
-    service::{Root, Service, locate, routes},
+    service::{Root, Service, routes},
   },
   ::common::{atomic_file, fs::MissingOk},
   ::logger_journal::{
@@ -212,7 +212,7 @@ async fn pull<S: Service>(
       stats.bytes += file.size;
       continue;
     }
-    let local = locate::<S>(&dir, &file.path);
+    let local = dir.join(&file.path);
     let have = fs::metadata(&local)
       .missing_ok()
       .map_err(|e| format!("{}: {e}", file.path))?
@@ -320,22 +320,20 @@ fn wanted(
   Ok(!taken.iter().any(|(d, s)| d == day && s == sha256))
 }
 
-/// Whether journal `root` has live files for `day`, in its directory or
-/// its legacy one.
+/// Whether journal `root` has live files for `day`.
 fn has_live(root: &Root, day: &str) -> io::Result<bool> {
-  for dir in root.dirs() {
-    let Some(entries) = fs::read_dir(live_day_dir(dir, day)).missing_ok()?
-    else {
-      continue;
-    };
-    for entry in entries {
-      if entry?
-        .path()
-        .extension()
-        .is_some_and(|extension| extension == EXTENSION)
-      {
-        return Ok(true);
-      }
+  let Some(entries) =
+    fs::read_dir(live_day_dir(&root.dir, day)).missing_ok()?
+  else {
+    return Ok(false);
+  };
+  for entry in entries {
+    if entry?
+      .path()
+      .extension()
+      .is_some_and(|extension| extension == EXTENSION)
+    {
+      return Ok(true);
     }
   }
   Ok(false)
