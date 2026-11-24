@@ -642,6 +642,14 @@ WebSocket URL of its own. Each step a pause for review.
 - **Install:** a bridge per dgg channel, as for Kick, each logging to its
   channel's log, all waited on together. Unlike Kick's, any dgg channel
   not healthy in time fails the install, as dgg's capture does now.
+- **Staggered handovers:** an upgrade's handovers are spread out, not
+  all at once, so dgg's and Kick's servers don't see every channel
+  reconnect together (decided 2026-11-25). The install's bridges, and the
+  supervisor's captures as it starts, are started one at a time, a few
+  seconds apart (or each once the last is connected), so their
+  connections, and the handoffs that follow each, are spaced the same
+  way. Kick's history fills after a reconnect are spaced too. Exactly how
+  is settled at step 4, and the install's wait grows to cover the spread.
 - **Gaps and backfill:** `dgg-gaps --channel <name>` and `dgg-backfill
   --channel <name>`, each reading its channel's index and writing its
   backfill journal; `--channel` defaults to the list's first. The sources,
