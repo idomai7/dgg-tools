@@ -13,7 +13,8 @@
 use {
   super::{
     Report, Watcher, all_logs, capture_tail, gaps, health, journal_lines,
-    listening, listening_width, logged_at, tail,
+    listening, listening_width, logged_at, per_minute, program_width, service,
+    tail,
   },
   crate::paths::Paths,
   ::common::{
@@ -391,6 +392,7 @@ fn heading(title: &str) -> Block<'_> {
 /// Draws `report`, with `pane` below.
 pub fn draw(frame: &mut Frame, report: &Report, pane: &Pane) {
   let now = report.now;
+  let name = program_width(report);
   let programs: Vec<Line> = if report.programs.is_empty() {
     vec![Line::from("none running".dark_gray())]
   } else {
@@ -409,9 +411,9 @@ pub fn draw(frame: &mut Frame, report: &Report, pane: &Pane) {
           (None, _) => "(path hidden)".into(),
         };
         Line::from(vec![
-          Span::styled(format!("{:<18}", program.name), Style::new().bold()),
+          Span::styled(format!("{:<name$}", program.name), Style::new().bold()),
           Span::raw(format!(
-            " pid {:<6} up {:<8} {:>8} {:>6.1}% cpu  ",
+            "  pid {:<6} up {:<8} {:>8} {:>6.1}% cpu  ",
             program.pid,
             up,
             format::size(program.memory as f64),
@@ -436,7 +438,11 @@ pub fn draw(frame: &mut Frame, report: &Report, pane: &Pane) {
           super::Health::Stale(_) => Color::Red,
         };
         Line::from(vec![
-          Span::raw(format!("{:<30} ", capture.instance)),
+          Span::raw(format!(
+            "{:<4} {:<30} ",
+            service(capture),
+            capture.instance
+          )),
           Span::styled(
             format!("{:<width$}  ", listening(capture)),
             Style::new().bold(),
@@ -449,7 +455,11 @@ pub fn draw(frame: &mut Frame, report: &Report, pane: &Pane) {
             format!("{:<24} ", health(capture, now)),
             Style::new().fg(color),
           ),
-          Span::raw(format!("{:>10} frames  ", format::count(capture.frames))),
+          Span::raw(format!(
+            "{:>10} frames {:>9}  ",
+            format::count(capture.frames),
+            per_minute(capture)
+          )),
           Span::styled(
             capture.build.clone().unwrap_or_default(),
             Style::new().dark_gray(),

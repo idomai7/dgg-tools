@@ -77,23 +77,24 @@ fn reports_captures_and_the_journal() {
     .iter()
     .map(|capture| (capture.instance.as_str(), capture.health))
     .collect();
+  // The unhealthiest first.
   assert_eq!(
     health,
     [
-      ("a-1", Health::Healthy(now - 3_500_000)),
       ("a-2", Health::Stale(now - 60_000)),
       ("a-3", Health::Connecting),
+      ("a-1", Health::Healthy(now - 3_500_000)),
     ]
   );
   let frames: Vec<_> = report.captures.iter().map(|c| c.frames).collect();
-  assert_eq!(frames, [0, 0, 2]);
+  assert_eq!(frames, [0, 2, 0]);
   // What each listens to, once its live file says.
   let listening: Vec<_> = report
     .captures
     .iter()
     .map(|c| c.listening.as_deref())
     .collect();
-  assert_eq!(listening, [None, None, Some("wss://x")]);
+  assert_eq!(listening, [None, Some("wss://x"), None]);
   let journal = &report.journal;
   assert_eq!(journal.today_files.count, 2);
   assert_eq!(journal.waiting, ["2026-01-02"]);
@@ -130,7 +131,7 @@ fn reports_captures_and_the_journal() {
   );
   let report = watcher.gather(&paths).unwrap();
   assert!(report.journal.growth.is_some_and(|rate| rate > 0.0));
-  assert_eq!(report.captures[2].frames, 3);
+  assert_eq!(report.captures[1].frames, 3);
   assert!(text(&report).join("\n").contains("3 frames"));
 }
 
@@ -481,6 +482,59 @@ fn says_what_a_capture_listens_to() {
   let listening = report.captures[0].listening.as_deref();
   assert_eq!(listening, Some("wss://chat.example/ws"));
   assert!(text(&report).join("\n").contains("a-1"));
+}
+
+#[test]
+fn puts_the_busiest_captures_first() {
+  let dir = TempDir::new("deploy-status-busiest");
+  let now = now_ms();
+  let today = utc_day(now);
+  for instance in ["a-1", "a-2"] {
+    dir.write(
+      format!("data/journal/dgg/control/{instance}.status"),
+      status(instance, now - 1000, now, Some(now - 1000)),
+    );
+  }
+  let paths = Paths::under(dir.to_path_buf());
+  let mut watcher = Watcher::new().unwrap();
+  let instances = |report: &::deploy::status::Report| {
+    let captures = report.captures.iter();
+    captures.map(|c| c.instance.clone()).collect::<Vec<_>>()
+  };
+  // Equally quiet, and no rate yet: as they were.
+  let report = watcher.gather(&paths).unwrap();
+  assert_eq!(instances(&report), ["a-1", "a-2"]);
+  assert_eq!(report.captures[0].per_minute, None);
+
+  dir.write(
+    format!("data/journal/dgg/live/{today}/a-2.journal"),
+    "journal dgg.0.3\u{1e}\n1 a-2 1 frame MSG {}\u{1e}\n\
+     2 a-2 1 frame MSG {}\u{1e}\n",
+  );
+  ::std::thread::sleep(::std::time::Duration::from_millis(20));
+  let mut report = watcher.gather(&paths).unwrap();
+  assert_eq!(instances(&report), ["a-2", "a-1"]);
+  assert!(report.captures[0].per_minute.is_some_and(|rate| rate > 0.0));
+  assert_eq!(report.captures[1].per_minute, Some(0.0));
+
+  // Each prefixed by its service; the programs' columns lined up.
+  let program = |name: &str| ::deploy::status::Program {
+    name: name.into(),
+    pid: 1,
+    started: 0,
+    memory: 0,
+    cpu: 0.0,
+    exe: None,
+    ours: false,
+  };
+  report.programs = vec![program("serve"), program("kick-capture longer")];
+  let lines = text(&report);
+  let captures = lines.iter().position(|line| line == "CAPTURES").unwrap();
+  assert!(lines[captures + 1].starts_with("  dgg  a-2 "), "{lines:?}");
+  assert!(lines[captures + 2].contains(" 0/min "), "{lines:?}");
+  let programs = lines.iter().position(|line| line == "PROGRAMS").unwrap();
+  let pid = |line: &String| line.find(" pid ").unwrap();
+  assert_eq!(pid(&lines[programs + 1]), pid(&lines[programs + 2]));
 }
 
 #[test]

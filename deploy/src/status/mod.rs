@@ -27,7 +27,7 @@ use {
     record::{kick, v0},
   },
   ::std::{
-    collections::{BTreeSet, HashMap},
+    collections::{BTreeSet, HashMap, VecDeque},
     fs,
     io::{self, Read, Seek, SeekFrom},
     path::{Path, PathBuf},
@@ -41,6 +41,10 @@ use {
 /// A capture status counts as stale after this long without a heartbeat,
 /// as capture itself judges it.
 pub const STALE_MS: i64 = 5000;
+
+/// A capture's frames a minute are counted over about this long, in unix
+/// ms: from the last snapshot at least this old.
+pub const RATE_OVER: i64 = 60_000;
 
 /// The logs a supervisor writes, in the order they're offered.
 pub const LOGS: [&str; 8] = [
@@ -78,7 +82,7 @@ pub enum Health {
   Stale(i64),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Capture {
   pub instance: String,
   /// Unix ms.
@@ -94,6 +98,9 @@ pub struct Capture {
   pub listening: Option<String>,
   /// Whether it's Kick's, not dgg's.
   pub kick: bool,
+  /// Frames a minute, over about the last [`RATE_OVER`] of snapshots; none
+  /// until a second snapshot.
+  pub per_minute: Option<f64>,
 }
 
 /// A count of files and their size.
@@ -142,7 +149,8 @@ pub struct Report {
   pub now: i64,
   pub paths: Paths,
   pub programs: Vec<Program>,
-  /// dgg's, then Kick's by channel.
+  /// Unhealthy first (stale, then connecting), then the busiest; dgg's
+  /// before Kick's, by channel, when that doesn't tell them apart.
   pub captures: Vec<Capture>,
   pub journal: Journal,
   /// The index's size and last write (unix ms).
@@ -191,12 +199,33 @@ pub struct Peer {
   pub last: Option<String>,
 }
 
-/// Takes snapshots, remembering what it needs from the last one (CPU use,
-/// journal growth, how far it has counted each live file's frames).
+/// Takes snapshots, remembering what it needs from the last ones (CPU use,
+/// journal growth, how far it has counted each live file's frames, and
+/// each capture's frames over the last minute).
 pub struct Watcher {
   system: System,
   previous: Option<(String, i64, u64)>,
   counted: HashMap<PathBuf, Counted>,
+  /// Each capture's frames at each snapshot (unix ms), by [`rate_key`].
+  frames: HashMap<RateKey, VecDeque<(i64, u64)>>,
+}
+
+/// Which capture a count of frames is: Kick's or dgg's, its instance, and
+/// for Kick's, its channel.
+type RateKey = (bool, String, Option<String>);
+
+fn rate_key(capture: &Capture) -> RateKey {
+  let slug = capture.kick.then(|| capture.listening.clone()).flatten();
+  (capture.kick, capture.instance.clone(), slug)
+}
+
+/// How unhealthy a capture is, the most first.
+fn unhealthiest(capture: &Capture) -> u8 {
+  match capture.health {
+    Health::Stale(_) => 0,
+    Health::Connecting => 1,
+    Health::Healthy(_) => 2,
+  }
 }
 
 /// A live file's frames, counted up to `offset`, and the URL its last
@@ -239,6 +268,7 @@ impl Watcher {
       system,
       previous: None,
       counted: HashMap::new(),
+      frames: HashMap::new(),
     })
   }
 
@@ -261,6 +291,14 @@ impl Watcher {
       files.extend(theirs.map(|file| (file, Some(channel.slug.clone()))));
     }
     self.count_frames(&mut captures, files);
+    self.rate(&mut captures, now);
+    // Stable: ties keep dgg's first, then Kick's by channel.
+    captures.sort_by(|a, b| {
+      let per_minute = |c: &Capture| c.per_minute.unwrap_or(0.0);
+      unhealthiest(a)
+        .cmp(&unhealthiest(b))
+        .then_with(|| per_minute(b).total_cmp(&per_minute(a)))
+    });
     Ok(Report {
       now,
       paths: paths.clone(),
@@ -367,6 +405,35 @@ impl Watcher {
         capture.listening = counted.opened.clone();
       }
     }
+  }
+
+  /// Sets each capture's frames a minute, from its frames at the last
+  /// snapshot at least [`RATE_OVER`] old, or failing one, its oldest.
+  fn rate(&mut self, captures: &mut [Capture], now: i64) {
+    let mut frames = HashMap::new();
+    for capture in captures {
+      let key = rate_key(capture);
+      let mut seen = self.frames.remove(&key).unwrap_or_default();
+      // Fewer than before, as files were compacted away: counted afresh.
+      if seen
+        .back()
+        .is_some_and(|&(_, before)| before > capture.frames)
+      {
+        seen.clear();
+      }
+      seen.push_back((now, capture.frames));
+      while seen.get(1).is_some_and(|&(at, _)| at <= now - RATE_OVER) {
+        seen.pop_front();
+      }
+      let (at, before) = seen[0];
+      if now > at {
+        let grown = (capture.frames - before) as f64;
+        capture.per_minute = Some(grown * 60_000.0 / (now - at) as f64);
+      }
+      frames.insert(key, seen);
+    }
+    // Captures gone are forgotten.
+    self.frames = frames;
   }
 
   fn journal(
@@ -484,6 +551,7 @@ fn capture(status: control::Status, now: i64) -> Capture {
     frames: 0,
     listening: status.listening,
     kick: false,
+    per_minute: None,
   }
 }
 
@@ -722,6 +790,7 @@ pub fn text(report: &Report) -> Vec<String> {
   if report.programs.is_empty() {
     out.push("  none running".into());
   }
+  let name = program_width(report);
   for program in &report.programs {
     let up = format::duration(now - program.started as i64 * 1000);
     let from = match (&program.exe, program.ours) {
@@ -735,7 +804,7 @@ pub fn text(report: &Report) -> Vec<String> {
       (None, false) => "(path hidden)".into(),
     };
     out.push(format!(
-      "  {:<18} pid {:<6} up {:<8} {:>8}  {:>5.1}% cpu  {from}",
+      "  {:<name$}  pid {:<6} up {:<8} {:>8}  {:>5.1}% cpu  {from}",
       program.name,
       program.pid,
       up,
@@ -752,12 +821,14 @@ pub fn text(report: &Report) -> Vec<String> {
   let width = listening_width(report);
   for capture in &report.captures {
     out.push(format!(
-      "  {:<30} {:<width$}  up {:<8} {:<24} {:>10} frames  {}",
+      "  {:<4} {:<30} {:<width$}  up {:<8} {:<24} {:>10} frames {:>9}  {}",
+      service(capture),
       capture.instance,
       listening(capture),
       format::duration(now - capture.started),
       health(capture, now),
       format::count(capture.frames),
+      per_minute(capture),
       capture.build.as_deref().unwrap_or("")
     ));
   }
@@ -770,6 +841,25 @@ pub fn text(report: &Report) -> Vec<String> {
       .map(|line| format!("  {line}")),
   );
   out
+}
+
+/// How wide the programs' column of names is: the widest name's width.
+pub fn program_width(report: &Report) -> usize {
+  let widest = report.programs.iter().map(|p| p.name.chars().count()).max();
+  widest.unwrap_or(0)
+}
+
+/// The service `capture` is of: `dgg` or `kick`.
+pub fn service(capture: &Capture) -> &'static str {
+  if capture.kick { "kick" } else { "dgg" }
+}
+
+/// `capture`'s frames a minute, as shown (`12/min`); blank until known.
+pub fn per_minute(capture: &Capture) -> String {
+  capture
+    .per_minute
+    .map(|rate| format!("{}/min", format::count(rate.round() as u64)))
+    .unwrap_or_default()
 }
 
 /// What `capture` listens to, as shown: `?` for dgg's before it's known.

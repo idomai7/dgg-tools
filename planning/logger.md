@@ -542,7 +542,8 @@ Planned 2026-11-25. Each step a pause for review.
 1. **Programs and captures:** the programs box's columns aligned to the
    widest name. Each capture prefixed by its service, `dgg` or `kick`.
    Captures sorted unhealthy first (stale, then connecting), then by
-   frames a minute, over about the last minute of snapshots.
+   frames a minute, over about the last minute of snapshots. Done: the
+   rate is shown too (`12/min`), blank until a second snapshot.
 2. **Records:** `r` cycles through every capture, Kick's too, and the
    page's title names what it listens to (the Kick channel, or dgg's
    endpoint).
