@@ -110,17 +110,21 @@ fn exits_when_capture_hands_off() {
   let index = script(
     dir.path(),
     "index",
-    &[Step::Say("indexing"), Step::Sleep(20)],
+    &[Step::Say("indexing"), Step::Say("WARN slow"), Step::Sleep(20)],
   );
   let started = Instant::now();
   let exit = run(&config(&dir, capture, index), &Stop::new()).unwrap();
   assert_eq!(exit, Exit::HandedOff);
   // The index is killed, not waited for.
   assert!(started.elapsed() < Duration::from_secs(10));
-  assert!(log(&dir, "capture").contains(" capturing"));
-  assert!(log(&dir, "index").contains(" indexing"));
+  // A line that doesn't say its level is information; one that does keeps
+  // it.
+  assert!(log(&dir, "capture").contains("Z INFO  capturing"));
+  let index = log(&dir, "index");
+  assert!(index.contains("Z INFO  indexing"), "{index}");
+  assert!(index.contains("Z WARN  slow"), "{index}");
   let supervisor = log(&dir, "supervisor");
-  assert!(supervisor.contains("capture handed off; stopping"));
+  assert!(supervisor.contains("INFO  capture handed off; stopping"));
   assert!(supervisor.contains("index: stopped"));
 }
 
@@ -132,8 +136,8 @@ fn restarts_programs_that_fail() {
   let exit = run(&config(&dir, capture, index), &Stop::new()).unwrap();
   assert_eq!(exit, Exit::HandedOff);
   let supervisor = log(&dir, "supervisor");
-  assert!(supervisor.contains("capture: exited, exit code: 1"));
-  assert!(supervisor.contains("capture: restarting in 0.05s"));
+  assert!(supervisor.contains("ERROR capture: exited, exit code: 1"));
+  assert!(supervisor.contains("WARN  capture: restarting in 0.05s"));
 }
 
 #[test]

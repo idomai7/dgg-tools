@@ -33,6 +33,7 @@
 
 use {
   crate::{lifeline::Lifeline, log::Log, peer},
+  ::common::log::Level,
   ::logger::kick::channels,
   ::std::{
     ffi::OsString,
@@ -196,9 +197,10 @@ pub enum Exit {
 
 type SharedLog = Arc<Mutex<Log>>;
 
-fn log_line(log: &SharedLog, line: &str) {
+/// Logs `line` at `level`.
+fn log_line(log: &SharedLog, level: Level, line: &str) {
   // Nowhere left to report a failing log to.
-  let _ = log.lock().unwrap().line(line);
+  let _ = log.lock().unwrap().line(&format!("{level} {line}"));
 }
 
 /// Runs everything until `stop` is requested or capture hands off.
@@ -226,6 +228,7 @@ pub fn run(config: &Config, stop: &Stop) -> io::Result<Exit> {
   fs::create_dir_all(&config.lock_dir)?;
   log_line(
     &supervisor,
+    Level::Info,
     &format!(
       "supervisor {} started (build {})",
       ::std::process::id(),
@@ -271,7 +274,7 @@ pub fn run(config: &Config, stop: &Stop) -> io::Result<Exit> {
         context,
       );
       if ended {
-        log_line(supervisor, "capture handed off; stopping");
+        log_line(supervisor, Level::Info, "capture handed off; stopping");
         handed_off.store(true, Ordering::SeqCst);
       }
       programs.request();
@@ -285,6 +288,7 @@ pub fn run(config: &Config, stop: &Stop) -> io::Result<Exit> {
         Some(_) => {
           log_line(
             supervisor,
+            Level::Error,
             "migrate failed; index, compact and sync wait for the next start",
           );
           return;
@@ -342,9 +346,13 @@ pub fn run(config: &Config, stop: &Stop) -> io::Result<Exit> {
           for problem in &found.problems {
             said += &format!("; {problem}");
           }
+          let level = match found.problems.is_empty() {
+            true => Level::Info,
+            false => Level::Warn,
+          };
           let mut last = last.lock().unwrap();
           if last.as_ref() != Some(&said) {
-            log_line(supervisor, &said);
+            log_line(supervisor, level, &said);
             *last = Some(said);
           }
           let ca = peer::ca(peers);
@@ -363,7 +371,7 @@ pub fn run(config: &Config, stop: &Stop) -> io::Result<Exit> {
     });
     while !programs.wait(Duration::from_millis(200)) {
       if stop.requested() {
-        log_line(supervisor, "stopping");
+        log_line(supervisor, Level::Info, "stopping");
         programs.request();
       }
     }
@@ -372,6 +380,7 @@ pub fn run(config: &Config, stop: &Stop) -> io::Result<Exit> {
       let wait = config.kick_handoff_wait;
       log_line(
         supervisor,
+        Level::Info,
         &format!(
           "waiting up to {}s for kick-capture to hand off",
           wait.as_secs_f64()
@@ -392,7 +401,11 @@ pub fn run(config: &Config, stop: &Stop) -> io::Result<Exit> {
   } else {
     Exit::Stopped
   };
-  log_line(supervisor, &format!("supervisor exiting: {exit:?}"));
+  log_line(
+    supervisor,
+    Level::Info,
+    &format!("supervisor exiting: {exit:?}"),
+  );
   Ok(exit)
 }
 
@@ -408,13 +421,16 @@ fn capture_kick(
   // What was last said of the list, to say only changes.
   let mut said = None;
   loop {
-    let now = match channels::load(list) {
+    let (level, now) = match channels::load(list) {
       Ok(found) if !found.is_empty() => break,
-      Ok(_) => format!("kick-capture: no channels in {}", list.display()),
-      Err(e) => format!("kick-capture: {e}"),
+      Ok(_) => (
+        Level::Info,
+        format!("kick-capture: no channels in {}", list.display()),
+      ),
+      Err(e) => (Level::Warn, format!("kick-capture: {e}")),
     };
     if said.as_ref() != Some(&now) {
-      log_line(context.supervisor, &now);
+      log_line(context.supervisor, level, &now);
       said = Some(now);
     }
     if context.stop.wait(config.kick_check_every) {
@@ -436,7 +452,7 @@ fn capture_kick(
   );
   running.store(false, Ordering::SeqCst);
   if ended {
-    log_line(context.supervisor, "kick-capture handed off");
+    log_line(context.supervisor, Level::Info, "kick-capture handed off");
   }
 }
 
@@ -501,9 +517,12 @@ fn periodically(
       }
       Ok(None) => log_line(
         context.supervisor,
+        Level::Warn,
         &format!("{name}: another supervisor has it"),
       ),
-      Err(e) => log_line(context.supervisor, &format!("{name}: {e}")),
+      Err(e) => {
+        log_line(context.supervisor, Level::Warn, &format!("{name}: {e}"))
+      }
     }
   }
 }
@@ -527,12 +546,15 @@ fn hold(path: &Path, supervisor: &SharedLog, stop: &Stop) -> Option<File> {
       Ok(None) if !said => {
         log_line(
           supervisor,
+          Level::Warn,
           &format!("waiting for {}: another supervisor has it", path.display()),
         );
         said = true;
       }
       Ok(None) => {}
-      Err(e) => log_line(supervisor, &format!("{}: {e}", path.display())),
+      Err(e) => {
+        log_line(supervisor, Level::Warn, &format!("{}: {e}", path.display()))
+      }
     }
     if stop.wait(Duration::from_secs(1)) {
       return None;
@@ -575,6 +597,7 @@ fn keep_running(
     }
     log_line(
       supervisor,
+      Level::Warn,
       &format!("{name}: restarting in {}s", delay.as_secs_f64()),
     );
     if stop.wait(delay) {
@@ -618,15 +641,20 @@ fn run_once(
     Err(e) => {
       log_line(
         supervisor,
+        Level::Error,
         &format!("{name}: can't start {}: {e}", program.path.display()),
       );
       return Some(None);
     }
   };
-  log_line(supervisor, &format!("{name}: started, pid {}", child.id()));
+  log_line(
+    supervisor,
+    Level::Info,
+    &format!("{name}: started, pid {}", child.id()),
+  );
   if let Err(e) = lifeline.tie(&child) {
     // It runs anyway; it just might outlive a killed supervisor.
-    log_line(supervisor, &format!("{name}: {e}"));
+    log_line(supervisor, Level::Warn, &format!("{name}: {e}"));
   }
   let readers: Vec<_> = [
     child
@@ -653,11 +681,15 @@ fn run_once(
       for reader in readers {
         let _ = reader.join();
       }
-      log_line(supervisor, &format!("{name}: exited, {status}"));
+      let level = match status.success() {
+        true => Level::Info,
+        false => Level::Error,
+      };
+      log_line(supervisor, level, &format!("{name}: exited, {status}"));
       Some(Some(status))
     }
     None => {
-      log_line(supervisor, &format!("{name}: stopped"));
+      log_line(supervisor, Level::Info, &format!("{name}: stopped"));
       None
     }
   }
@@ -690,7 +722,9 @@ fn copy_lines(output: Box<dyn Read + Send>, prefix: &str, log: &SharedLog) {
       Ok(_) => {
         let text = String::from_utf8_lossy(&line);
         let text = text.trim_end_matches(['\r', '\n']);
-        log_line(log, &format!("{prefix}{text}"));
+        // A line from a program that doesn't say its level is information.
+        let (level, text) = Level::split(text).unwrap_or((Level::Info, text));
+        log_line(log, level, &format!("{prefix}{text}"));
       }
     }
   }
