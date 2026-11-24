@@ -148,15 +148,16 @@ target\release\dgg-logger status --watch
 
 It finds the installed logger and shows:
 
-- the running programs: memory, CPU, and which build;
-- each capture's health (healthy, connecting, or STALE once its heartbeat
-  stops), and the frames in its files not yet compacted;
+- the running programs: memory, CPU, and which build (each
+  `kick-capture` with its channel);
+- each capture, dgg's and each Kick channel's: what it listens to (dgg's
+  WebSocket URL, or the Kick channel), its health (healthy, connecting,
+  or STALE once its heartbeat stops), and the frames in its files not
+  yet compacted;
 - the journal: today's files and their last write, days waiting for
-  compact, archives, backfill;
+  compact, archives, backfill, and each Kick channel's journal today;
 - the index, free disk space, the peer it syncs from (and how the last
-  round went), and the ends of the logs;
-- Kick's captures and their health, and each channel's journal today, if
-  Kick is captured.
+  round went), and the ends of the logs.
 
 `--watch` keeps it open, redrawing every second (`--interval` to change)
 with how fast today's journal is growing and a page filling the rest of the
