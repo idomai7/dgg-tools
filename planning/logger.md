@@ -91,7 +91,7 @@ The logger, codenamed ledgerline: `logger-journal` and `logger`, run as
       read gets a line of its own, and is left as it was), then the index's
       schema, which must be 0.6. How the captures hand over is theirs to
       say, in their own logs. The next format change that needs a migration
-      fills it in. Its log is `migrate.log`, key `3` in `status --watch`.
+      fills it in. Its log is `migrate.log`, key `2` in `status --watch`.
 
 ## Design
 - **Journal layout:**
