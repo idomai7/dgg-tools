@@ -109,7 +109,9 @@ and takes over from the bridge. Old builds are pruned, keeping three.
 Each Kick channel's capture is bridged the same way, all the bridges'
 lines in `kick-capture.log`, each naming its channel. If one isn't
 healthy in time, `install` warns that that channel may miss a few
-seconds, and carries on: dgg's capture comes first. `kick-channels` moves
+seconds, and carries on: dgg's capture comes first. It waits for the new
+install's capture of each channel too, warning of any not healthy in
+time, and names each channel's healthy capture when it's done. `kick-channels` moves
 with the install's folder.
 
 Running `install` with the other kind (with or without `--machine`)
