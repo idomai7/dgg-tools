@@ -248,12 +248,14 @@ impl Drop for Chat {
   }
 }
 
-/// Whether `slug` is safe as a directory's name, as Kick's slugs are.
+/// Whether `slug` is safe as a directory's name and a URL path's segment,
+/// as Kick's slugs are: letters, digits, `-`, `_` and `@` (an app's bot
+/// user's starts with it).
 pub fn journalable(slug: &str) -> bool {
   !slug.is_empty()
     && slug
       .bytes()
-      .all(|b| b.is_ascii_alphanumeric() || b"-_".contains(&b))
+      .all(|b| b.is_ascii_alphanumeric() || b"-_@".contains(&b))
 }
 
 /// The ids of the messages seen lately, the newest [`SEEN`].

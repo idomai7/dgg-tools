@@ -35,6 +35,14 @@ fn reads_a_list() {
     ]
   );
   assert_eq!(channels::parse("").unwrap(), []);
+  assert_eq!(
+    channels::parse(
+      "@bot 1 2
+"
+    )
+    .unwrap(),
+    [channel("@bot", 1, 2)]
+  );
 }
 
 #[test]
@@ -106,6 +114,9 @@ async fn looks_up_a_channel() {
   let looked_up = looked_up.await;
   assert_eq!(looked_up.unwrap(), channel("some-channel", 789, 123));
   assert_eq!(asked.as_deref(), Some("some-channel"));
+  // An app's bot user's slug starts with @.
+  let bot = channels::look_up("@Some-Bot", async |slug: &str| found(slug));
+  assert_eq!(bot.await.unwrap(), channel("@some-bot", 789, 123));
 
   let not_asked = async |_: &str| panic!("not asked");
   let e = channels::look_up("a/b", not_asked).await.unwrap_err();

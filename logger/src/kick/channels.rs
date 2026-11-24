@@ -36,12 +36,13 @@ impl Channel {
   }
 }
 
-/// A slug: lowercase letters, digits, `-` and `_`, as Kick's are, so it's
-/// also a directory's name on any filesystem.
+/// A slug: lowercase letters, digits, `-`, `_` and `@` (an app's bot
+/// user's starts with it), as Kick's are, so it's also a directory's name
+/// on any filesystem, and a URL path's segment.
 pub fn valid_slug(slug: &str) -> bool {
   !slug.is_empty()
     && slug.bytes().all(|b| {
-      b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_'
+      b.is_ascii_lowercase() || b.is_ascii_digit() || b"-_@".contains(&b)
     })
 }
 
@@ -92,7 +93,7 @@ fn parse_line(line: &str) -> Result<Option<Channel>, &'static str> {
     return Err("not `<slug> <channel id> <chatroom id>`");
   };
   if !valid_slug(slug) {
-    return Err("a slug is lowercase letters, digits, - and _");
+    return Err("a slug is lowercase letters, digits, -, _ and @");
   }
   let (Ok(channel_id), Ok(chatroom_id)) =
     (channel_id.parse(), chatroom_id.parse())
@@ -114,7 +115,7 @@ pub async fn look_up(
 ) -> Result<Channel, String> {
   let slug = slug.trim().to_ascii_lowercase();
   if !valid_slug(&slug) {
-    return Err("a slug is letters, digits, - and _".into());
+    return Err("a slug is lowercase letters, digits, -, _ and @".into());
   }
   let found = look_up(&slug).await?;
   if found.slug != slug {
