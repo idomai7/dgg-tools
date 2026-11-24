@@ -1,6 +1,6 @@
 use {
   ::common::config::Secret,
-  ::deploy::peer::{self, Change, Config, Mesh, Peer},
+  ::deploy::peer::{self, Change, Config, Mesh, Peer, Serve, ServeTokens},
   ::std::{
     cell::RefCell,
     fs,
@@ -297,6 +297,7 @@ fn folds_an_older_installs_files_in() {
         ("old-host".into(), peer("http://old-host:8788", "two")),
       ]
       .into(),
+      serve: None,
     }
   );
   for old in ["mesh.env", "peers", "peer.env", "ca.pem"] {
@@ -357,4 +358,122 @@ fn moves_the_config_between_roots() {
   fs::remove_dir(newer.0.join("peers")).unwrap();
   assert!(peer::move_all(&new.0, &newer.0).unwrap().is_empty());
   assert_eq!(newer.config().peers.len(), 2);
+}
+
+/// Made-up tokens, long enough to serve with.
+const MESH: &str = "a-made-up-mesh-token-for-tests-x";
+const QUERY: &str = "a-made-up-query-token-for-tests-";
+
+/// A certificate and its key, from a new CA.
+fn node_cert() -> (String, String) {
+  let key = ::rcgen::KeyPair::generate().unwrap();
+  let ca = ::logger::cert::ca(&key).unwrap();
+  let node = ::logger::cert::node("me", &["127.0.0.1".into()], &ca, &key);
+  let node = node.unwrap();
+  (node.cert, node.key.to_string())
+}
+
+fn serve(cert: Option<&str>, key: Option<&str>) -> Serve {
+  Serve {
+    listen: "0.0.0.0:8788".into(),
+    cert: cert.map(Into::into),
+    key: key.map(Secret::new),
+    tokens: ServeTokens {
+      query: Some(Secret::new(QUERY)),
+      ..ServeTokens::default()
+    },
+  }
+}
+
+#[test]
+fn serves_with_the_mesh_token_unless_given_one() {
+  let root = Root::new("serve");
+  let (cert, key) = node_cert();
+  let mesh = Mesh {
+    node: "me".into(),
+    token: Secret::new(MESH),
+  };
+  peer::apply(
+    &root.0,
+    &[
+      Change::Mesh(mesh.clone()),
+      Change::Serve(serve(Some(&cert), Some(&key))),
+    ],
+    &open,
+  )
+  .unwrap();
+  let config = root.config();
+  let serving = config.serve.as_ref().unwrap();
+  assert_eq!(*serving, serve(Some(&cert), Some(&key)));
+  // What serve reads on its stdin: the mesh's token, its own query token,
+  // and the certificate and key.
+  let given = serving.config(config.mesh.as_ref()).unwrap();
+  let given: ::serde_json::Value =
+    ::serde_json::from_str(given.expose()).unwrap();
+  assert_eq!(given["tokens"]["read"], MESH);
+  assert_eq!(given["tokens"]["query"], QUERY);
+  assert_eq!(given["tokens"]["control"], ::serde_json::Value::Null);
+  assert_eq!(given["tls"]["cert"], cert.as_str());
+  assert_eq!(given["tls"]["key"], key.as_str());
+  // Shown, the key and tokens are secrets; the certificate isn't.
+  let shown = ::serde_json::to_string(&config).unwrap();
+  assert!(!shown.contains(MESH) && !shown.contains(QUERY), "{shown}");
+  assert!(!shown.contains("PRIVATE KEY"), "{shown}");
+  assert!(shown.contains("BEGIN CERTIFICATE"), "{shown}");
+
+  // Without a mesh or a read token of its own, it isn't run, and that's
+  // said.
+  peer::apply(&root.0, &[Change::NoMesh], &open).unwrap();
+  let config = root.config();
+  assert!(config.serve.as_ref().unwrap().config(None).is_none());
+  let problems = peer::gather(&root.0).problems;
+  assert!(
+    problems[0].contains("serve has no read token"),
+    "{problems:?}"
+  );
+  peer::apply(&root.0, &[Change::NoServe], &open).unwrap();
+  assert_eq!(root.config().serve, None);
+  assert!(peer::gather(&root.0).problems.is_empty());
+}
+
+#[test]
+fn refuses_to_serve_with_what_wont_do() {
+  let (cert, key) = node_cert();
+  let mesh = Mesh {
+    node: "me".into(),
+    token: Secret::new(MESH),
+  };
+  let (_, other_key) = node_cert();
+  let short = |serve: Serve| Serve {
+    tokens: ServeTokens {
+      control: Some(Secret::new("short")),
+      ..serve.tokens
+    },
+    ..serve
+  };
+  let same = |serve: Serve| Serve {
+    tokens: ServeTokens {
+      query: Some(Secret::new(MESH)),
+      ..serve.tokens
+    },
+    ..serve
+  };
+  for (serve, why) in [
+    (
+      Serve {
+        listen: "everywhere".into(),
+        ..serve(None, None)
+      },
+      "listen isn't an address",
+    ),
+    (serve(Some(&cert), None), "a cert needs its key"),
+    (serve(Some(&cert), Some(&other_key)), "serve: "),
+    (short(serve(None, None)), "the control token must be"),
+    (same(serve(None, None)), "must differ"),
+  ] {
+    let error = serve.check(Some(&mesh)).unwrap_err();
+    assert!(error.contains(why), "{why}: {error}");
+    assert!(!error.contains(MESH), "{error}");
+  }
+  assert_eq!(serve(Some(&cert), Some(&key)).check(Some(&mesh)), Ok(()));
 }

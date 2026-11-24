@@ -25,6 +25,9 @@ serde_json.workspace = true
 sysinfo.workspace = true
 zeroize.workspace = true
 
+[dev-dependencies]
+rcgen.workspace = true
+
 [build-dependencies]
 version-info.workspace = true
 

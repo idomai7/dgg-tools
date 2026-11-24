@@ -22,6 +22,10 @@
 //!   pulls from each peer in turn every `sync_every` (the first time two
 //!   minutes after start), by whichever supervisor holds `sync.lock`. They
 //!   are looked for before each round; one failing doesn't stop the rest.
+//! - Given a `serve` section in the install's config (see [`crate::peer`]),
+//!   read at start, `dgg-logger serve` is always restarted, its tokens and
+//!   key on its stdin. Only one supervisor runs it at a time (`serve.lock`),
+//!   so during a handoff the new one waits for the old one's port.
 //! - Given the Kick channel list, `dgg-logger kick-capture` runs once it
 //!   has channels (looked for every `kick_check_every` until then), and is
 //!   restarted after it fails. A clean exit is a handoff to a newer
@@ -100,6 +104,9 @@ pub struct Config {
   pub compact_early: Program,
   /// `sync`, without its peer: that's added from `peers`.
   pub sync: Program,
+  /// `serve`, without where it listens or its config: they're added from
+  /// the config in `peers`.
+  pub serve: Program,
   /// Where the peers to sync from are, if anywhere: the install's root
   /// (see [`crate::peer`]).
   pub peers: Option<PathBuf>,
@@ -137,6 +144,7 @@ impl Config {
       compact: command(&["compact"]),
       compact_early: command(&["compact", "--early"]),
       sync: command(&["sync"]),
+      serve: command(&["serve"]),
       peers: None,
       kick_capture: command(&["kick-capture"]),
       kick_channels: None,
@@ -231,6 +239,20 @@ pub fn run(config: &Config, stop: &Stop) -> io::Result<Exit> {
     Some(_) => Some(open("kick-capture")?),
     None => None,
   };
+  // What to serve with, read once: a change takes effect at the next start.
+  let serving = match config.peers.as_deref().map(peer::read_config) {
+    Some(Ok(Some(found))) => found.serve.map(|serve| (serve, found.mesh)),
+    Some(Err(e)) => {
+      let said = format!("serve: {e}; not served until the next start");
+      log_line(&supervisor, Level::Error, &said);
+      None
+    }
+    Some(Ok(None)) | None => None,
+  };
+  let serve_log = match &serving {
+    Some(_) => Some(open("serve")?),
+    None => None,
+  };
   fs::create_dir_all(&config.lock_dir)?;
   log_line(
     &supervisor,
@@ -261,8 +283,8 @@ pub fn run(config: &Config, stop: &Stop) -> io::Result<Exit> {
   // Whether it's running, to wait for only one that is.
   let kick_running = AtomicBool::new(false);
   // References, so the threads started from the migration's can take them.
-  let (context, programs, sync_log, supervisor) =
-    (&context, &programs, &sync_log, &supervisor);
+  let (context, programs, sync_log, serve_log, supervisor) =
+    (&context, &programs, &sync_log, &serve_log, &supervisor);
   thread::scope(|scope| {
     if let (Some(list), Some(kick_log)) = (&config.kick_channels, &kick_log) {
       scope.spawn(|| {
@@ -295,10 +317,43 @@ pub fn run(config: &Config, stop: &Stop) -> io::Result<Exit> {
           log_line(
             supervisor,
             Level::Error,
-            "migrate failed; index, compact and sync wait for the next start",
+            "migrate failed; index, compact, sync and serve wait for the next \
+             start",
           );
           return;
         }
+      }
+      if let (Some((serve, mesh)), Some(serve_log)) = (serving, serve_log) {
+        scope.spawn(move || {
+          let Some(stdin) = serve.config(mesh.as_ref()) else {
+            log_line(
+              supervisor,
+              Level::Error,
+              "serve has no read token, and there's no mesh to take one \
+               from; not served",
+            );
+            return;
+          };
+          let lock = config.lock_dir.join("serve.lock");
+          let Some(_lock) = hold(&lock, supervisor, programs) else {
+            return;
+          };
+          let mut program = config.serve.clone();
+          program.args.extend([
+            "--listen".into(),
+            serve.listen.into(),
+            "--config-stdin".into(),
+          ]);
+          program.config = Some(stdin);
+          keep_running(
+            &program,
+            "serve",
+            serve_log,
+            &config.backoff,
+            false,
+            context,
+          );
+        });
       }
       scope.spawn(move || {
         let lock = config.lock_dir.join("index.lock");

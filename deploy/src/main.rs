@@ -100,8 +100,26 @@ enum Command {
     /// The name for `--peer` (default: its host).
     #[arg(long, requires = "peer")]
     peer_name: Option<String>,
-    /// The secrets for `--name` and `--peer`: `{"mesh_token": "...",
-    /// "peer_token": "..."}`, each only with its flag.
+    /// Serve this install's journal for other hosts and kick-mod, listening
+    /// here (e.g. `0.0.0.0:8788`), with the tokens in the config given's
+    /// `serve`; its read token is the mesh's if it has none. Kept in the
+    /// config, replacing what was served with, until changed or removed.
+    #[arg(long)]
+    serve: Option<String>,
+    /// This node's certificate for `--serve`, from `cert node`, kept in the
+    /// config: it serves HTTPS with it.
+    #[arg(long, requires_all = ["serve", "serve_key"])]
+    serve_cert: Option<PathBuf>,
+    /// The certificate's key, kept in the config.
+    #[arg(long, requires = "serve_cert")]
+    serve_key: Option<PathBuf>,
+    /// Stop serving.
+    #[arg(long, conflicts_with = "serve")]
+    no_serve: bool,
+    /// The secrets for `--name`, `--peer` and `--serve`: `{"mesh_token":
+    /// "...", "peer_token": "...", "serve": {"read": "...", "control":
+    /// "...", "query": "..."}}`, each only with its flag, and `serve`'s
+    /// tokens each optional.
     #[command(flatten)]
     secrets: cli::ConfigFrom,
     /// Stop syncing from the peer of this name.
@@ -217,6 +235,8 @@ struct InstallSecrets {
   mesh_token: Option<::common::config::Secret>,
   /// The token for `--peer`.
   peer_token: Option<::common::config::Secret>,
+  /// The tokens for `--serve`.
+  serve: Option<::deploy::peer::ServeTokens>,
 }
 
 /// Prints the install's config without its secrets, then anything wrong
@@ -278,6 +298,10 @@ fn main() -> ExitCode {
       ca,
       peer,
       peer_name,
+      serve,
+      serve_cert,
+      serve_key,
+      no_serve,
       secrets,
       no_peer,
       no_peers,
@@ -287,6 +311,7 @@ fn main() -> ExitCode {
         Ok(secrets) => secrets.unwrap_or(InstallSecrets {
           mesh_token: None,
           peer_token: None,
+          serve: None,
         }),
         Err(e) => {
           eprintln!("{e}");
@@ -361,6 +386,43 @@ fn main() -> ExitCode {
         }),
         (Some(_), None) => return needs("--peer", "peer_token"),
         (None, Some(_)) => return unused("peer_token", "--peer"),
+        (None, None) => {}
+      }
+      if no_serve {
+        peers.push(Change::NoServe);
+      }
+      match (serve, secrets.serve) {
+        (Some(listen), tokens) => {
+          let read = |path: Option<&PathBuf>| {
+            path
+              .map(|path| {
+                ::std::fs::read_to_string(path)
+                  .map_err(|e| format!("{}: {e}", path.display()))
+              })
+              .transpose()
+          };
+          let (cert, key) =
+            match (read(serve_cert.as_ref()), read(serve_key.as_ref())) {
+              (Ok(cert), Ok(key)) => (cert, key),
+              (Err(e), _) | (_, Err(e)) => {
+                eprintln!("{e}");
+                return ExitCode::FAILURE;
+              }
+            };
+          let serve = peer::Serve {
+            listen,
+            cert,
+            key: key.map(::common::config::Secret::new),
+            tokens: tokens.unwrap_or_default(),
+          };
+          // Without the mesh, which may be in the config already.
+          if let Err(e) = serve.check(None) {
+            eprintln!("{e}");
+            return ExitCode::FAILURE;
+          }
+          peers.push(Change::Serve(serve));
+        }
+        (None, Some(_)) => return unused("serve", "--serve"),
         (None, None) => {}
       }
       install(&install::Options {

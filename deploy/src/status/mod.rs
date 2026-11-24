@@ -42,7 +42,7 @@ use {
 pub const STALE_MS: i64 = 5000;
 
 /// The logs a supervisor writes, in the order they're offered.
-pub const LOGS: [&str; 7] = [
+pub const LOGS: [&str; 8] = [
   "capture",
   "index",
   "compact",
@@ -50,6 +50,7 @@ pub const LOGS: [&str; 7] = [
   "sync",
   "migrate",
   "kick-capture",
+  "serve",
 ];
 
 /// One of the logger's processes.

@@ -7,8 +7,9 @@
 //!
 //! - `install.env.json` ([`CONFIG`]): the install's config, secrets
 //!   included ([`Config`]): the mesh CA's certificate, this node's name and
-//!   the mesh's read token, and one-off peers, such as a host being moved
-//!   off. `dgg-logger config` shows it without its secrets.
+//!   the mesh's read token, one-off peers, such as a host being moved off,
+//!   and what `serve` serves with, if the supervisor runs it.
+//!   `dgg-logger config` shows it without its secrets.
 //! - `nodes`: the mesh's node list, the same file on every node (see
 //!   [`parse_nodes`]). With the config's `mesh`, every other node with a URL
 //!   is a peer.
@@ -68,6 +69,101 @@ pub struct Config {
   /// One-off peers, by name.
   #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
   pub peers: BTreeMap<String, Peer>,
+  /// With it, the supervisor runs `serve`.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub serve: Option<Serve>,
+}
+
+/// What the supervisor runs `serve` with.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Serve {
+  /// Where to listen, e.g. `0.0.0.0:8788`.
+  pub listen: String,
+  /// This node's certificate (PEM), from `cert node`: with `key`, it
+  /// serves HTTPS.
+  #[serde(default)]
+  pub cert: Option<String>,
+  /// The certificate's key (PEM).
+  #[serde(default)]
+  pub key: Option<Secret>,
+  #[serde(default)]
+  pub tokens: ServeTokens,
+}
+
+/// `serve`'s bearer tokens (see `dgg-logger serve`).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ServeTokens {
+  /// Reads the journal; the mesh's token if left out, which the other
+  /// nodes sync with.
+  #[serde(default)]
+  pub read: Option<Secret>,
+  /// Lets another host's capture take over from this one's.
+  #[serde(default)]
+  pub control: Option<Secret>,
+  /// Reads only Kick's history and live chat, for kick-mod.
+  #[serde(default)]
+  pub query: Option<Secret>,
+}
+
+impl Serve {
+  /// Its read token: its own, else the mesh's.
+  fn read<'a>(&'a self, mesh: Option<&'a Mesh>) -> Option<&'a Secret> {
+    self.tokens.read.as_ref().or(mesh.map(|mesh| &mesh.token))
+  }
+
+  /// Why it can't be served with, if it can't, its read token the mesh's
+  /// if it has none of its own; with neither, the rest is checked.
+  pub fn check(&self, mesh: Option<&Mesh>) -> Result<(), String> {
+    self.listen.parse::<::std::net::SocketAddr>().map_err(|_| {
+      format!("serve: listen isn't an address: {}", self.listen)
+    })?;
+    match (&self.cert, &self.key) {
+      (Some(cert), Some(key)) => {
+        let key = Zeroizing::new(key.expose().to_owned());
+        ::logger::cert::server_config(cert, &key)
+          .map_err(|e| format!("serve: {e}"))?;
+      }
+      (None, None) => {}
+      _ => {
+        return Err("serve: a cert needs its key, and a key its cert".into());
+      }
+    }
+    let expose = |token: &Option<Secret>| {
+      token.as_ref().map(|token| token.expose().to_owned())
+    };
+    let tokens = ::logger::serve::Tokens {
+      // Placeholder enough to check the others.
+      read: match self.read(mesh) {
+        Some(read) => read.expose().to_owned(),
+        None => "-".repeat(::logger::serve::MIN_TOKEN),
+      },
+      control: expose(&self.tokens.control),
+      query: expose(&self.tokens.query),
+    };
+    tokens.check().map_err(|why| format!("serve: {why}"))
+  }
+
+  /// What `serve` reads with `--config-stdin`: its tokens, the read token
+  /// the mesh's if it has none of its own, and its certificate and key.
+  /// `None` with neither.
+  pub fn config(&self, mesh: Option<&Mesh>) -> Option<Secret> {
+    let expose = |token: &Option<Secret>| {
+      token.as_ref().map(|token| token.expose().to_owned())
+    };
+    let mut config = json!({
+      "tokens": {
+        "read": self.read(mesh)?.expose(),
+        "control": expose(&self.tokens.control),
+        "query": expose(&self.tokens.query),
+      }
+    });
+    if let (Some(cert), Some(key)) = (&self.cert, &self.key) {
+      config["tls"] = json!({ "cert": cert, "key": key.expose() });
+    }
+    Some(Secret::new(config.to_string()))
+  }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
@@ -97,6 +193,9 @@ impl Config {
       if mesh.token.expose().is_empty() {
         return Err("the mesh's token is empty".into());
       }
+    }
+    if let Some(serve) = &self.serve {
+      serve.check(self.mesh.as_ref())?;
     }
     for (name, peer) in &self.peers {
       if !valid_name(name) {
@@ -129,6 +228,22 @@ impl Config {
       });
       config.insert("peers".into(), Value::Object(peers.collect()));
     }
+    if let Some(serve) = &self.serve {
+      let expose = |secret: &Option<Secret>| {
+        secret.as_ref().map(|secret| secret.expose().to_owned())
+      };
+      let serve = json!({
+        "listen": serve.listen,
+        "cert": serve.cert,
+        "key": expose(&serve.key),
+        "tokens": {
+          "read": expose(&serve.tokens.read),
+          "control": expose(&serve.tokens.control),
+          "query": expose(&serve.tokens.query),
+        },
+      });
+      config.insert("serve".into(), serve);
+    }
     let text = ::serde_json::to_string_pretty(&Value::Object(config));
     Zeroizing::new(text.unwrap() + "\n")
   }
@@ -150,6 +265,11 @@ impl Config {
     match (&self.mesh, old.mesh) {
       (None, mesh) => self.mesh = mesh,
       (Some(_), Some(_)) => kept("the mesh"),
+      (Some(_), None) => {}
+    }
+    match (&self.serve, old.serve) {
+      (None, serve) => self.serve = serve,
+      (Some(_), Some(_)) => kept("serve"),
       (Some(_), None) => {}
     }
     for (name, peer) in old.peers {
@@ -299,6 +419,10 @@ pub enum Change {
   NoMesh,
   /// Trust this CA certificate (PEM) alone for `https://` peers.
   Ca(String),
+  /// Serve with this, replacing what it served with.
+  Serve(Serve),
+  /// Stop serving.
+  NoServe,
 }
 
 /// Makes `changes` under `root`, in order, the config written once (see
@@ -355,6 +479,14 @@ pub fn apply(
       }
       Change::Ca(text) => {
         config.get_or_insert_with(Config::default).ca = Some(text.clone())
+      }
+      Change::Serve(serve) => {
+        config.get_or_insert_with(Config::default).serve = Some(serve.clone())
+      }
+      Change::NoServe => {
+        if let Some(config) = &mut config {
+          config.serve = None;
+        }
       }
     }
   }
@@ -611,6 +743,15 @@ pub fn gather(root: &Path) -> Peers {
     );
   }
   peers.ca = config.ca;
+  if let Some(serve) = &config.serve
+    && serve.read(config.mesh.as_ref()).is_none()
+  {
+    peers.problems.push(format!(
+      "{}: serve has no read token, and there's no mesh to take one from; \
+       it isn't run",
+      root.join(CONFIG).display()
+    ));
+  }
   for path in old_files(root) {
     peers.problems.push(format!(
       "{}: from before {CONFIG}, and not read; installing again folds it in",

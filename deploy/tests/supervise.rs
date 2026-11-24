@@ -341,6 +341,49 @@ fn keeps_the_last_config_it_could_read() {
 }
 
 #[test]
+fn serves_given_a_serve_section() {
+  let dir = TempDir::new("deploy-supervise-serve");
+  fs::write(
+    dir.path().join("install.env.json"),
+    r#"{"mesh": {"node": "me", "token": "a-made-up-mesh-token-for-tests-x"},
+        "serve": {"listen": "127.0.0.1:8788"}}"#,
+  )
+  .unwrap();
+  let capture = script(dir.path(), "capture", &[Step::Sleep(2), Step::Exit(0)]);
+  let index = script(dir.path(), "index", &[Step::Sleep(20)]);
+  let mut config = config(&dir, capture, index);
+  let mut serve = script(
+    dir.path(),
+    "serve",
+    &[Step::SayArgsAndStdin, Step::Sleep(20)],
+  );
+  serve.args = vec!["serve".into()];
+  config.serve = serve;
+  config.peers = Some(dir.to_path_buf());
+  assert_eq!(run(&config, &Stop::new()).unwrap(), Exit::HandedOff);
+  // Where it listens as arguments; its tokens only on stdin, the read
+  // token the mesh's.
+  let serve = log(&dir, "serve");
+  assert!(
+    serve.contains(
+      r#"serve --listen 127.0.0.1:8788 --config-stdin {"tokens":{"control":null,"query":null,"read":"a-made-up-mesh-token-for-tests-x"}}"#
+    ),
+    "{serve}"
+  );
+  let supervisor = log(&dir, "supervisor");
+  assert!(!supervisor.contains("made-up"), "{supervisor}");
+
+  // Without a serve section, nothing is served.
+  let dir = TempDir::new("deploy-supervise-no-serve");
+  let capture = script(dir.path(), "capture", &[Step::Sleep(1), Step::Exit(0)]);
+  let index = script(dir.path(), "index", &[Step::Sleep(20)]);
+  let mut quiet = self::config(&dir, capture, index);
+  quiet.peers = Some(dir.to_path_buf());
+  assert_eq!(run(&quiet, &Stop::new()).unwrap(), Exit::HandedOff);
+  assert!(!dir.path().join("logs").join("serve.log").exists());
+}
+
+#[test]
 fn skips_sync_without_a_peer() {
   let dir = TempDir::new("deploy-supervise-no-peer");
   run_with_sync(&dir, Some(dir.to_path_buf()));

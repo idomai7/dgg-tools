@@ -7,8 +7,8 @@
 //! folder, and `q` (or Esc, or Ctrl-C) quits. Then each program's log, with
 //! numbers: `1` the supervisor's, `2` migrate's, `3` capture's, `4`
 //! compact's, `5` index's, `6` the gaps in capture, looked at again every
-//! 30 seconds, and `7` sync's. Last, `8` kick-capture's log. On a narrow
-//! screen the keys take more than one line.
+//! 30 seconds, and `7` sync's. Last, `8` kick-capture's log and `9`
+//! serve's. On a narrow screen the keys take more than one line.
 
 use {
   super::{
@@ -62,7 +62,7 @@ enum Page {
 
 /// The keys, with their names and what they do, in groups: the views
 /// across everything and the controls, then each program's log, then
-/// Kick's.
+/// Kick's and serve's.
 const KEYS: [&[(char, &str, Action)]; 3] = [
   &[
     ('l', "logs", Action::Show(Page::Logs)),
@@ -80,7 +80,10 @@ const KEYS: [&[(char, &str, Action)]; 3] = [
     ('6', "gaps", Action::Show(Page::Gaps)),
     ('7', "sync", Action::Show(Page::Log("sync"))),
   ],
-  &[('8', "kick", Action::Show(Page::Log("kick-capture")))],
+  &[
+    ('8', "kick", Action::Show(Page::Log("kick-capture"))),
+    ('9', "serve", Action::Show(Page::Log("serve"))),
+  ],
 ];
 
 /// How often the gaps are looked at again while they're shown: looking

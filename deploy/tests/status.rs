@@ -183,7 +183,7 @@ fn draws_the_watch_screen() {
     " journal ",
     " capture.log ",
     "capturing as a-1",
-    "l logs  r records  space redraw  e open data  q quit | 8 kick",
+    "l logs  r records  space redraw  e open data  q quit | 8 kick  9 serve",
     " 1 supervisor  2 migrate  3 capture",
   ] {
     assert!(screen.contains(expected), "{expected:?} not in\n{screen}");
@@ -205,12 +205,15 @@ fn the_watch_keys_take_more_lines_when_narrow() {
   let wide = keys(200);
   assert_eq!(wide.len(), 1, "{wide:?}");
   assert!(wide[0].contains("q quit | 1 supervisor"), "{wide:?}");
-  assert!(wide[0].ends_with("7 sync | 8 kick"), "{wide:?}");
+  assert!(wide[0].ends_with("7 sync | 8 kick  9 serve"), "{wide:?}");
   let narrow = keys(80);
   assert_eq!(narrow.len(), 2, "{narrow:?}");
   assert!(narrow.iter().all(|line| line.len() <= 80), "{narrow:?}");
-  // Kick's group goes on the first line with room.
-  assert!(narrow[0].ends_with("q quit | 8 kick"), "{narrow:?}");
+  // The last group goes on the first line with room.
+  assert!(
+    narrow[0].ends_with("q quit | 8 kick  9 serve"),
+    "{narrow:?}"
+  );
   assert!(narrow[1].starts_with(" 1 supervisor"), "{narrow:?}");
   assert!(narrow[1].ends_with("7 sync"), "{narrow:?}");
 }
