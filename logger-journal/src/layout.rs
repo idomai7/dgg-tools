@@ -100,12 +100,21 @@ pub fn backfill_files(root: &Path) -> io::Result<Vec<PathBuf>> {
   live_files(&backfill_root(root))
 }
 
-/// The lock a writer holds on `instance` under journal `root` for as long
-/// as it may write that instance's files: `control/<instance>.lock`. Only
-/// backfill runs take one (see [`Writer::backfill`](crate::Writer::backfill)),
-/// since only they write to days that are already closed.
+/// The lock a backfill run holds on `instance` under journal `root` for as
+/// long as it may write that instance's files, of any day:
+/// `control/<instance>.lock` (see
+/// [`Writer::backfill`](crate::Writer::backfill)).
 pub fn lock_file(root: &Path, instance: &str) -> PathBuf {
   root.join("control").join(format!("{instance}.lock"))
+}
+
+/// The lock a capture holds on `instance` under journal `root` for as long
+/// as it may write that instance's live files, of days still open:
+/// `control/<instance>.live-lock` (see
+/// [`Writer::capture`](crate::Writer::capture)). Apart from
+/// [`lock_file`], as it doesn't keep closed days from being compacted.
+pub fn live_lock_file(root: &Path, instance: &str) -> PathBuf {
+  root.join("control").join(format!("{instance}.live-lock"))
 }
 
 /// The directory holding archived days under journal `root`.

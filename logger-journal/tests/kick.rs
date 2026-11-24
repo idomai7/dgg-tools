@@ -5,9 +5,9 @@ use {
   ::common::temp_dir::TempDir,
   ::logger_journal::{
     DecodeError, Header, Reader, Record, Variant, Version,
-    layout::{channel_root, live_files},
+    layout::{channel_root, live_files, live_lock_file},
     record::kick::v0::{self, Body},
-    writer::kick::Writer,
+    writer::{capturing, kick::Writer},
   },
   ::std::{fs, path::Path},
 };
@@ -235,6 +235,20 @@ fn rolls_over_at_midnight_and_carries_on_after_a_restart() {
     texts[1],
     format!("{header}{next} i 1 frame {{}}\u{1e}\n{next} i 1 open {A}\u{1e}\n")
   );
+}
+
+#[test]
+fn a_capture_holds_its_lock_until_dropped() {
+  let dir = TempDir::new("logger-journal-kick");
+  let root = channel_root(dir.path(), "one");
+  let mut writer = Writer::capture(&root, "i", "one").unwrap();
+  assert!(capturing(&root, "i").unwrap());
+  assert!(Writer::capture(&root, "i", "one").is_err());
+  writer.write(DAY, 1, Body::Open(A.into())).unwrap();
+  drop(writer);
+  assert!(!capturing(&root, "i").unwrap());
+  assert!(!live_lock_file(&root, "i").exists());
+  assert_eq!(live_files(&root).unwrap().len(), 1);
 }
 
 #[test]

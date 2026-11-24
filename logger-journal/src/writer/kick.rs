@@ -2,11 +2,14 @@
 //! format.
 
 use {
-  super::{SYNC_INTERVAL, open_day},
-  crate::record::{
-    Header, Variant,
-    kick::{self, v0::Body},
-    v0::{valid_instance, valid_token},
+  super::{Lock, SYNC_INTERVAL, open_day},
+  crate::{
+    layout::live_lock_file,
+    record::{
+      Header, Variant,
+      kick::{self, v0::Body},
+      v0::{valid_instance, valid_token},
+    },
   },
   ::common::time::utc_day,
   ::std::{
@@ -34,6 +37,8 @@ pub struct Writer {
   open: Option<Open>,
   dirty: bool,
   last_sync: Instant,
+  /// A capture's lock, if it holds one.
+  lock: Option<Lock>,
 }
 
 /// The file being written.
@@ -71,7 +76,28 @@ impl Writer {
       open: None,
       dirty: false,
       last_sync: Instant::now(),
+      lock: None,
     }
+  }
+
+  /// A capture's writer, like [`Writer::new`], holding `instance`'s
+  /// [`live_lock_file`] in the channel's journal root until dropped:
+  /// compaction leaves the files of a held instance's open days alone (see
+  /// [`capturing`](super::capturing)). Fails if the lock is already held.
+  ///
+  /// # Panics
+  ///
+  /// If `instance` isn't [`valid_instance`] or `channel` isn't a
+  /// [`valid_token`].
+  pub fn capture(
+    root: impl Into<PathBuf>,
+    instance: impl Into<String>,
+    channel: impl Into<String>,
+  ) -> io::Result<Self> {
+    let mut writer = Self::new(root, instance, channel);
+    let path = live_lock_file(&writer.root, &writer.instance);
+    writer.lock = Some(Lock::take(path)?);
+    Ok(writer)
   }
 
   /// The instance id written on every record.
@@ -177,5 +203,7 @@ impl Writer {
 impl Drop for Writer {
   fn drop(&mut self) {
     let _ = self.sync();
+    // The lock last, once everything written is synced.
+    self.lock.take();
   }
 }

@@ -10,7 +10,7 @@ pub mod kick;
 
 use {
   crate::{
-    layout::{backfill_root, lock_file, numbered_live_file},
+    layout::{backfill_root, live_lock_file, lock_file, numbered_live_file},
     record::{
       END, Header, Variant,
       v0::{self, Body},
@@ -39,8 +39,8 @@ pub struct Writer {
   root: PathBuf,
   instance: String,
   backfill: bool,
-  /// For backfill: the held [`lock_file`], and its path.
-  lock: Option<(PathBuf, File)>,
+  /// The lock it holds, if any: a capture's or a backfill run's.
+  lock: Option<Lock>,
   open: Option<(String, File)>,
   dirty: bool,
   last_sync: Instant,
@@ -70,6 +70,24 @@ impl Writer {
     }
   }
 
+  /// A capture's writer for `instance` under journal `root`, like
+  /// [`Writer::new`], holding `instance`'s [`live_lock_file`] until
+  /// dropped: compaction leaves the files of a held instance's open days
+  /// alone (see [`capturing`]). Fails if the lock is already held.
+  ///
+  /// # Panics
+  ///
+  /// If `instance` isn't [`v0::valid_instance`].
+  pub fn capture(
+    root: impl Into<PathBuf>,
+    instance: impl Into<String>,
+  ) -> io::Result<Self> {
+    let mut writer = Self::new(root, instance);
+    let path = live_lock_file(&writer.root, &writer.instance);
+    writer.lock = Some(Lock::take(path)?);
+    Ok(writer)
+  }
+
   /// A writer for `instance`'s backfill files under journal `root`, filed
   /// with [`Writer::write_on`] by the day of what they hold.
   ///
@@ -87,10 +105,7 @@ impl Writer {
     let mut writer = Self::new(root, instance);
     writer.backfill = true;
     let path = lock_file(&backfill_root(&writer.root), &writer.instance);
-    fs::create_dir_all(path.parent().unwrap())?;
-    let file = File::create(&path)?;
-    file.try_lock()?;
-    writer.lock = Some((path, file));
+    writer.lock = Some(Lock::take(path)?);
     Ok(writer)
   }
 
@@ -237,18 +252,56 @@ fn open_append(path: &Path, header: &str) -> io::Result<File> {
 impl Drop for Writer {
   fn drop(&mut self) {
     let _ = self.sync();
-    if let Some((path, file)) = self.lock.take() {
-      drop(file);
-      let _ = fs::remove_file(path);
-    }
+    // The lock last, once everything written is synced.
+    self.lock.take();
+  }
+}
+
+/// A lock file, held until dropped, then removed.
+pub(crate) struct Lock {
+  path: PathBuf,
+  file: Option<File>,
+}
+
+impl Lock {
+  /// Takes the lock at `path`, creating it and its directory as needed.
+  /// Fails if it's already held.
+  pub(crate) fn take(path: PathBuf) -> io::Result<Self> {
+    fs::create_dir_all(path.parent().unwrap())?;
+    let file = File::create(&path)?;
+    file.try_lock()?;
+    Ok(Self {
+      path,
+      file: Some(file),
+    })
+  }
+}
+
+impl Drop for Lock {
+  fn drop(&mut self) {
+    // Closed first, so it can be removed.
+    drop(self.file.take());
+    let _ = fs::remove_file(&self.path);
   }
 }
 
 /// Whether a [backfill](Writer::backfill) writer holds `instance`'s
 /// [`lock_file`] under journal `root` (a backfill root), so may still write
-/// that instance's files.
+/// that instance's files, of any day.
 pub fn writing(root: &Path, instance: &str) -> io::Result<bool> {
-  let Some(file) = File::open(lock_file(root, instance)).missing_ok()? else {
+  held(&lock_file(root, instance))
+}
+
+/// Whether a [capture](Writer::capture) holds `instance`'s
+/// [`live_lock_file`] under journal `root`, so may still write that
+/// instance's live files of days still open.
+pub fn capturing(root: &Path, instance: &str) -> io::Result<bool> {
+  held(&live_lock_file(root, instance))
+}
+
+/// Whether the lock file at `path` is held.
+fn held(path: &Path) -> io::Result<bool> {
+  let Some(file) = File::open(path).missing_ok()? else {
     return Ok(false);
   };
   match file.try_lock_shared() {

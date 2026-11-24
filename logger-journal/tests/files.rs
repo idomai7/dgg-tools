@@ -5,8 +5,9 @@ use {
   ::logger_journal::{
     DecodeError, Entry, Header, ReadError, Reader, Record, Variant, Version,
     Writer,
-    layout::{backfill_files, live_dir, live_file, live_files},
+    layout::{backfill_files, live_dir, live_file, live_files, live_lock_file},
     record::v0::{self, Body},
+    writer::{capturing, writing},
   },
   ::std::{
     fs::{self, OpenOptions},
@@ -117,6 +118,24 @@ fn backfill_files_by_the_given_day() {
     .collect();
   assert_eq!(read.len(), 3);
   assert!(read.iter().all(|record| record.receive_time == now));
+}
+
+#[test]
+fn a_capture_holds_its_lock_until_dropped() {
+  let root = TempDir::new("logger-journal-files");
+  let mut writer = Writer::capture(root.path(), "a").unwrap();
+  assert!(capturing(root.path(), "a").unwrap());
+  // Not a backfill run's, nor another instance's.
+  assert!(!writing(root.path(), "a").unwrap());
+  assert!(!capturing(root.path(), "b").unwrap());
+  // Only one writer at a time.
+  assert!(Writer::capture(root.path(), "a").is_err());
+
+  write(&mut writer, &frame_record(1_700_000_000_000, "{}"));
+  drop(writer);
+  assert!(!capturing(root.path(), "a").unwrap());
+  assert!(!live_lock_file(root.path(), "a").exists());
+  assert_eq!(live_files(root.path()).unwrap().len(), 1);
 }
 
 #[test]
