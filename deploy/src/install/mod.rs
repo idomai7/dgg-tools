@@ -70,6 +70,9 @@ use {
 /// What a build holds, both beside `dgg-logger` when it's run.
 pub const BINARIES: [&str; 2] = ["dgg-supervisor", "dgg-logger"];
 
+/// dgg's capture's log, `capture.log` before builds named it by service.
+const DGG_CAPTURE_LOG: &str = "dgg-capture.log";
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Scope {
   /// A scheduled task, for this user.
@@ -412,7 +415,7 @@ pub fn install(options: &Options) -> io::Result<Done> {
   let journal_root = paths.data.join("journal");
   let since = now_ms() - 1000;
   let mut bridge =
-    bridge::start(&build, &paths.data, &paths.logs.join("capture.log"))?;
+    bridge::start(&build, &paths.data, &paths.logs.join(DGG_CAPTURE_LOG))?;
   let mut kick_bridge = if kick_channels.is_empty() {
     None
   } else {
@@ -426,7 +429,7 @@ pub fn install(options: &Options) -> io::Result<Done> {
     }
     return Err(error(format!(
       "a capture from the new build wasn't healthy within {}s; see \
-       capture.log in {}. Nothing else was changed.",
+       dgg-capture.log in {}. Nothing else was changed.",
       options.healthy_within.as_secs(),
       paths.logs.display()
     )));
@@ -452,9 +455,14 @@ pub fn install(options: &Options) -> io::Result<Done> {
     let old = current.paths();
     if !moving {
       // Sharing the data, its captures hand off to the bridges.
+      // An older build's dgg capture is `capture`.
       let captures: &[&str] = match kick_bridge {
-        Some(_) => &["dgg-logger capture", "dgg-logger kick-capture"],
-        None => &["dgg-logger capture"],
+        Some(_) => &[
+          "dgg-logger dgg-capture",
+          "dgg-logger capture",
+          "dgg-logger kick-capture",
+        ],
+        None => &["dgg-logger dgg-capture", "dgg-logger capture"],
       };
       processes::wait_gone_except(
         &old.bin(),
@@ -470,6 +478,7 @@ pub fn install(options: &Options) -> io::Result<Done> {
       moving::merge(&old.data, &paths.data)?;
     }
     moving::merge_logs(&old.logs, &paths.logs)?;
+    moving::rename_logs(&paths.logs, "capture", "dgg-capture")?;
     if !same(&old.root, &paths.root) {
       problems.extend(peer::move_all(&old.root, &paths.root)?);
       if options.scope == Scope::Machine {
@@ -510,7 +519,7 @@ pub fn install(options: &Options) -> io::Result<Done> {
   else {
     return Err(error(format!(
       "the new install's capture wasn't healthy within {}s; see \
-       supervisor.log and capture.log in {}. The bridge capture keeps \
+       supervisor.log and dgg-capture.log in {}. The bridge capture keeps \
        capturing meanwhile.",
       options.healthy_within.as_secs(),
       paths.logs.display()

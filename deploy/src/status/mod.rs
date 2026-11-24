@@ -43,7 +43,7 @@ pub const STALE_MS: i64 = 5000;
 
 /// The logs a supervisor writes, in the order they're offered.
 pub const LOGS: [&str; 8] = [
-  "capture",
+  "dgg-capture",
   "index",
   "compact",
   "supervisor",
@@ -636,9 +636,9 @@ fn record_line(record: &v0::Record) -> String {
   format!("{time} #{} {what}", record.connection)
 }
 
-/// The gaps in what the index at `path` holds, as `gaps` reports them: its
+/// The gaps in what the index at `path` holds, as `dgg-gaps` reports them: its
 /// summary, and two lines a gap; `None` if nothing is captured yet. Unlike
-/// `gaps`, it doesn't bring the index up to date first (`index --follow`
+/// `dgg-gaps`, it doesn't bring the index up to date first (`index --follow`
 /// does), so it needs no write access.
 pub fn gaps(path: &Path) -> Result<Option<(String, Vec<String>)>, String> {
   if !path.exists() {

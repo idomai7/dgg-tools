@@ -1,6 +1,6 @@
 //! Log files with the time on every line, rotated by size.
 //!
-//! `capture.log` grows to `max_size`, then becomes `capture.1.log` (the
+//! `dgg-capture.log` grows to `max_size`, then becomes `dgg-capture.1.log` (the
 //! previous `.1` becoming `.2`, and so on), keeping `keep` old files.
 
 use {

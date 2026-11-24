@@ -120,7 +120,7 @@ fn parse_time(text: &str) -> Result<i64, String> {
   unix_ms(&full).ok_or_else(|| format!("not a UTC date or time: {text:?}"))
 }
 
-/// What `backfill` reads with `--config-file` or `--config-stdin`.
+/// What `dgg-backfill` reads with `--config-file` or `--config-stdin`.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {

@@ -157,7 +157,7 @@ fn draws_the_watch_screen() {
     .unwrap();
   let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
   let pane = ::deploy::status::watch::Pane {
-    title: "capture.log".into(),
+    title: "dgg-capture.log".into(),
     header: None,
     lines: vec![
       "2026-11-09 12:00:00.000Z capturing as a-1".to_owned(),
@@ -181,10 +181,10 @@ fn draws_the_watch_screen() {
     "healthy for 50.0s",
     "0 frames",
     " journal ",
-    " capture.log ",
+    " dgg-capture.log ",
     "capturing as a-1",
     "l logs  r records  space redraw  e open data  q quit | 8 kick  9 serve",
-    " 1 supervisor  2 migrate  3 capture",
+    " 1 supervisor  2 migrate  3 dgg-capture",
   ] {
     assert!(screen.contains(expected), "{expected:?} not in\n{screen}");
   }
@@ -433,7 +433,7 @@ fn reports_kicks_captures_and_channels() {
 fn merges_the_logs_in_time_order() {
   let dir = TempDir::new("deploy-status-all-logs");
   dir.write(
-    "capture.log",
+    "dgg-capture.log",
     "2026-11-24 10:00:01.000Z INFO  a-1: capturing\n\
      2026-11-24 10:00:03.000Z WARN  a-1: control: busy\n",
   );
@@ -441,7 +441,7 @@ fn merges_the_logs_in_time_order() {
   dir.write(
     "supervisor.log",
     "2026-11-24 10:00:00.000Z started\n\
-     2026-11-24 10:00:02.000Z capture: started, pid 1\n\
+     2026-11-24 10:00:02.000Z dgg-capture: started, pid 1\n\
      a line without a time\n",
   );
   let all = all_logs(dir.path(), 500);
@@ -449,10 +449,10 @@ fn merges_the_logs_in_time_order() {
     all,
     [
       "2026-11-24 10:00:00.000Z       supervisor   started",
-      "2026-11-24 10:00:01.000Z INFO  capture      a-1: capturing",
-      "2026-11-24 10:00:02.000Z       supervisor   capture: started, pid 1",
+      "2026-11-24 10:00:01.000Z INFO  dgg-capture  a-1: capturing",
+      "2026-11-24 10:00:02.000Z       supervisor   dgg-capture: started, pid 1",
       "                               supervisor   a line without a time",
-      "2026-11-24 10:00:03.000Z WARN  capture      a-1: control: busy",
+      "2026-11-24 10:00:03.000Z WARN  dgg-capture  a-1: control: busy",
     ]
   );
   assert_eq!(all_logs(dir.path(), 2).len(), 2);

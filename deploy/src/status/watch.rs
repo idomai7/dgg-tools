@@ -74,7 +74,7 @@ const KEYS: [&[(char, &str, Action)]; 3] = [
   &[
     ('1', "supervisor", Action::Show(Page::Log("supervisor"))),
     ('2', "migrate", Action::Show(Page::Log("migrate"))),
-    ('3', "capture", Action::Show(Page::Log("capture"))),
+    ('3', "dgg-capture", Action::Show(Page::Log("dgg-capture"))),
     ('4', "compact", Action::Show(Page::Log("compact"))),
     ('5', "index", Action::Show(Page::Log("index"))),
     ('6', "gaps", Action::Show(Page::Gaps)),

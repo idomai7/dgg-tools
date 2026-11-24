@@ -168,14 +168,14 @@ enum Command {
     #[arg(long, default_value_t = 5)]
     lines: usize,
   },
-  Capture(WithData<cli::Capture>),
+  DggCapture(WithData<cli::Capture>),
   Index(WithData<cli::Index>),
   Compact(WithData<cli::Compact>),
   Migrate(WithData<cli::Migrate>),
   Serve(WithData<cli::Serve>),
   Sync(WithData<cli::Sync>),
-  Backfill(WithData<cli::Backfill>),
-  Gaps(WithData<cli::Gaps>),
+  DggBackfill(WithData<cli::Backfill>),
+  DggGaps(WithData<cli::Gaps>),
   Cert(cli::Cert),
   KickIds(WithRoot<cli::KickIds>),
   KickCapture(WithData<cli::KickCapture>),
@@ -469,14 +469,14 @@ fn main() -> ExitCode {
         }
       }
     }
-    Command::Capture(command) => command.run(cli::Capture::run),
+    Command::DggCapture(command) => command.run(cli::Capture::run),
     Command::Index(command) => command.run(cli::Index::run),
     Command::Compact(command) => command.run(cli::Compact::run),
     Command::Migrate(command) => command.run(cli::Migrate::run),
     Command::Serve(command) => command.run(cli::Serve::run),
     Command::Sync(command) => command.run(cli::Sync::run),
-    Command::Backfill(command) => command.run(cli::Backfill::run),
-    Command::Gaps(command) => command.run(cli::Gaps::run),
+    Command::DggBackfill(command) => command.run(cli::Backfill::run),
+    Command::DggGaps(command) => command.run(cli::Gaps::run),
     Command::Cert(command) => command.run(),
     Command::KickCapture(command) => command.run(cli::KickCapture::run),
     Command::KickIds(command) => command.run(|command, root| {

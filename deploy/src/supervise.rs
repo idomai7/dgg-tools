@@ -1,7 +1,7 @@
 //! The supervisor: keeps the logger's programs running against one data
 //! directory.
 //!
-//! - `dgg-logger capture` is restarted after it fails. When it exits cleanly it has
+//! - `dgg-logger dgg-capture` is restarted after it fails. When it exits cleanly it has
 //!   handed off to a newer instance, so the supervisor stops everything and
 //!   exits too: starting a newer supervisor is how an upgrade happens.
 //! - `dgg-logger migrate` runs once, at start, alongside capture: it brings
@@ -96,7 +96,7 @@ impl Default for Backoff {
 
 #[derive(Clone, Debug)]
 pub struct Config {
-  pub capture: Program,
+  pub dgg_capture: Program,
   pub migrate: Program,
   pub index: Program,
   pub compact: Program,
@@ -138,7 +138,7 @@ impl Config {
       Program::in_dir(bin_dir, "dgg-logger", &args)
     };
     Self {
-      capture: command(&["capture"]),
+      dgg_capture: command(&["dgg-capture"]),
       migrate: command(&["migrate"]),
       index: command(&["index", "--follow"]),
       compact: command(&["compact"]),
@@ -226,7 +226,7 @@ pub fn run(config: &Config, stop: &Stop) -> io::Result<Exit> {
   };
   let supervisor = open("supervisor")?;
   let logs = [
-    open("capture")?,
+    open("dgg-capture")?,
     open("migrate")?,
     open("index")?,
     open("compact")?,
@@ -294,8 +294,8 @@ pub fn run(config: &Config, stop: &Stop) -> io::Result<Exit> {
     let [capture_log, migrate_log, index_log, compact_log] = &logs;
     scope.spawn(|| {
       let ended = keep_running(
-        &config.capture,
-        "capture",
+        &config.dgg_capture,
+        "dgg-capture",
         capture_log,
         &config.backoff,
         true,

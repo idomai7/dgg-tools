@@ -86,7 +86,7 @@ fn config(dir: &TempDir, capture: Program, index: Program) -> Config {
     &dir.path().join("data"),
     &dir.path().join("logs"),
   );
-  config.capture = capture;
+  config.dgg_capture = capture;
   config.migrate = script(dir.path(), "migrate", &[Step::Exit(0)]);
   config.index = index;
   config.compact = quiet;
@@ -123,7 +123,7 @@ fn exits_when_capture_hands_off() {
   assert!(started.elapsed() < Duration::from_secs(10));
   // A line that doesn't say its level is information; one that does keeps
   // it.
-  assert!(log(&dir, "capture").contains("Z INFO  capturing"));
+  assert!(log(&dir, "dgg-capture").contains("Z INFO  capturing"));
   let index = log(&dir, "index");
   assert!(index.contains("Z INFO  indexing"), "{index}");
   assert!(index.contains("Z WARN  slow"), "{index}");
@@ -140,8 +140,8 @@ fn restarts_programs_that_fail() {
   let exit = run(&config(&dir, capture, index), &Stop::new()).unwrap();
   assert_eq!(exit, Exit::HandedOff);
   let supervisor = log(&dir, "supervisor");
-  assert!(supervisor.contains("ERROR capture: exited, exit code: 1"));
-  assert!(supervisor.contains("WARN  capture: restarting in 0.05s"));
+  assert!(supervisor.contains("ERROR dgg-capture: exited, exit code: 1"));
+  assert!(supervisor.contains("WARN  dgg-capture: restarting in 0.05s"));
 }
 
 #[test]
@@ -160,7 +160,7 @@ fn stops_on_request() {
   assert_eq!(exit, Exit::Stopped);
   assert!(started.elapsed() < Duration::from_secs(10));
   let supervisor = log(&dir, "supervisor");
-  assert!(supervisor.contains("capture: stopped"));
+  assert!(supervisor.contains("dgg-capture: stopped"));
   assert!(supervisor.contains("index: stopped"));
 }
 
@@ -219,7 +219,7 @@ fn runs_the_loggers_commands() {
       .collect::<Vec<_>>()
       .join(" ")
   };
-  assert_eq!(args(&config.capture), "capture --data data");
+  assert_eq!(args(&config.dgg_capture), "dgg-capture --data data");
   assert_eq!(args(&config.migrate), "migrate --data data");
   assert_eq!(args(&config.index), "index --follow --data data");
   assert_eq!(args(&config.compact), "compact --data data");
@@ -420,7 +420,7 @@ fn indexes_once_migrated() {
   );
   run(&config, &Stop::new()).unwrap();
   // Capture doesn't wait for it; the index does.
-  assert!(said(&dir, "capture: started") < said(&dir, "migrate: exited"));
+  assert!(said(&dir, "dgg-capture: started") < said(&dir, "migrate: exited"));
   assert!(said(&dir, "migrate: exited") < said(&dir, "index: started"));
   assert!(log(&dir, "migrate").contains(" migrating"));
   assert!(log(&dir, "index").contains(" indexing"));
@@ -440,7 +440,7 @@ fn a_failed_migration_leaves_index_compact_and_sync_off() {
   config.compact_first = Duration::from_millis(10);
   run(&config, &Stop::new()).unwrap();
   said(&dir, "migrate failed");
-  assert!(log(&dir, "capture").contains(" capturing"));
+  assert!(log(&dir, "dgg-capture").contains(" capturing"));
   assert!(!log(&dir, "supervisor").contains("index: started"));
   assert!(!log(&dir, "supervisor").contains("compact: started"));
 }

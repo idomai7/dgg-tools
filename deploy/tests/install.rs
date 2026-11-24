@@ -352,7 +352,7 @@ mod moving {
   use {
     super::TempDir,
     ::common::fs::same,
-    ::deploy::install::moving::{collisions, merge, merge_logs},
+    ::deploy::install::moving::{collisions, merge, merge_logs, rename_logs},
     ::std::{fs, path::PathBuf},
   };
 
@@ -410,6 +410,74 @@ mod moving {
       "index\n"
     );
     assert!(!old.exists());
+  }
+
+  #[test]
+  fn renames_a_programs_logs() {
+    let dir = TempDir::new("deploy-install-rename-logs");
+    write(
+      &dir,
+      "capture.log",
+      "old
+",
+    );
+    write(
+      &dir,
+      "capture.1.log",
+      "older
+",
+    );
+    write(
+      &dir,
+      "dgg-capture.log",
+      "new
+",
+    );
+    write(
+      &dir,
+      "kick-capture.log",
+      "kick
+",
+    );
+    write(
+      &dir,
+      "capture.notes",
+      "kept
+",
+    );
+    rename_logs(dir.path(), "capture", "dgg-capture").unwrap();
+    let read = |name: &str| fs::read_to_string(dir.path().join(name)).ok();
+    assert_eq!(
+      read("dgg-capture.log").as_deref(),
+      Some(
+        "old
+new
+"
+      )
+    );
+    assert_eq!(
+      read("dgg-capture.1.log").as_deref(),
+      Some(
+        "older
+"
+      )
+    );
+    assert_eq!(read("capture.log"), None);
+    assert_eq!(read("capture.1.log"), None);
+    assert_eq!(
+      read("kick-capture.log").as_deref(),
+      Some(
+        "kick
+"
+      )
+    );
+    assert_eq!(
+      read("capture.notes").as_deref(),
+      Some(
+        "kept
+"
+      )
+    );
   }
 }
 

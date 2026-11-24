@@ -27,7 +27,7 @@ fn system() -> io::Result<System> {
 }
 
 /// What `process` runs: its binary's name without `.exe`, and for
-/// `dgg-logger` the subcommand too (`dgg-logger capture`).
+/// `dgg-logger` the subcommand too (`dgg-logger dgg-capture`).
 pub fn program(process: &Process) -> String {
   let name = match process.exe().and_then(Path::file_stem) {
     Some(stem) => stem.to_string_lossy().into_owned(),

@@ -6,7 +6,7 @@
 //! day, say), which is left for a person to sort out.
 
 use {
-  ::common::fs::{files, move_file, remove_empty_dirs, same},
+  ::common::fs::{MissingOk, files, move_file, remove_empty_dirs, same},
   ::std::{
     fs, io,
     path::{Path, PathBuf},
@@ -46,6 +46,38 @@ pub fn merge(from: &Path, to: &Path) -> io::Result<()> {
     move_file(&from.join(&relative), &to.join(&relative))?;
   }
   remove_empty_dirs(from);
+  Ok(())
+}
+
+/// Renames the log `old` in `logs` to `new`, rotated ones too
+/// (`<old>.<n>.log`), each in front of any of the new name there (which is
+/// newer): for a program renamed.
+pub fn rename_logs(logs: &Path, old: &str, new: &str) -> io::Result<()> {
+  let Some(entries) = fs::read_dir(logs).missing_ok()? else {
+    return Ok(());
+  };
+  for entry in entries {
+    let name = entry?.file_name().to_string_lossy().into_owned();
+    let Some(rest) = name.strip_prefix(old) else {
+      continue;
+    };
+    let rotated = rest
+      .strip_prefix('.')
+      .and_then(|rest| rest.strip_suffix(".log"))
+      .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()));
+    if rest != ".log" && !rotated {
+      continue;
+    }
+    let (from, to) = (logs.join(&name), logs.join(format!("{new}{rest}")));
+    if to.exists() {
+      let mut joined = fs::read(&from)?;
+      joined.extend(fs::read(&to)?);
+      fs::write(&to, joined)?;
+      fs::remove_file(&from)?;
+    } else {
+      fs::rename(&from, &to)?;
+    }
+  }
   Ok(())
 }
 

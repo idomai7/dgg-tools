@@ -5,7 +5,7 @@
 //! It's an ordinary capture, so it hands off by itself: the old capture (if
 //! it shares the data directory) retires in its favour, and it retires in
 //! favour of the new install's capture, which starts after it. It runs
-//! detached, appending to `capture.log` (its lines timestamped and marked
+//! detached, appending to `dgg-capture.log` (its lines timestamped and marked
 //! `(bridge)`), so it outlives the install if something goes wrong: capture
 //! carries on until someone looks.
 //!
@@ -29,7 +29,7 @@ use {
 pub fn start(build: &Path, data: &Path, log: &Path) -> io::Result<Child> {
   spawn(
     build,
-    &["capture".as_ref(), "--data".as_ref(), data.as_ref()],
+    &["dgg-capture".as_ref(), "--data".as_ref(), data.as_ref()],
     log,
   )
 }
