@@ -86,6 +86,13 @@ fn reports_captures_and_the_journal() {
   );
   let frames: Vec<_> = report.captures.iter().map(|c| c.frames).collect();
   assert_eq!(frames, [0, 0, 2]);
+  // What each listens to, once its live file says.
+  let listening: Vec<_> = report
+    .captures
+    .iter()
+    .map(|c| c.listening.as_deref())
+    .collect();
+  assert_eq!(listening, [None, None, Some("wss://x")]);
   let journal = &report.journal;
   assert_eq!(journal.today_files.count, 2);
   assert_eq!(journal.waiting, ["2026-01-02"]);
@@ -357,13 +364,12 @@ fn reports_kicks_captures_and_channels() {
   let paths = Paths::under(dir.to_path_buf());
   // Without a list or a journal, nothing's said of Kick.
   let report = Watcher::new().unwrap().gather(&paths).unwrap();
-  assert!(::deploy::status::kick_lines(&report).is_empty());
-  assert!(!text(&report).contains(&"KICK".to_owned()));
+  assert!(!text(&report).join("\n").contains("kick "));
 
   dir.write("kick-channels", "one 2 1\ntwo 4 3\n");
-  let kick_status = |heartbeat: i64| {
+  let kick_status = |instance: &str, heartbeat: i64| {
     let status = ::logger::control::Status {
-      instance: "k-1".into(),
+      instance: instance.into(),
       started: now - 60_000,
       heartbeat,
       healthy_since: Some(now - 50_000),
@@ -371,57 +377,79 @@ fn reports_kicks_captures_and_channels() {
     };
     status.encode_as(Variant::Kick)
   };
-  // The same instance in each channel; dgg's status isn't Kick's.
-  dir.write("data/journal/kick/one/control/k-1.status", kick_status(now));
+  // A capture per channel; dgg's status isn't Kick's.
   dir.write(
-    "data/journal/kick/two/control/k-1.status",
-    kick_status(now - 500),
+    "data/journal/kick/one/control/k-1.status",
+    kick_status("k-1", now),
+  );
+  dir.write(
+    "data/journal/kick/two/control/k-2.status",
+    kick_status("k-2", now - 500),
   );
   dir.write(
     "data/journal/kick/two/control/d-1.status",
     status("d-1", now, now, None),
   );
+  // A connection opening and two frames.
   dir.write(
     format!("data/journal/kick/one/live/{today}/k-1.journal"),
-    "12345",
+    "journal kick.0.1 ; channel=one\u{1e}\n1 k-1 1 open wss://k\u{1e}\n\
+     2 k-1 1 frame {}\u{1e}\n3 k-1 1 frame {}\u{1e}\n",
   );
   dir.write("data/journal/kick/gone/live/2026-01-01/k-0.journal", "1");
 
   let report = Watcher::new().unwrap().gather(&paths).unwrap();
-  let kick = &report.kick;
-  let instances: Vec<_> = kick
+  let captures: Vec<_> = report
     .captures
     .iter()
-    .map(|capture| (capture.instance.as_str(), capture.health))
+    .map(|capture| {
+      (
+        capture.instance.as_str(),
+        capture.listening.as_deref(),
+        capture.kick,
+        capture.health,
+        capture.frames,
+      )
+    })
     .collect();
-  assert_eq!(instances, [("k-1", Health::Healthy(now - 50_000))]);
-  let channels: Vec<_> = kick
+  let healthy = Health::Healthy(now - 50_000);
+  assert_eq!(
+    captures,
+    [
+      ("k-1", Some("one"), true, healthy, 2),
+      ("k-2", Some("two"), true, healthy, 0),
+    ]
+  );
+  let channels: Vec<_> = report
+    .kick
     .channels
     .iter()
     .map(|c| (c.slug.as_str(), c.listed, c.today_files.bytes))
     .collect();
+  let one = channels[1].2;
+  assert!(one > 0);
   assert_eq!(
     channels,
-    [("gone", false, 0), ("one", true, 5), ("two", true, 0)]
+    [("gone", false, 0), ("one", true, one), ("two", true, 0)]
   );
-  // Not dgg's captures.
-  assert!(report.captures.is_empty());
+  // Kick's captures with dgg's, its channels with the journal.
   let lines = text(&report);
-  let kick = lines.iter().position(|line| line == "KICK").unwrap();
-  assert!(
-    lines[kick + 1].contains("k-1") && lines[kick + 1].contains("healthy")
-  );
-  assert!(
-    lines[kick + 2].contains("gone")
-      && lines[kick + 2].contains("(not listed)")
-  );
-  assert!(
-    lines[kick + 3].contains("one") && lines[kick + 3].contains("last write")
-  );
-  assert!(
-    lines[kick + 4].contains("two")
-      && lines[kick + 4].contains("nothing today")
-  );
+  let captures = lines.iter().position(|line| line == "CAPTURES").unwrap();
+  let k1 = &lines[captures + 1];
+  assert!(k1.contains("k-1") && k1.contains(" one ") && k1.contains("healthy"));
+  assert!(lines[captures + 2].contains("k-2"));
+  let journal = lines.iter().position(|line| line == "JOURNAL").unwrap();
+  let journal = &lines[journal..];
+  let line = |slug: &str| {
+    journal
+      .iter()
+      .find(|line| line.contains(&format!("kick {slug} ")))
+      .unwrap()
+  };
+  assert!(line("gone").contains("(not listed)"));
+  assert!(line("one").contains("last write"));
+  assert!(line("two").contains("nothing today"));
+  assert!(!lines.contains(&"KICK".to_owned()));
 
   dir.write("kick-channels", "one\n");
   let report = Watcher::new().unwrap().gather(&paths).unwrap();

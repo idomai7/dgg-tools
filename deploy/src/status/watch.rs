@@ -13,7 +13,7 @@
 use {
   super::{
     Report, Watcher, all_logs, capture_tail, gaps, health, journal_lines,
-    kick_lines, logged_at, tail,
+    listening, listening_width, logged_at, tail,
   },
   crate::paths::Paths,
   ::common::{
@@ -422,6 +422,7 @@ pub fn draw(frame: &mut Frame, report: &Report, pane: &Pane) {
       })
       .collect()
   };
+  let width = listening_width(report);
   let captures: Vec<Line> = if report.captures.is_empty() {
     vec![Line::from("none".dark_gray())]
   } else {
@@ -435,9 +436,13 @@ pub fn draw(frame: &mut Frame, report: &Report, pane: &Pane) {
           super::Health::Stale(_) => Color::Red,
         };
         Line::from(vec![
+          Span::raw(format!("{:<30} ", capture.instance)),
+          Span::styled(
+            format!("{:<width$}  ", listening(capture)),
+            Style::new().bold(),
+          ),
           Span::raw(format!(
-            "{:<30} up {:<8} ",
-            capture.instance,
+            "up {:<8} ",
             format::duration(now - capture.started)
           )),
           Span::styled(
@@ -455,8 +460,6 @@ pub fn draw(frame: &mut Frame, report: &Report, pane: &Pane) {
   };
   let journal: Vec<Line> =
     journal_lines(report).into_iter().map(Line::from).collect();
-  let kick: Vec<Line> =
-    kick_lines(report).into_iter().map(Line::from).collect();
 
   let free = report
     .free
@@ -475,17 +478,11 @@ pub fn draw(frame: &mut Frame, report: &Report, pane: &Pane) {
     .into_iter()
     .map(|line| Line::from(line.dark_gray()))
     .collect();
-  // Kick's block only when Kick is captured.
-  let kick_height = match kick.len() {
-    0 => 0,
-    lines => lines as u16 + 2,
-  };
   let [
     top,
     programs_area,
     captures_area,
     journal_area,
-    kick_area,
     log_area,
     keys_area,
   ] = Layout::vertical([
@@ -493,7 +490,6 @@ pub fn draw(frame: &mut Frame, report: &Report, pane: &Pane) {
     Constraint::Length(programs.len() as u16 + 2),
     Constraint::Length(captures.len() as u16 + 2),
     Constraint::Length(journal.len() as u16 + 2),
-    Constraint::Length(kick_height),
     Constraint::Min(3),
     Constraint::Length(keys.len() as u16),
   ])
@@ -511,9 +507,6 @@ pub fn draw(frame: &mut Frame, report: &Report, pane: &Pane) {
     Paragraph::new(journal).block(heading("journal")),
     journal_area,
   );
-  if !kick.is_empty() {
-    frame.render_widget(Paragraph::new(kick).block(heading("kick")), kick_area);
-  }
   let mut body: Vec<Line> = Vec::new();
   if let Some(header) = &pane.header {
     body.push(Line::from(header.as_str()).bold());

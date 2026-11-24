@@ -44,6 +44,16 @@ pub fn program(process: &Process) -> String {
   }
 }
 
+/// The channel a `dgg-logger kick-capture` captures: its `--channel`.
+pub fn kick_channel(process: &Process) -> Option<String> {
+  let args = process.cmd();
+  if args.get(1)?.to_string_lossy() != "kick-capture" {
+    return None;
+  }
+  let at = args.iter().position(|arg| arg == "--channel")?;
+  Some(args.get(at + 1)?.to_string_lossy().into_owned())
+}
+
 /// Whether `process` runs one of `names` (as [`program`] names them) from
 /// under `dir`.
 fn runs_from(process: &Process, dir: &Path, names: &[&str]) -> bool {
