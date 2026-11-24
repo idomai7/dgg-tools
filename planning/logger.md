@@ -330,10 +330,20 @@ undocumented endpoints anonymously: no token, no login, no app. Planned
   - **Gaps:** a blip's messages are filled from Kick's chat history, at most
     10 pages, with `User-Agent: ledgerline/<version>`. The paging is
     `kick-api`'s `Web::back_to`, shared with kick-mod.
-- **Compact and sync:** both cover Kick's roots too. Compaction's merge works
-  for Kick's records as they are. `serve`'s manifest and files gain
-  `kick/<slug>/...` paths, so the mesh copies Kick's journals as it does
-  dgg's.
+- **Compact and sync:** both cover Kick's roots too, every channel with a
+  directory under `kick/`, listed or not.
+  - Compaction's merge works for Kick's records as they are: each `open`
+    names its endpoint. Files at `kick.0.0` and `0.1` merge into a `0.1`
+    archive, whose header keeps the fields every input shares (`channel`,
+    and `endpoint` if the day had only one). Its manifest is `journal-archive
+    kick.0.0`.
+  - `serve` lists Kick's journals in a manifest of their own, `GET
+    /manifest/kick` (`journal-manifest kick.0.0`), with paths
+    `kick/<slug>/live/...` and `kick/<slug>/archive/...`, and serves those
+    files. dgg's manifest is unchanged, so hosts on different builds keep
+    syncing dgg's journals; a peer without Kick's manifest (`404`) has none.
+  - Each channel's root has its own `control/synced-archives`, as
+    `synced-archives kick.0.0`.
 - **Index:** `index-kick.sqlite`, separate from dgg's, with schema versions of
   its own.
   - Rows are keyed by Kick's own ids (the uuids of messages, bans and
@@ -391,8 +401,9 @@ undocumented endpoints anonymously: no token, no login, no app. Planned
   - Live test: after backfill, the index holds exactly a reference capture's 583
     messages over the same span. 16 nicks stay lowercase because those users
     were never seen natively.
-- **Kick:** steps 1 to 3 done: `kick-channels`, `kick-ids`, `kick-capture`,
-  the supervisor running it and `status` showing it.
+- **Kick:** steps 1 to 4 done: `kick-channels`, `kick-ids`, `kick-capture`,
+  the supervisor running it, `status` showing it, and compact and sync
+  covering Kick's journals (not yet run on a host).
   - The supervisor finds the list in the install's root (its `--peers`,
     which every install passes), and runs `kick-capture` once it has
     channels. A list's changes take effect at the supervisor's next start.
