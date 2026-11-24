@@ -107,7 +107,7 @@ impl ::std::fmt::Display for Error {
       Self::Sqlite(e) => write!(f, "sqlite: {e}"),
       Self::Schema(version) => write!(
         f,
-        "index has schema {}.{}, not {}.{}; run `index --rebuild`",
+        "index has schema {}.{}, not {}.{}; run `index --rebuild-dgg`",
         version.major,
         version.minor,
         SCHEMA_VERSION.major,

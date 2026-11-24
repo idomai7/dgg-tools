@@ -21,9 +21,12 @@ use {
 /// index of its own.
 #[derive(Args)]
 pub struct Index {
-  /// Delete dgg's index and rebuild it from the whole journal.
-  #[arg(long)]
+  /// Delete both indexes and rebuild them from the whole journal.
+  #[arg(long, conflicts_with_all = ["rebuild_dgg", "rebuild_kick"])]
   rebuild: bool,
+  /// Delete dgg's index and rebuild it from dgg's whole journal.
+  #[arg(long)]
+  rebuild_dgg: bool,
   /// Delete Kick's index and rebuild it from Kick's whole journal.
   #[arg(long)]
   rebuild_kick: bool,
@@ -78,12 +81,13 @@ impl Index {
     // Kick's index follows beside dgg's: it failing for good doesn't stop
     // dgg's, nor dgg's it.
     let kick = {
-      let (rebuild, journal_root) = (self.rebuild_kick, journal_root.clone());
+      let (rebuild, journal_root) =
+        (self.rebuilds_kick(), journal_root.clone());
       thread::spawn(move || {
         follow_kick(&kick_path, &journal_root, rebuild, pace, period)
       })
     };
-    let opened = match self.rebuild {
+    let opened = match self.rebuilds_dgg() {
       true => rebuild(&dgg_path),
       false => open(&dgg_path),
     };
@@ -104,9 +108,17 @@ impl Index {
     ExitCode::FAILURE
   }
 
+  fn rebuilds_dgg(&self) -> bool {
+    self.rebuild || self.rebuild_dgg
+  }
+
+  fn rebuilds_kick(&self) -> bool {
+    self.rebuild || self.rebuild_kick
+  }
+
   /// Brings dgg's index at `path` up to date once; whether it went well.
   fn once(&self, path: &Path, journal_root: &Path) -> bool {
-    let opened = match self.rebuild {
+    let opened = match self.rebuilds_dgg() {
       true => rebuild(path),
       false => open(path),
     };
@@ -115,7 +127,7 @@ impl Index {
 
   /// Brings Kick's index at `path` up to date once; whether it went well.
   fn once_kick(&self, path: &Path, journal_root: &Path) -> bool {
-    let opened = match self.rebuild_kick {
+    let opened = match self.rebuilds_kick() {
       true => kick::index::rebuild(path),
       false => kick::index::open(path),
     };
