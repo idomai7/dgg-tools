@@ -161,8 +161,8 @@ It finds the installed logger and shows:
   round went), and the ends of the logs.
 
 `--watch` keeps it open, redrawing every second (`--interval` to change)
-with how fast today's journal is growing and a page filling the rest of the
-window. The keys are grouped:
+under a title naming its build, with how fast today's journal is growing and
+a page filling the rest of the window. The keys are grouped:
 
 - `l` every log at once, in time order, each line naming its log (the page
   it starts on); `r` the latest records of the capture at the top of the

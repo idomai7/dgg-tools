@@ -265,7 +265,7 @@ impl View {
   fn pane(&self, paths: &Paths, report: &Report) -> Pane<'static> {
     match self {
       Self::Logs => Pane {
-        title: "every log, in time order".into(),
+        title: "log".into(),
         header: None,
         lines: merge_logs(&paths.logs, &logs(report), 500),
         empty: "(empty: shell runs print to their own windows)",
@@ -694,7 +694,10 @@ pub fn draw(
     .map(|free| format!("   {} free", format::size(free as f64)))
     .unwrap_or_default();
   let header = Line::from(vec![
-    Span::styled(" dgg-logger ", Style::new().bold().reversed()),
+    Span::styled(
+      format!(" dgg-logger {} ", crate::BUILD),
+      Style::new().bold().reversed(),
+    ),
     Span::raw(format!(
       "  {}  data {}{free}",
       utc_timestamp(now),
