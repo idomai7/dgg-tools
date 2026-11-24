@@ -502,6 +502,32 @@ yet, so old peers need no compatibility. Planned 2026-11-24.
     `migrate` runs only once the old supervisor has stopped, so nothing was
     left being written on either host: both moved everything at once.
 
+## A capture per Kick channel
+Planned 2026-11-25. Each step a pause for review.
+1. **Names by service:** dgg's own commands name their service, as Kick's
+   do: `capture` becomes `dgg-capture`, `backfill` `dgg-backfill` and
+   `gaps` `dgg-gaps`, with no aliases. `capture.log` becomes
+   `dgg-capture.log` (`install` renames an old one). `install` still
+   finds an older build's `dgg-logger capture` to wait on its handoff.
+2. **A process per Kick channel:** `kick-capture --channels <list>
+   --channel <slug>` captures one channel, so one failing leaves the
+   others. It reads the list again every minute: changed ids reconnect it,
+   its connections numbered on; removed, it exits as such. The supervisor
+   runs one per listed channel, each restarted on its own, reading the
+   list every minute to start the added. All log to `kick-capture.log`,
+   each line naming its channel. Capturing every channel in one process
+   goes: one code path.
+3. **`install` waits for every Kick channel:** a bridge per channel,
+   waited on together, and the new install's Kick captures waited on too,
+   not only dgg's. A channel not healthy in time is warned of, by name:
+   dgg's capture comes first.
+4. **One captures box in `status`:** dgg's and Kick's captures together,
+   each coloured by health, and after its instance what it listens to:
+   dgg's WebSocket URL (from its live file's header) and Kick's channel
+   (from the `control/` its status is in). Kick's frames counted as
+   dgg's. Kick's channels' journal lines join the journal box, and the
+   kick box goes. The programs box names each `kick-capture`'s channel.
+
 ## Status
 - **`logger-journal`:** live files, plus a writer and a reader. The `.zst`
   archives and manifests come with `compact`.
