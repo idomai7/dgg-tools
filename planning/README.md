@@ -112,7 +112,8 @@ The layout is flat: each crate is a direct child of the root.
     such as reading its rate-limit headers. Fetching is behind a feature, and
     decoding needs none.
   - The `reqwest` client and its `User-Agent` are the caller's: each tool
-    names itself by its codename, as `ledgerline/<version>`.
+    names itself by its codename and its build (its version and commit),
+    as `ledgerline/0.1.0+a3c579a14414`.
   - What a tool makes of the answers stays in the tool: backfill's matching
     and journaling, say.
 

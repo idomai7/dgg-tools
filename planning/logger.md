@@ -282,7 +282,7 @@ The logger, codenamed ledgerline: `logger-journal` and `logger`, run as
     - `linkers-api` decodes every kind of message linkers.ooo logs, not only
       `MSG`, for the archive tools; an unknown kind is kept by name. It
       doesn't parse their text.
-    - Requests name the logger `ledgerline/<version>`.
+    - Requests name the logger `ledgerline/<build>`.
   - A run holds `backfill/control/<instance>.lock` while it writes, so `compact`
     leaves its files alone until it's done.
   - `serve` and `sync` carry `backfill/live/` and `backfill/archive/` like
@@ -322,7 +322,7 @@ undocumented endpoints anonymously: no token, no login, no app. Planned
   per channel, its slug, channel id and chatroom id.
   - `dgg-logger kick-ids <slug>...` looks the ids up with the unofficial
     channel lookup, anonymously, and writes them there. Asking the lookup
-    is `kick-api`'s `lookup` feature: with reqwest, as `ledgerline/<version>`
+    is `kick-api`'s `lookup` feature: with reqwest, as `ledgerline/<build>`
     (with curl until 2026-11-25).
   - Slugs are lowercase letters, digits, `-` and `_`, so each is also a
     directory's name. Hand edits survive `kick-ids`: it changes only the
@@ -340,7 +340,7 @@ undocumented endpoints anonymously: no token, no login, no app. Planned
       new instance's list wins, even one that dropped a channel.
     - Not yet across hosts: `kick-capture` has no `--peer`.
   - **Gaps:** a blip's messages are filled from Kick's chat history, at most
-    10 pages, with `User-Agent: ledgerline/<version>`. The paging is
+    10 pages, with `User-Agent: ledgerline/<build>`. The paging is
     `kick-api`'s `Web::back_to`, shared with kick-mod.
 - **Compact and sync:** both cover Kick's roots too, every channel with a
   directory under `kick/`, listed or not.
