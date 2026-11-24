@@ -7,7 +7,7 @@ directory:
 |---|---|---|
 | `capture` | Connects to dgg chat and writes everything to the journal | all the time |
 | `index` | Reads dgg's journal into `index-dgg.sqlite`, and Kick's into `index-kick.sqlite` | all the time, with `--follow`: once 500 records are waiting (at most once a minute), or every 10 minutes |
-| `compact` | Packs each finished day into one compressed archive, Kick's channels' too | every hour |
+| `compact` | Packs each finished day into one compressed archive, Kick's channels' too; with `--early`, also what stopped captures left on today | every hour; `--early` a minute after start |
 | `gaps` | Lists when no capture was connected | when you want |
 | `backfill` | Fetches missed messages from public logs | after an outage |
 | `sync`, `serve` | Copy the journal between hosts | when moving hosts, or every 15 minutes from a peer |
@@ -118,8 +118,16 @@ there, and `index.sqlite` to `index-dgg.sqlite`, as its supervisor starts
 (`migrate.log` says what moved). Capture keeps running throughout: the
 bridge also writes its status where the old capture looks, so the old one
 hands off to it as before. Should a capture from before still be writing
-then, its files stay where they are, and are read there until compacted
-the next day; the next start moves the rest.
+then, its files stay where they are, and are read there until compacted;
+the next start moves the rest.
+
+A minute after it starts, the supervisor runs `compact --early`, which
+also compacts days still open: the files of captures that have stopped
+(the one before an upgrade, say) are archived then, not once the day ends.
+A capture's files are left while it may still write them: while it holds
+its lock, `control\<instance>.live-lock`, or, for builds from before the
+lock, while its status is fresh. The rest of the day joins the archive
+once it ends.
 
 ## Status
 
