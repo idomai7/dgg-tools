@@ -576,13 +576,16 @@ WebSocket URL of its own. Each step a pause for review.
 
   ```text
   # <name> <WebSocket URL> [<Origin header>, or - for none]
-  destiny wss://chat.destiny.gg/ws https://www.destiny.gg
+  destiny.gg wss://chat.destiny.gg/ws https://www.destiny.gg
   ```
 
-  A name is a slug, as Kick's are (lowercase letters, digits, `-`, `_`),
-  but not one of the directories of the old layout (`live`, `archive`,
-  `backfill`, `control`), so a name is never mistaken for one while the
-  move is under way. With no list, it's this one line: a host that never
+  A name is the site's domain by convention, `destiny.gg` the first
+  (decided 2026-11-25): lowercase letters, digits, `-`, `_` and `.`, not
+  starting or ending with `.` and with no `..`, so it's a safe directory
+  name on Windows too and never `.` or `..`. Nor is it one of the
+  directories of the old layout (`live`, `archive`, `backfill`,
+  `control`), so a name is never mistaken for one while the move is under
+  way. With no list, it's this one line: a host that never
   writes one keeps capturing destiny.gg as now. `install` moves the list
   with the root, as `kick-channels`.
 - **Layout:** each channel's journals in `journal/dgg/<name>/`, laid out
@@ -592,7 +595,7 @@ WebSocket URL of its own. Each step a pause for review.
   format's version stays as it is.
 - **Index:** one per channel, `index-dgg-<name>.sqlite`. Its paths are
   relative to the channel's directory, so today's index becomes
-  destiny's by a rename, with no rebuild and no schema change. Its
+  destiny.gg's by a rename, with no rebuild and no schema change. Its
   deduplication (timestamp and nick), connections, gaps and fetched
   ranges stay those of one chat, as they are now. `index --follow` keeps
   each channel's on its own, picking up a channel added to the list at its
@@ -631,7 +634,8 @@ WebSocket URL of its own. Each step a pause for review.
   `--url` and `--no-origin` go (one code path); a channel's Origin is in
   the list. Its status says what it listens to, as now.
 - **Supervisor:** a `dgg-capture` per listed channel, as for Kick, each
-  logging to `dgg-capture.<name>.log` (names hold no dots), restarted on
+  logging to `dgg-capture.<name>.log` (the name is what's between
+  `dgg-capture.` and `.log`, dots and all), restarted on
   its own, the list read every minute to start the added. A dgg capture
   that hands off still stops the supervisor (an upgrade is under way); the
   other dgg channels' captures get the handoff wait Kick's get, then
@@ -664,9 +668,10 @@ WebSocket URL of its own. Each step a pause for review.
 - **The move,** by `migrate` at the supervisor's start, under the index,
   compact and sync locks, as the move by service did: everything in
   `dgg/` that's of the old layout (`live/`, `archive/`, `backfill/`,
-  `control/`) into the list's first channel's directory, `dgg/destiny/`,
-  each a rename within the volume, a file already at its destination
-  refused; and `index-dgg.sqlite` renamed to `index-dgg-destiny.sqlite`.
+  `control/`) into the list's first channel's directory,
+  `dgg/destiny.gg/`, each a rename within the volume, a file already at
+  its destination refused; and `index-dgg.sqlite` renamed to
+  `index-dgg-destiny.gg.sqlite`.
   Safe to repeat.
   - An old capture's live files are left while it may still write them
     (its status fresh), moved by a later `migrate`; the old `control/` is
@@ -699,10 +704,10 @@ WebSocket URL of its own. Each step a pause for review.
   7. Docs.
   8. Removing the old-control heartbeat and the move, once both hosts
      have moved.
-- **To decide:**
-  - The first channel's name: `destiny`.
-  - Which other channels are meant, and whether any needs more than a URL
-    and an Origin (a cookie, or a backfill source).
+- **The next channel:** `omniliberal.dev`, a dev chat speaking the same
+  protocol as destiny.gg, added to the list once step 4 is in (its URL and
+  Origin confirmed then). No backfill source has it, so its gaps stay
+  gaps.
 
 ## Status
 - **`logger-journal`:** live files, plus a writer and a reader. The `.zst`
