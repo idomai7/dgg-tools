@@ -33,7 +33,7 @@ pub struct ConfigFrom {
 
 impl ConfigFrom {
   /// The config, if one was given.
-  fn read<T: for<'de> ::serde::Deserialize<'de>>(
+  pub fn read<T: for<'de> ::serde::Deserialize<'de>>(
     &self,
   ) -> Result<Option<T>, String> {
     use ::common::config::{Source, read};
@@ -45,7 +45,7 @@ impl ConfigFrom {
   }
 
   /// The config, which must be given: `shape` says what it holds.
-  fn require<T: for<'de> ::serde::Deserialize<'de>>(
+  pub fn require<T: for<'de> ::serde::Deserialize<'de>>(
     &self,
     shape: &str,
   ) -> Result<T, String> {
@@ -73,6 +73,18 @@ fn read_peer_ca(
     .map_err(|e| format!("{}: {e}", path.display()))?;
   crate::cert::roots(&pem).map_err(|e| format!("{}: {e}", path.display()))?;
   Ok(Some(pem))
+}
+
+/// The CA certificate `pem`, from a config, checked, for reaching `url`,
+/// which must then be HTTPS.
+fn peer_ca(pem: String, url: &str) -> Result<String, String> {
+  if !url.starts_with("https://") {
+    return Err(format!(
+      "{url}: with a CA, a peer is reached over HTTPS only"
+    ));
+  }
+  crate::cert::roots(&pem).map_err(|e| format!("the config's ca: {e}"))?;
+  Ok(pem)
 }
 
 /// Runs an async command on a new runtime.

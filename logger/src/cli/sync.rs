@@ -25,7 +25,8 @@ pub struct Sync {
   /// CA alone.
   #[arg(long)]
   peer_ca: Option<PathBuf>,
-  /// Its config: `{"token": "<--peer's read token>"}`.
+  /// Its config: `{"token": "<--peer's read token>"}`, and optionally
+  /// `"ca"`, the mesh CA's certificate (PEM), in place of `--peer-ca`.
   #[command(flatten)]
   config: ConfigFrom,
   /// Keep syncing, every `--interval` seconds.
@@ -42,6 +43,9 @@ pub struct Sync {
 pub struct Config {
   /// The peer's read token.
   pub token: Secret,
+  /// The mesh CA's certificate (PEM), as `--peer-ca` gives it.
+  #[serde(default)]
+  pub ca: Option<String>,
 }
 
 impl Sync {
@@ -58,7 +62,14 @@ impl Sync {
         return ExitCode::FAILURE;
       }
     };
-    let ca = match super::read_peer_ca(self.peer_ca.as_deref(), &self.peer) {
+    let ca = match (config.ca, &self.peer_ca) {
+      (Some(_), Some(_)) => {
+        Err("--peer-ca or the config's ca, not both".into())
+      }
+      (Some(pem), None) => super::peer_ca(pem, &self.peer).map(Some),
+      (None, path) => super::read_peer_ca(path.as_deref(), &self.peer),
+    };
+    let ca = match ca {
       Ok(ca) => ca,
       Err(e) => {
         error!("{e}");
