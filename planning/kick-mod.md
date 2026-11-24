@@ -200,9 +200,14 @@ Each is a pause for review.
           already seen; a page with none isn't shown.
         - Retried after 1 s, doubling to 30 s; 45 s of silence is a drop. A
           `400`, `401` or `403` stops the channel: the config needs fixing.
-        - Not yet: the page doesn't show `filled` (step 7's page part), and
-          user history still reads kick-mod's own journal, until 3.
+        - Not yet: the page doesn't show `filled` (step 7's page part).
      3. User history from the logger, with the mod log's actions added.
+        Done 2026-11-25: in the same shape as from the journal, only with
+        the config's `logger` section.
+        - A channel the logger doesn't have (`404`) gives only the mod
+          log's actions; a logger that can't be asked, `502` with why.
+        - Not yet: the page has no history panel (step 6's page part);
+          only `/api/history` exists.
      4. What's left goes: the Centrifugo connection, the journal, gap
         filling and `ids`, which becomes `kick-mod add <slug>`, from the
         official API only. Old journals stay on disk, in the logger's
