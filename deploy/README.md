@@ -5,11 +5,11 @@ directory:
 
 | Command | Job | Runs |
 |---|---|---|
-| `capture` | Connects to dgg chat and writes everything to the journal | all the time |
+| `dgg-capture` | Connects to dgg chat and writes everything to the journal | all the time |
 | `index` | Reads dgg's journal into `index-dgg.sqlite`, and Kick's into `index-kick.sqlite` | all the time, with `--follow`: once 500 records are waiting (at most once a minute), or every 10 minutes |
 | `compact` | Packs each finished day into one compressed archive, Kick's channels' too; with `--early`, also what stopped captures left on today | every hour; `--early` a minute after start |
-| `gaps` | Lists when no capture was connected | when you want |
-| `backfill` | Fetches missed messages from public logs | after an outage |
+| `dgg-gaps` | Lists when no dgg capture was connected | when you want |
+| `dgg-backfill` | Fetches missed dgg messages from public logs | after an outage |
 | `sync`, `serve` | Copy the journal between hosts | when moving hosts, or every 15 minutes from a peer |
 | `kick-ids` | Records Kick channels' ids in `kick-channels`, for `kick-capture` | when adding a channel |
 | `kick-capture` | Connects to Kick chat, each channel in `kick-channels`, and writes everything to the journal | all the time, once `kick-channels` has channels |
@@ -24,7 +24,7 @@ minute until then). Once running, it reads the list again every minute:
 channels added are captured, and channels removed stop. In Task Manager, both show as "dgg-tools: ..."; the Details tab's Command line
 column tells the commands apart.
 
-The commands that work on the data (`capture` to `serve`) take `--data`,
+The commands that work on the data (`dgg-capture` to `serve`) take `--data`,
 which defaults to the installed logger's.
 
 An install lives in one folder:
@@ -43,7 +43,7 @@ An install lives in one folder:
     index-dgg.sqlite       dgg's searchable index; can be rebuilt from the
                            journal
     index-kick.sqlite      Kick's, likewise
-  logs\                    capture.log, index.log, compact.log, supervisor.log,
+  logs\                    dgg-capture.log, index.log, compact.log, supervisor.log,
                            sync.log, migrate.log, kick-capture.log
   install.env.json         the install's config, secrets included: the mesh
                            this node is in, other hosts to sync from, the
@@ -91,7 +91,7 @@ and restarted a minute after any failure. It runs as its own account,
 `NT SERVICE\dgg-logger`, not SYSTEM, and that account may change only the
 data and logs. The folder is writable only by administrators, since anyone
 who could change it could run code as the service; other users can read
-it. Running `backfill`, `gaps` or `index` by hand against a machine
+it. Running `dgg-backfill`, `dgg-gaps` or `index` by hand against a machine
 install's data needs an administrator prompt.
 
 `--root`, `--data` and `--logs` put things elsewhere.
@@ -99,7 +99,7 @@ install's data needs an administrator prompt.
 ### Upgrading and switching
 
 Build, then run `install` again, the same way. Nothing is missed: a capture
-from the new build starts first (the "bridge", its lines in `capture.log`
+from the new build starts first (the "bridge", its lines in `dgg-capture.log`
 marked `(bridge)`),
 the old install hands over to it and stops, and then the new install starts
 and takes over from the bridge. Old builds are pruned, keeping three.
@@ -121,6 +121,10 @@ Builds `ed46061` to `52d088d` moved them there from `journal\` and
 `index.sqlite`; later builds don't, so upgrading from a build older than
 `ed46061` goes through one of those first. `migrate.log` warns of
 anything left in the old places, which nothing reads.
+
+Builds from `b9651ea` name dgg's commands by service: `dgg-capture`,
+`dgg-backfill` and `dgg-gaps`, once `capture`, `backfill` and `gaps`.
+`install` renames `capture.log` to `dgg-capture.log`.
 
 A minute after it starts, the supervisor runs `compact --early`, which
 also compacts days still open: the files of captures that have stopped
@@ -157,8 +161,8 @@ window. The keys are grouped:
   it starts on); `r` the latest records of the newest capture (`r` again
   for the next capture); Space redraws, `e` opens the data folder, `q`
   quits;
-- each program's log: `1` the supervisor's, `2` migrate's, `3` capture's,
-  `4` compact's, `5` index's, `6` the gaps in capture as `gaps` reports
+- each program's log: `1` the supervisor's, `2` migrate's, `3` dgg-capture's,
+  `4` compact's, `5` index's, `6` the gaps in capture as `dgg-gaps` reports
   them (looked at again every 30 seconds; it reads the index as `index`
   has brought it, without updating it), `7` sync's;
 - `8` kick-capture's log.
@@ -196,13 +200,13 @@ If the PC was off or asleep, see what was missed and fill it from public
 logs:
 
 ```powershell
-target\release\dgg-logger gaps --min 60
-target\release\dgg-logger backfill --source linkers --dry-run
-target\release\dgg-logger backfill --source linkers
+target\release\dgg-logger dgg-gaps --min 60
+target\release\dgg-logger dgg-backfill --source linkers --dry-run
+target\release\dgg-logger dgg-backfill --source linkers
 ```
 
 Short gaps are often already covered by the chat history dgg sends on every
-reconnect; `gaps` says which ones were. Backfilled messages go in
+reconnect; `dgg-gaps` says which ones were. Backfilled messages go in
 `journal\dgg\backfill\`, separate from what was captured, and never replace a
 captured message. `--source rustlesearch` is millisecond-accurate but
 limited to 200 requests a day. linkers.ooo allows 60 requests a minute,
