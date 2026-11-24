@@ -533,6 +533,9 @@ dependencies = [
  "base64",
  "fastrand",
  "getrandom 0.4.3",
+ "serde",
+ "serde_json",
+ "zeroize",
 ]
 
 [[package]]
@@ -726,6 +729,7 @@ dependencies = [
  "logger",
  "logger-journal",
  "ratatui",
+ "serde_json",
  "sysinfo",
  "version-info",
  "win32job",
@@ -1697,6 +1701,7 @@ dependencies = [
  "rusqlite",
  "rustlesearch-api",
  "rustls",
+ "serde",
  "serde_json",
  "sha2",
  "time",
