@@ -128,13 +128,21 @@ It finds the installed logger and shows:
 - Kick's captures and their health, and each channel's journal today, if
   Kick is captured.
 
-`--watch` keeps it open, redrawing every 2 seconds (`--interval` to change)
-with how fast today's journal is growing and a log filling the rest of the
-window. Keys: `1`-`7` show the capture, index, compact, supervisor,
-sync, migrate or kick-capture log, `f` the latest frames of the newest capture (`f` again for the
-next capture), `g` the gaps in capture as `gaps` reports them (`g` again
-to look again; it reads the index as `index` has brought it, without
-updating it), `r` redraws, `e` opens the data folder, `q` quits.
+`--watch` keeps it open, redrawing every second (`--interval` to change)
+with how fast today's journal is growing and a page filling the rest of the
+window. The pages' keys are grouped:
+
+- what's live: `1` the supervisor's log, `2` capture's, `3` the latest
+  frames of the newest capture (`3` again for the next capture), `4`
+  migrate's log;
+- periodic maintenance: `5` compact's log, `6` index's, `7` the gaps in
+  capture as `gaps` reports them (looked at again every 30 seconds; it
+  reads the index as `index` has brought it, without updating it), `8`
+  sync's log;
+- `9` kick-capture's log.
+
+`r` redraws, `e` opens the data folder, `q` quits. In a narrow window the
+keys take two lines.
 
 ## Running it in a shell instead
 
