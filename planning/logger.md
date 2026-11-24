@@ -167,8 +167,8 @@ The logger, codenamed ledgerline: `logger-journal` and `logger`, run as
     each connection's `HISTORY`), `unparsed` and `files` (per-file checkpoints).
   - Each file's checkpoint commits in the same transaction as its rows, so an
     interrupted run resumes exactly where it stopped.
-  - `--rebuild` replays the whole journal. An index from another schema version
-    must be rebuilt.
+  - `--rebuild-dgg` replays dgg's whole journal (`--rebuild` rebuilds both
+    indexes). An index from another schema version must be rebuilt.
 - **serve / sync:** `serve` also lists live files (`GET /manifest`, format
   `journal-manifest dgg.0.2`) and serves their bytes
   (`GET /files/live/<day>/<instance>.journal`, honouring `Range: bytes=N-`).
@@ -357,7 +357,7 @@ undocumented endpoints anonymously: no token, no login, no app. Planned
     often as it's seen.
   - `dgg-logger index` keeps both: Kick's follows on a thread of its own, at
     the same pace, so either failing for good leaves the other. `--rebuild`
-    rebuilds dgg's, `--rebuild-kick` Kick's. Its log lines start `kick: `.
+    rebuilds both, `--rebuild-dgg` and `--rebuild-kick` only one. Its log lines start `kick: `.
   - Frames are read into events by `kick-api`'s `Frame::events`, shared
     with kick-mod.
   - `migrate` checks its schema too, and `status` shows its size and last
