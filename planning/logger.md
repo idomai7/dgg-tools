@@ -537,6 +537,31 @@ captures saying what they listen to, upgraded on both hosts 2026-11-25.
    a capture from before, the live files' last `open`. dgg's live files
    name their endpoint in the header too, as Kick's do (`641425f`).
 
+## The status screen, and dgg channels
+Planned 2026-11-25. Each step a pause for review.
+1. **Programs and captures:** the programs box's columns aligned to the
+   widest name. Each capture prefixed by its service, `dgg` or `kick`.
+   Captures sorted unhealthy first (stale, then connecting), then by
+   frames a minute, over about the last minute of snapshots.
+2. **Records:** `r` cycles through every capture, Kick's too, and the
+   page's title names what it listens to (the Kick channel, or dgg's
+   endpoint).
+3. **Log pages:** `3` capture shows every capture's log, dgg's and
+   Kick's, in time order, each line naming its channel; a key narrows it
+   to one channel, cycling. `8` goes. The rest (index, migrate, compact,
+   sync) already hold both services' lines.
+4. **Boxes:** Tab and Shift-Tab move focus between the boxes (the log
+   page too), its border highlighted. Up, Down, Page Up and Page Down
+   scroll the focused one when it's over-tall; `m` minimizes it to its
+   title line, or restores it, and the others take the room.
+5. **dgg channels:** dgg captured per channel, as Kick is: a
+   `dgg-channels` list (name and WebSocket URL), a journal root per
+   channel (`journal/dgg/<name>/`), a `dgg-capture` per channel, and an
+   index per channel (`index-dgg-<name>.sqlite`). Today's journal and
+   index move into the first channel's, as the move by service did.
+   Planned in detail before it's built: sync's and serve's routes,
+   backfill and gaps, and the move.
+
 ## Status
 - **`logger-journal`:** live files, plus a writer and a reader. The `.zst`
   archives and manifests come with `compact`.
