@@ -12,9 +12,9 @@
 //!   file at another version, which this build can't read, gets a line of
 //!   its own, and is left as it was;
 //! - the index's schema, which must be [`SCHEMA_VERSION`] (or there's none
-//!   yet);
-//! - each capture running as it starts, with its build: an older build's
-//!   hands off to this build's capture.
+//!   yet).
+//!
+//! How the captures hand over is theirs to say, in their own logs.
 //!
 //! The next format change that needs a migration fills one in.
 //!
@@ -29,7 +29,7 @@ use {
     index::{SCHEMA_VERSION, schema_version},
     taken,
   },
-  ::common::{format, fs::MissingOk, time::now_ms},
+  ::common::fs::MissingOk,
   ::logger_journal::{
     Format, Header, Variant, Version, archive,
     layout::{archive_dir, backfill_root, channel_root, kick_root, live_files},
@@ -47,10 +47,6 @@ use {
 
 /// The locks in the data directory it holds, a supervisor's.
 pub const LOCKS: [&str; 3] = ["index.lock", "compact.lock", "sync.lock"];
-
-/// A capture's status counts as left behind after this long without a
-/// heartbeat, as capture itself judges it.
-const STALE_MS: i64 = 5000;
 
 /// What a [`migrate`] did, or with a dry run would do.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -117,44 +113,7 @@ pub fn migrate(
     }
   }
 
-  let mut captures: Vec<control::Status> = Vec::new();
-  for (_, root, variant) in &roots {
-    for status in control::read_all_as(&control::dir(root), *variant)? {
-      if !captures.iter().any(|seen| seen.instance == status.instance) {
-        captures.push(status);
-      }
-    }
-  }
-  captures.sort_by_key(|capture| capture.started);
-  if captures.is_empty() {
-    say("captures: none running yet");
-  }
-  let now = now_ms();
-  for capture in &captures {
-    say(&format!(
-      "capture {}: {}",
-      capture.instance,
-      upgrade(capture, now)
-    ));
-  }
   Ok(report)
-}
-
-/// Where `capture` stands in the upgrade, as of `now`.
-fn upgrade(capture: &control::Status, now: i64) -> String {
-  let build = match capture.build.as_deref() {
-    Some(build) if build == BUILD => "this build".to_owned(),
-    Some(build) => format!("build {build}"),
-    None => "a build that doesn't say".to_owned(),
-  };
-  let silent = now - capture.heartbeat;
-  if silent > STALE_MS {
-    format!("{build}, silent {}: left behind", format::duration(silent))
-  } else if capture.build.as_deref() == Some(BUILD) {
-    build
-  } else {
-    format!("{build}, older: hands off to this build's capture")
-  }
 }
 
 /// Checks each kind of file under journal `root`, `name` in what it says.

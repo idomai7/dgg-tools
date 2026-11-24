@@ -75,7 +75,7 @@ fn put(path: &Path, text: &str) {
 }
 
 #[test]
-fn says_each_kind_of_file_and_capture() {
+fn says_each_kind_of_file() {
   let dir = TempDir::new("logger-migrate");
   let journal = dir.path().join("journal");
   let dgg = Header::new(Variant::Dgg, v0::VERSION).text();
@@ -114,8 +114,6 @@ fn says_each_kind_of_file_and_capture() {
     "backfill: 1 live file, journal dgg.0.3",
     "kick someone: 1 live file, journal kick.0.1",
     "index: none yet",
-    "capture old: build 0.0.1-abc, older: hands off",
-    "capture new: this build",
   ] {
     assert!(
       said.contains(line),

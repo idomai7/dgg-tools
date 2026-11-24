@@ -8,8 +8,8 @@ use {
 
 /// Bring the journal and the index up to this build's formats, in place.
 /// There's nothing to migrate yet: it only checks, saying the version of
-/// each kind of file, the index's schema and the captures running. Waits
-/// for, and holds, the index, compact and sync locks, as a supervisor does.
+/// each kind of file and the index's schema. Waits for, and holds, the
+/// index, compact and sync locks, as a supervisor does.
 #[derive(Args)]
 pub struct Migrate {
   /// Check, but change nothing; take no locks.
