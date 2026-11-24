@@ -398,6 +398,12 @@ undocumented endpoints anonymously: no token, no login, no app. Planned
 - **Cross-host handoff:** done. Tested live: the old instance retired about 38 s
   after the new one started.
 - **`serve` / `sync`:** done. The supervisor's side is in [deploy](deploy.md).
+- **Log levels:** done. Every line a program run by the supervisor logs
+  starts with `INFO`, `WARN` or `ERROR` (`common::log`), the supervisor keeps
+  it (a line without one is `INFO`), and `status --watch` colours them. Its
+  first page is every log at once, in time order. A capture logs which
+  older instance it took over from. `cert`, `kick-ids` and `gaps`, run by
+  hand, print without levels.
 - **`compact`:** done, and `index` reads archives (schema 0.4).
   - Archives are found through the monthly manifests.
   - Each archive's checkpoint carries its SHA-256, so a fully read archive is
