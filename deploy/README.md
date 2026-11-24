@@ -40,7 +40,7 @@ An install lives in one folder:
       kick\<slug>\         each Kick channel's journal, laid out the same
     index.sqlite           the searchable index; can be rebuilt from the journal
   logs\                    capture.log, index.log, compact.log, supervisor.log,
-                           sync.log
+                           sync.log, migrate.log, kick-capture.log
   nodes, mesh.env          the mesh this node is in, if any (mesh.env holds
                            its token)
   peers\                   other hosts to sync from (each holds a token)
@@ -143,6 +143,17 @@ window. The keys are grouped:
 - `8` kick-capture's log.
 
 In a narrow window the keys take two lines.
+
+Each log line has its time and a level, `INFO`, `WARN` (something's wrong,
+but work goes on) or `ERROR` (something failed or stopped):
+
+```text
+2026-11-24 09:41:20.512Z WARN  waiting for compact.lock: another supervisor has it
+```
+
+The programs say their own lines' levels, and the supervisor keeps them; a
+line that doesn't say is `INFO`. `--watch` dims the times, and draws warnings
+in yellow and errors in red.
 
 ## Running it in a shell instead
 
