@@ -10,7 +10,8 @@
 //! carries on until someone looks.
 //!
 //! Each Kick channel's capture gets a bridge of its own the same way,
-//! appending to `kick-capture.log`.
+//! appending to the channel's log (see
+//! [`kick_capture_log`](crate::supervise::kick_capture_log)).
 
 use {
   super::exe,

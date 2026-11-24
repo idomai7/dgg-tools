@@ -48,6 +48,7 @@ use {
   crate::{
     paths::{Paths, user_root},
     peer, processes,
+    supervise::kick_capture_log,
   },
   ::common::{
     fs::{MissingOk, same},
@@ -419,11 +420,11 @@ pub fn install(options: &Options) -> io::Result<Done> {
     bridge::start(&build, &paths.data, &paths.logs.join(DGG_CAPTURE_LOG))?;
   // A bridge per Kick channel, by its slug.
   let mut kick_bridges = Vec::new();
-  let kick_log = paths.logs.join("kick-capture.log");
   for channel in &kick_channels {
     let slug = &channel.slug;
+    let log = paths.logs.join(format!("{}.log", kick_capture_log(slug)));
     let started =
-      bridge::start_kick(&build, &paths.data, &kick_list, slug, &kick_log);
+      bridge::start_kick(&build, &paths.data, &kick_list, slug, &log);
     match started {
       Ok(child) => kick_bridges.push((slug.clone(), child)),
       Err(e) => problems.push(format!("{slug}: no Kick bridge: {e}")),
@@ -456,8 +457,9 @@ pub fn install(options: &Options) -> io::Result<Done> {
     let _ = child.wait();
     problems.push(format!(
       "{slug}: a Kick capture from the new build wasn't healthy within {}s \
-       (see kick-capture.log): it may miss a few seconds",
-      options.healthy_within.as_secs()
+       (see {}.log): it may miss a few seconds",
+      options.healthy_within.as_secs(),
+      kick_capture_log(&slug)
     ));
   }
   let mut kick_bridges = healthy;
@@ -548,8 +550,9 @@ pub fn install(options: &Options) -> io::Result<Done> {
     if healthy.is_none() {
       problems.push(format!(
         "{slug}: the new install's Kick capture wasn't healthy within {}s; \
-         see supervisor.log and kick-capture.log",
-        options.healthy_within.as_secs()
+         see supervisor.log and {}.log",
+        options.healthy_within.as_secs(),
+        kick_capture_log(slug)
       ));
     }
     kick.push((slug.clone(), healthy));
@@ -559,8 +562,9 @@ pub fn install(options: &Options) -> io::Result<Done> {
     if !bridge::wait_gone(child, options.handoff_within) {
       problems.push(format!(
         "{slug}: the Kick bridge didn't hand off within {}s, and was \
-         stopped; see kick-capture.log",
-        options.handoff_within.as_secs()
+         stopped; see {}.log",
+        options.handoff_within.as_secs(),
+        kick_capture_log(slug)
       ));
     }
   }

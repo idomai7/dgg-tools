@@ -35,7 +35,8 @@
 //!   ones are starting alongside) before they're stopped.
 //!
 //! Each program's stdout and stderr go, line by line, to `<name>.log` in the
-//! logs directory; the supervisor's own lines to `supervisor.log`. Restarts
+//! logs directory, each Kick channel's capture to its own (see
+//! [`kick_capture_log`]); the supervisor's own lines to `supervisor.log`. Restarts
 //! wait `first`, doubling up to `max`, back to `first` once a run has lasted
 //! `reset_after`.
 
@@ -237,10 +238,6 @@ pub fn run(config: &Config, stop: &Stop) -> io::Result<Exit> {
     Some(_) => Some(open("sync")?),
     None => None,
   };
-  let kick_log = match &config.kick_channels {
-    Some(_) => Some(open("kick-capture")?),
-    None => None,
-  };
   // What to serve with, read once: a change takes effect at the next start.
   let serving = match config.peers.as_deref().map(peer::read_config) {
     Some(Ok(Some(found))) => found.serve.map(|serve| (serve, found.mesh)),
@@ -288,9 +285,9 @@ pub fn run(config: &Config, stop: &Stop) -> io::Result<Exit> {
   let (context, programs, sync_log, serve_log, supervisor) =
     (&context, &programs, &sync_log, &serve_log, &supervisor);
   thread::scope(|scope| {
-    if let (Some(list), Some(kick_log)) = (&config.kick_channels, &kick_log) {
+    if let Some(list) = &config.kick_channels {
       scope.spawn(|| {
-        capture_kick(config, list, kick_log, &kick_running, &kick_context);
+        capture_kick(config, list, &kick_running, &kick_context);
       });
     }
     let [capture_log, migrate_log, index_log, compact_log] = &logs;
@@ -489,6 +486,12 @@ pub fn run(config: &Config, stop: &Stop) -> io::Result<Exit> {
   Ok(exit)
 }
 
+/// The name of the log Kick channel `slug`'s capture writes to, bridges
+/// too: `kick-capture.<slug>`, as slugs hold no dots.
+pub fn kick_capture_log(slug: &str) -> String {
+  format!("kick-capture.{slug}")
+}
+
 /// Runs a `kick-capture` for each channel in `list`, each on its own, and
 /// restarted after it fails, reading the list every `kick_check_every` to
 /// start the added; until stopped, with `running` counting those running.
@@ -497,7 +500,6 @@ pub fn run(config: &Config, stop: &Stop) -> io::Result<Exit> {
 fn capture_kick(
   config: &Config,
   list: &Path,
-  log: &SharedLog,
   running: &AtomicUsize,
   context: &Context,
 ) {
@@ -524,6 +526,18 @@ fn capture_kick(
             if !started.insert(slug.clone()) {
               continue;
             }
+            let path =
+              config.logs.join(format!("{}.log", kick_capture_log(slug)));
+            let log = match Log::open(path, config.log_size, config.log_keep) {
+              Ok(log) => Arc::new(Mutex::new(log)),
+              Err(e) => {
+                let said = format!("kick-capture {slug}: no log: {e}");
+                log_line(context.supervisor, Level::Error, &said);
+                // Tried again at the next look.
+                started.remove(slug);
+                continue;
+              }
+            };
             let program = kick_capture(config, list, slug);
             let (ended, slug) = (&ended, slug.clone());
             scope.spawn(move || {
@@ -532,7 +546,7 @@ fn capture_kick(
               let clean = keep_running(
                 &program,
                 &name,
-                log,
+                &log,
                 &config.backoff,
                 true,
                 context,

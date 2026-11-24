@@ -480,7 +480,7 @@ fn captures_kick_given_channels() {
   let list = dir.path().join("kick-channels");
   let said =
     format!("kick-capture --channels {} --channel one", list.display());
-  assert!(log(&dir, "kick-capture").contains(&said));
+  assert!(log(&dir, "kick-capture.one").contains(&said));
   // Given a while to hand off too, then stopped.
   let supervisor = log(&dir, "supervisor");
   assert!(
@@ -558,9 +558,11 @@ two 4 3
     });
     assert_eq!(run(&config, &Stop::new()).unwrap(), Exit::HandedOff);
   });
-  let kick = log(&dir, "kick-capture");
+  // Each to its own log.
   for slug in ["one", "two"] {
+    let kick = log(&dir, &format!("kick-capture.{slug}"));
     assert!(kick.contains(&format!("--channel {slug}")), "{kick}");
+    assert_eq!(kick.matches("--channel ").count(), 1, "{kick}");
   }
   let supervisor = log(&dir, "supervisor");
   for slug in ["one", "two"] {

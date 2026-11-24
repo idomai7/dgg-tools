@@ -46,7 +46,8 @@ An install lives in one folder:
                            journal
     index-kick.sqlite      Kick's, likewise
   logs\                    dgg-capture.log, index.log, compact.log, supervisor.log,
-                           sync.log, migrate.log, kick-capture.log
+                           sync.log, migrate.log, and a
+                           kick-capture.<slug>.log for each Kick channel
   install.env.json         the install's config, secrets included: the mesh
                            this node is in, other hosts to sync from, the
                            mesh's CA (`dgg-logger config` shows it without
@@ -106,8 +107,8 @@ marked `(bridge)`),
 the old install hands over to it and stops, and then the new install starts
 and takes over from the bridge. Old builds are pruned, keeping three.
 
-Each Kick channel's capture is bridged the same way, all the bridges'
-lines in `kick-capture.log`, each naming its channel. If one isn't
+Each Kick channel's capture is bridged the same way, each bridge's lines
+in its channel's `kick-capture.<slug>.log`. If one isn't
 healthy in time, `install` warns that that channel may miss a few
 seconds, and carries on: dgg's capture comes first. It waits for the new
 install's capture of each channel too, warning of any not healthy in
