@@ -531,8 +531,10 @@ Planned 2026-11-25. Each step a pause for review.
    (from the `control/` its status is in). Kick's frames counted as
    dgg's. Kick's channels' journal lines join the journal box, and the
    kick box goes. The programs box names each `kick-capture`'s channel.
-   Done 2026-11-25 (`4b050f7`): dgg's URL is its live files' last `open`,
-   so `?` until a connection has opened since the last compaction.
+   Done 2026-11-25 (`4b050f7`). Each capture's status now says what it
+   listens to (a `listening` entry, `d8a5eeb`), which status shows; for
+   a capture from before, the live files' last `open`. dgg's live files
+   name their endpoint in the header too, as Kick's do (`641425f`).
 
 ## Status
 - **`logger-journal`:** live files, plus a writer and a reader. The `.zst`
