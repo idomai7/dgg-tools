@@ -37,8 +37,9 @@ pub fn parse(json: &str) -> Result<Channel, ::serde_json::Error> {
 }
 
 /// Asks the lookup for `slug` with `http`, anonymously, as `user_agent`,
-/// which names the tool (such as `ledgerline/0.1.0`), waiting at most 20
-/// seconds. A failure says why, with the start of what was answered.
+/// which names the tool (such as `ledgerline/0.1.0+a3c579a14414`), waiting
+/// at most 20 seconds. A failure says why, with the start of what was
+/// answered.
 #[cfg(feature = "lookup")]
 pub async fn look_up(
   http: &::reqwest::Client,
