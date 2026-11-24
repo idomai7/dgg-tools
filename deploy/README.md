@@ -12,17 +12,19 @@ directory:
 | `dgg-backfill` | Fetches missed dgg messages from public logs | after an outage |
 | `sync`, `serve` | Copy the journal between hosts | when moving hosts, or every 15 minutes from a peer |
 | `kick-ids` | Records Kick channels' ids in `kick-channels`, for `kick-capture` | when adding a channel |
-| `kick-capture` | Connects to Kick chat, each channel in `kick-channels`, and writes everything to the journal | all the time, once `kick-channels` has channels |
+| `kick-capture` | Connects to one Kick channel's chat, from `kick-channels`, and writes everything to the journal | all the time, one for each channel in `kick-channels` |
 | `install`, `uninstall`, `status`, `config`, `supervise` | Run, install and inspect the rest | when you want |
 
 `dgg-supervisor` keeps capture and index running (and serve, given its
 config), restarts them after failures, and runs compact (and sync, given a
 peer); it's `dgg-logger
 supervise` without a window, for the logon task and the service. It runs
-`kick-capture` too once `kick-channels` has channels (it looks every
-minute until then). Once running, it reads the list again every minute:
-channels added are captured, and channels removed stop. In Task Manager, both show as "dgg-tools: ..."; the Details tab's Command line
-column tells the commands apart.
+a `kick-capture` for each channel in `kick-channels` too, each on its own,
+so one failing leaves the others. It reads the list every minute: a
+channel added is captured from then on, and one removed stops; a
+channel's capture also notices if its ids change. In Task Manager, both
+show as "dgg-tools: ..."; the Details tab's Command line column tells the
+commands apart.
 
 The commands that work on the data (`dgg-capture` to `serve`) take `--data`,
 which defaults to the installed logger's.
@@ -104,10 +106,11 @@ marked `(bridge)`),
 the old install hands over to it and stops, and then the new install starts
 and takes over from the bridge. Old builds are pruned, keeping three.
 
-With Kick channels, Kick's capture is bridged the same way, its bridge's
-lines in `kick-capture.log`. If that bridge isn't healthy in time,
-`install` warns that Kick may miss a few seconds, and carries on: dgg's
-capture comes first. `kick-channels` moves with the install's folder.
+Each Kick channel's capture is bridged the same way, all the bridges'
+lines in `kick-capture.log`, each naming its channel. If one isn't
+healthy in time, `install` warns that that channel may miss a few
+seconds, and carries on: dgg's capture comes first. `kick-channels` moves
+with the install's folder.
 
 Running `install` with the other kind (with or without `--machine`)
 switches to it the same way, moving the data and logs to the new folder.
