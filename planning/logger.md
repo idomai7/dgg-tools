@@ -85,10 +85,13 @@ The logger, codenamed ledgerline: `logger-journal` and `logger`, run as
       the code for them, and the migration itself, are gone. A file of an
       older version is refused. `migrate` is kept as a skeleton: the
       supervisor still runs it at start, under the index, compact and sync
-      locks, and starts those only once it succeeds. For now it only checks
-      the index is at schema 0.6; the next format change that needs a
-      migration fills it in. Its log is `migrate.log`, key `6` in
-      `status --watch`.
+      locks, and starts those only once it succeeds. For now it only checks,
+      and logs what an upgrade touches: first the build, then each kind of
+      file in each journal root with its version (a file this build can't
+      read gets a line of its own, and is left as it was), the index's
+      schema, which must be 0.6, and each capture running, with its build.
+      The next format change that needs a migration fills it in. Its log is
+      `migrate.log`, key `6` in `status --watch`.
 
 ## Design
 - **Journal layout:**
