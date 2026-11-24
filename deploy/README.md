@@ -6,7 +6,7 @@ directory:
 | Command | Job | Runs |
 |---|---|---|
 | `capture` | Connects to dgg chat and writes everything to the journal | all the time |
-| `index` | Reads the journal into `index.sqlite`, and Kick's into `index-kick.sqlite` | all the time, with `--follow`: once 500 records are waiting (at most once a minute), or every 10 minutes |
+| `index` | Reads dgg's journal into `index-dgg.sqlite`, and Kick's into `index-kick.sqlite` | all the time, with `--follow`: once 500 records are waiting (at most once a minute), or every 10 minutes |
 | `compact` | Packs each finished day into one compressed archive, Kick's channels' too | every hour |
 | `gaps` | Lists when no capture was connected | when you want |
 | `backfill` | Fetches missed messages from public logs | after an outage |
@@ -33,12 +33,14 @@ An install lives in one folder:
   bin\<time>-<version>+<commit>\  one build per install; older ones are pruned
   data\
     journal\
-      live\                today's raw capture, one file per capture per day
-      archive\             finished days, compressed
-      backfill\            messages fetched from other logs, kept apart
-      control\             each running capture's status
+      dgg\                 dgg's journal:
+        live\              today's raw capture, one file per capture per day
+        archive\           finished days, compressed
+        backfill\          messages fetched from other logs, kept apart
+        control\           each running capture's status
       kick\<slug>\         each Kick channel's journal, laid out the same
-    index.sqlite           the searchable index; can be rebuilt from the journal
+    index-dgg.sqlite       dgg's searchable index; can be rebuilt from the
+                           journal
     index-kick.sqlite      Kick's, likewise
   logs\                    capture.log, index.log, compact.log, supervisor.log,
                            sync.log, migrate.log, kick-capture.log
@@ -110,6 +112,14 @@ Anything involving a machine install needs an administrator prompt.
 
 If anything goes wrong, `install` says what, and the capture that was
 running (or the bridge) keeps running.
+
+The first install of a build with `journal\dgg\` moves dgg's journal
+there, and `index.sqlite` to `index-dgg.sqlite`, as its supervisor starts
+(`migrate.log` says what moved). Capture keeps running throughout: the
+bridge also writes its status where the old capture looks, so the old one
+hands off to it as before. Should a capture from before still be writing
+then, its files stay where they are, and are read there until compacted
+the next day; the next start moves the rest.
 
 ## Status
 
@@ -184,7 +194,7 @@ target\release\dgg-logger backfill --source linkers
 
 Short gaps are often already covered by the chat history dgg sends on every
 reconnect; `gaps` says which ones were. Backfilled messages go in
-`journal\backfill\`, separate from what was captured, and never replace a
+`journal\dgg\backfill\`, separate from what was captured, and never replace a
 captured message. `--source rustlesearch` is millisecond-accurate but
 limited to 200 requests a day.
 
@@ -270,8 +280,12 @@ target\release\dgg-logger serve --listen 0.0.0.0:8788
   against their SHA-256, and doesn't follow redirects.
 - `serve` handles 8 requests at once and turns away the rest.
 - A third token, `--query-token` (`LOGGER_QUERY_TOKEN`), reads only Kick's
-  history and live chat (`/kick/...`), for kick-mod. It must differ from
-  the other two.
+  history and live chat (`/kick/channels/...`), for kick-mod. It must
+  differ from the other two.
+- Each service's routes start with its name: `/dgg/manifest` and
+  `/dgg/files/...` for sync, `/dgg/control/...` for capture handoff, and
+  likewise `/kick/manifest` and `/kick/files/...`. A host without a
+  service answers 404, which sync takes as nothing to pull.
 
 ## Keeping the PC awake
 
