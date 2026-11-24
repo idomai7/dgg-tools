@@ -85,7 +85,7 @@ pub async fn run(
   };
   let url = chat.url.clone();
   let control = control::dir(&journal_root);
-  let mut writer = Writer::new(journal_root, instance.clone());
+  let mut writer = Writer::capture(journal_root, instance.clone())?;
   let mut client = Client::spawn(chat);
   let mut sync = ::tokio::time::interval(SYNC_INTERVAL);
   let mut heartbeat = ::tokio::time::interval(handoff.interval);

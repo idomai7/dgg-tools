@@ -366,7 +366,13 @@ impl Chat {
       });
       let writer = if journalable(slug) {
         let root = channel_root(&journal.root, slug);
-        Some(Writer::new(root, &journal.instance, slug))
+        match Writer::capture(root, &journal.instance, slug) {
+          Ok(writer) => Some(writer),
+          Err(e) => {
+            eprintln!("{slug}: not journaled, as it can't be locked: {e}");
+            None
+          }
+        }
       } else {
         eprintln!("{slug}: not journaled, as it can't be a directory's name");
         None

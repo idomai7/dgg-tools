@@ -117,7 +117,7 @@ pub async fn run(
         channels: vec![format!("chatrooms.{}.v2", channel.chatroom_id)],
         ..realtime.clone()
       },
-      writer: Writer::new(root, &instance, &channel.slug),
+      writer: Writer::capture(root, &instance, &channel.slug)?,
       filler: web.clone().map(|web| (web, channel.channel_id)),
       restart_after,
       subscribed: since,
