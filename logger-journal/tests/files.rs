@@ -233,6 +233,29 @@ fn records_may_span_lines() {
 }
 
 #[test]
+fn records_are_counted_without_decoding() {
+  let root = TempDir::new("logger-journal-files");
+  let mut writer = Writer::new(root.path(), "a");
+  for n in 0..3 {
+    write(&mut writer, &frame_record(0, &format!("MSG {n}")));
+  }
+  drop(writer);
+  let path = &live_files(root.path()).unwrap()[0];
+  let mut file = OpenOptions::new().append(true).open(path).unwrap();
+  // Not a record this build could decode, but a record all the same; and a
+  // partial one, which isn't counted until it's complete.
+  file.write_all(b"nonsense\x1e\n0 a 1 frame MSG").unwrap();
+
+  assert_eq!(Reader::open(path, 0).unwrap().count_records(10).unwrap(), 4);
+  assert_eq!(Reader::open(path, 0).unwrap().count_records(2).unwrap(), 2);
+  let mut reader = Reader::open(path, 0).unwrap();
+  reader.next();
+  let second = reader.offset();
+  let rest = Reader::open(path, second).unwrap();
+  assert_eq!(rest.count_records(10).unwrap(), 3);
+}
+
+#[test]
 fn older_files_are_never_appended_to() {
   let root = TempDir::new("logger-journal-files");
   let day = live_file(root.path(), "1970-01-01", "a");

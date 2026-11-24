@@ -121,13 +121,24 @@ impl Reader {
   pub fn offset(&self) -> u64 {
     self.offset
   }
-}
 
-impl Iterator for Reader {
-  type Item = Result<Entry, ReadError>;
+  /// Counts the complete records left, up to `at_most`, without decoding
+  /// them.
+  pub fn count_records(mut self, at_most: u64) -> io::Result<u64> {
+    let mut count = 0;
+    while count < at_most {
+      match self.next_record() {
+        Some(Ok(_)) => count += 1,
+        Some(Err(e)) => return Err(e),
+        None => break,
+      }
+    }
+    Ok(count)
+  }
 
-  fn next(&mut self) -> Option<Self::Item> {
-    let header = self.header.as_ref()?;
+  /// Reads the next complete, non-empty record into `record`, without its
+  /// end, and returns its offset.
+  fn next_record(&mut self) -> Option<io::Result<u64>> {
     let end = END;
     while !self.done {
       self.record.clear();
@@ -140,7 +151,7 @@ impl Iterator for Reader {
           Ok(_) => break false,
           Err(e) => {
             self.done = true;
-            return Some(Err(ReadError::Io(e)));
+            return Some(Err(e));
           }
         }
       };
@@ -151,19 +162,32 @@ impl Iterator for Reader {
       let n = self.record.len();
       let offset = self.offset;
       self.offset += n as u64;
-      let text = &self.record[..n - end.len()];
-      if text.is_empty() {
-        continue;
+      self.record.truncate(n - end.len());
+      if !self.record.is_empty() {
+        return Some(Ok(offset));
       }
-      return Some(match Record::decode(header, text) {
-        Ok(record) => Ok(Entry {
-          offset,
-          next: self.offset,
-          record,
-        }),
-        Err(error) => Err(ReadError::Record { offset, error }),
-      });
     }
     None
+  }
+}
+
+impl Iterator for Reader {
+  type Item = Result<Entry, ReadError>;
+
+  fn next(&mut self) -> Option<Self::Item> {
+    self.header.as_ref()?;
+    let offset = match self.next_record()? {
+      Ok(offset) => offset,
+      Err(e) => return Some(Err(ReadError::Io(e))),
+    };
+    let header = self.header.as_ref()?;
+    Some(match Record::decode(header, &self.record) {
+      Ok(record) => Ok(Entry {
+        offset,
+        next: self.offset,
+        record,
+      }),
+      Err(error) => Err(ReadError::Record { offset, error }),
+    })
   }
 }
