@@ -5,6 +5,9 @@
 //! know (`#[serde(deny_unknown_fields)]`). Secrets in it are [`Secret`]s,
 //! which never print. Errors name the field that's missing or unknown, or
 //! where a value of the wrong type is, but never quote a value.
+//!
+//! Since configs are written by hand, they may have comments, `// ...` to
+//! the end of the line and `/* ... */`, outside strings.
 
 use {
   ::serde::{Deserialize, Deserializer, Serialize, Serializer},
@@ -92,9 +95,57 @@ fn read_all(from: impl Read) -> io::Result<Zeroizing<String>> {
   }
 }
 
-/// A `T` from `text`.
+/// A `T` from `text`, which may have comments.
 pub fn parse<T: for<'de> Deserialize<'de>>(text: &str) -> Result<T, String> {
-  ::serde_json::from_str(text).map_err(|e| describe(&e))
+  ::serde_json::from_str(&without_comments(text)).map_err(|e| describe(&e))
+}
+
+/// `text` with its comments as spaces, a byte for a byte, and their line
+/// breaks kept, so errors' lines and columns are still `text`'s.
+fn without_comments(text: &str) -> Zeroizing<String> {
+  #[derive(Clone, Copy, PartialEq)]
+  enum In {
+    Json,
+    String,
+    Escape,
+    Line,
+    Block,
+  }
+  let blank = |out: &mut String, c: char| match c {
+    '\n' | '\r' => out.push(c),
+    c => out.extend(::std::iter::repeat_n(' ', c.len_utf8())),
+  };
+  let mut out = Zeroizing::new(String::with_capacity(text.len()));
+  let mut chars = text.chars().peekable();
+  let mut at = In::Json;
+  while let Some(c) = chars.next() {
+    match (at, c, chars.peek()) {
+      (In::Json, '/', Some('/')) => at = In::Line,
+      (In::Json, '/', Some('*')) => {
+        chars.next();
+        out.push_str("  ");
+        at = In::Block;
+        continue;
+      }
+      (In::Json, '"', _) => at = In::String,
+      (In::String, '\\', _) => at = In::Escape,
+      (In::String, '"', _) => at = In::Json,
+      (In::Escape, ..) => at = In::String,
+      (In::Line, '\n', _) => at = In::Json,
+      (In::Block, '*', Some('/')) => {
+        chars.next();
+        out.push_str("  ");
+        at = In::Json;
+        continue;
+      }
+      _ => {}
+    }
+    match at {
+      In::Line | In::Block => blank(&mut out, c),
+      _ => out.push(c),
+    }
+  }
+  out
 }
 
 /// What's wrong, without the value: serde's messages about a value's type

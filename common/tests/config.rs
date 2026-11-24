@@ -81,3 +81,29 @@ fn refuses_a_file_too_large() {
   let error = read::<Config>(Source::File(&path)).unwrap_err();
   assert!(error.contains("over"), "{error}");
 }
+
+#[test]
+fn comments_are_allowed() {
+  let config: Config = parse(&format!(
+    r#"{{
+      // Where it's reached: "quotes" and /* in a comment */ are fine.
+      "url": "https://host/a//b/*c*/", /* the token: */ "token": "{TOKEN}"
+      /* over
+         lines, ünïcode */
+    }}"#
+  ))
+  .unwrap();
+  assert_eq!(config.url, "https://host/a//b/*c*/");
+  assert_eq!(config.token.expose(), TOKEN);
+  // An escaped quote doesn't end the string.
+  let config: Config =
+    parse("{\"url\": \"a\\\"// b\", \"token\": \"t\" // the end\n}").unwrap();
+  assert_eq!(config.url, "a\"// b");
+  // Lines and columns are still the text's.
+  let wrong = parse::<Config>("/* ü */ {\n  // a note\n  \"url\": 1}");
+  let wrong = wrong.unwrap_err();
+  assert_eq!(
+    wrong, "a value of the wrong type at line 3 column 10",
+    "{wrong}"
+  );
+}
