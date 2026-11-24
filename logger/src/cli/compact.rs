@@ -1,18 +1,22 @@
-//! Compact closed days of the journal, and of the backfill journal, into
-//! zstd archives.
+//! Compact closed days of the journal, the backfill journal and each Kick
+//! channel's journal into zstd archives.
 
 use {
-  crate::compact::{DEFAULT_LEVEL, closed_days, compact_day},
+  crate::{
+    compact::{DEFAULT_LEVEL, closed_days, compact_day},
+    kick::channels,
+  },
   ::clap::Args,
   ::common::time::now_ms,
   ::common::{error, info},
-  ::logger_journal::layout::backfill_root,
+  ::logger_journal::layout::{backfill_root, channel_root, kick_root},
   ::std::{path::Path, process::ExitCode, time::Duration},
 };
 
 /// Compact each closed UTC day's live journal files into one zstd archive,
 /// verified before the live files are deleted; then the same for the
-/// backfill journal, leaving the files of backfill runs still going.
+/// backfill journal, leaving the files of backfill runs still going, and
+/// for each Kick channel's.
 #[derive(Args)]
 pub struct Compact {
   /// Hours after a day ends before it counts as closed.
@@ -30,12 +34,27 @@ pub struct Compact {
 }
 
 impl Compact {
-  /// Compacts `<data>/journal`, then its backfill journal.
+  /// Compacts `<data>/journal`, then its backfill journal, then each Kick
+  /// channel's.
   pub fn run(self, data: &Path) -> ExitCode {
     let journal_root = data.join("journal");
     let backfill = backfill_root(&journal_root);
-    let ok =
+    let mut ok =
       self.compact(&journal_root, "") & self.compact(&backfill, "backfill ");
+    // Every channel with a journal, even one dropped from the list.
+    let kick = kick_root(&journal_root);
+    match channels::journaled(&journal_root) {
+      Ok(slugs) => {
+        for slug in slugs {
+          let root = channel_root(&kick, &slug);
+          ok &= self.compact(&root, &format!("kick {slug} "));
+        }
+      }
+      Err(e) => {
+        error!("compact kick failed: {e}");
+        ok = false;
+      }
+    }
     if ok {
       ExitCode::SUCCESS
     } else {

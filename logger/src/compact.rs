@@ -12,6 +12,14 @@
 //! Inputs must be in the newest version, `journal dgg.0.3`, as the archive
 //! is written: its header and records ending at RS LF.
 //!
+//! Each Kick channel's journal is compacted the same way, as a journal root
+//! of its own: its records are self-contained (each `open` names its
+//! endpoint), so they merge as dgg's do. Its inputs may be `journal
+//! kick.0.0` or `0.1`, which only added a kind, and the archive is written
+//! as `0.1`. An archive's header keeps the informational fields every input
+//! shares: a Kick channel's `channel`, and its `endpoint` if there was only
+//! one that day.
+//!
 //! The archive is written to a temporary file, fsynced, read back and
 //! checked against what was meant to be written, and only then renamed
 //! into place and recorded in its month's manifest. Live files are deleted
@@ -33,7 +41,7 @@ use {
   ::logger_journal::{
     archive::{self, Archive, valid_day},
     layout::{EXTENSION, archive_file, live_day_dir, live_dir},
-    record::{END, Header, Variant, split, v0},
+    record::{END, Header, Variant, kick, split, v0},
     writer::writing,
   },
   ::sha2::{Digest, Sha256},
@@ -98,6 +106,7 @@ pub fn closed_days(
 /// One input's records, without their ends, in the newest version, and how
 /// much of it was read.
 struct Input {
+  header: Header,
   records: Vec<Vec<u8>>,
   torn: bool,
   /// For live files: the path and how many bytes were read.
@@ -111,18 +120,23 @@ fn invalid(path: &Path, why: &str) -> io::Error {
   )
 }
 
-/// Splits a journal's bytes into its records, and whether it has a torn
-/// tail.
-fn parse(path: &Path, bytes: &[u8]) -> io::Result<(Vec<Vec<u8>>, bool)> {
+/// Splits a journal's bytes into its header and records, and whether it has
+/// a torn tail.
+fn parse(
+  path: &Path,
+  bytes: &[u8],
+) -> io::Result<(Header, Vec<Vec<u8>>, bool)> {
   let Some(header_end) = bytes.iter().position(|&b| b == b'\n') else {
     return Err(invalid(path, "no complete header"));
   };
   let header = Header::parse(&bytes[..header_end])
     .ok_or_else(|| invalid(path, "not a journal"))?;
-  if header.variant != Variant::Dgg {
-    return Err(invalid(path, "not dgg's journal"));
-  }
-  if header.version != v0::VERSION {
+  let current = match header.variant {
+    Variant::Dgg => header.version == v0::VERSION,
+    // Every readable minor of Kick's major 0 only added kinds.
+    Variant::Kick => header.readable(),
+  };
+  if !current {
     return Err(invalid(path, "journal of an older version"));
   }
   let (records, tail) = split(&bytes[header_end + 1..]);
@@ -131,7 +145,35 @@ fn parse(path: &Path, bytes: &[u8]) -> io::Result<(Vec<Vec<u8>>, bool)> {
     .filter(|record| !record.is_empty())
     .map(<[u8]>::to_vec)
     .collect();
-  Ok((records, !tail.is_empty()))
+  Ok((header, records, !tail.is_empty()))
+}
+
+/// The header an archive of `inputs` is written with: their variant, in its
+/// newest version, with the informational fields they all share. Fails if
+/// they're of different variants.
+fn archive_header(inputs: &[Input]) -> io::Result<Header> {
+  let first = &inputs[0].header;
+  if inputs
+    .iter()
+    .any(|input| input.header.variant != first.variant)
+  {
+    let why = "the day's files are of different variants";
+    return Err(io::Error::new(io::ErrorKind::InvalidData, why));
+  }
+  let version = match first.variant {
+    Variant::Dgg => v0::VERSION,
+    Variant::Kick => kick::v0::VERSION,
+  };
+  let mut header = Header::new(first.variant, version);
+  header.info = first
+    .info
+    .iter()
+    .filter(|field| {
+      inputs.iter().all(|input| input.header.info.contains(field))
+    })
+    .cloned()
+    .collect();
+  Ok(header)
 }
 
 /// A record's receive time, the first field; unreadable ones sort last.
@@ -180,8 +222,9 @@ pub fn compact_day(
   let remerged = archive_path.exists();
   if remerged {
     let bytes = ::zstd::decode_all(File::open(&archive_path)?)?;
-    let (records, torn) = parse(&archive_path, &bytes)?;
+    let (header, records, torn) = parse(&archive_path, &bytes)?;
     inputs.push(Input {
+      header,
       records,
       torn,
       live: None,
@@ -213,8 +256,9 @@ pub fn compact_day(
   live.sort();
   for path in live {
     let bytes = fs::read(&path)?;
-    let (records, torn) = parse(&path, &bytes)?;
+    let (header, records, torn) = parse(&path, &bytes)?;
     inputs.push(Input {
+      header,
       records,
       torn,
       live: Some((path, bytes.len() as u64)),
@@ -248,7 +292,7 @@ pub fn compact_day(
     *left = left.saturating_sub(1);
     kept
   });
-  let header = Header::new(Variant::Dgg, v0::VERSION);
+  let header = archive_header(&inputs)?;
   let mut journal = header.text().into_bytes();
   for record in &records {
     journal.extend_from_slice(record);
@@ -278,7 +322,7 @@ pub fn compact_day(
     records: records.len() as u64,
     sha256: hex(&Sha256::digest(&compressed)),
   };
-  archive::record(journal_root, Variant::Dgg, &archive)?;
+  archive::record(journal_root, header.variant, &archive)?;
 
   // Only now delete the live files, unless they grew meanwhile.
   let (mut files, mut grown) = (0, 0);

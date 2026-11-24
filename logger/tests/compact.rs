@@ -221,3 +221,92 @@ fn leaves_the_files_of_a_running_backfill() {
   assert_eq!(done.archive.records, 3);
   assert!(!dir.exists());
 }
+
+/// A Kick journal at `version` (`0.0` or `0.1`) of `records`, its header
+/// naming `endpoint` and channel `c`.
+fn kick_journal(version: &str, endpoint: &str, records: &[&str]) -> String {
+  let mut text =
+    format!("journal kick.{version} ; endpoint={endpoint} channel=c\u{1e}\n");
+  for record in records {
+    text += record;
+    text += "\u{1e}\n";
+  }
+  text
+}
+
+#[test]
+fn merges_a_kick_channels_day() {
+  let root = TempDir::new("logger-compact");
+  live(
+    &root,
+    "a",
+    &kick_journal(
+      "0.0",
+      "wss://one",
+      &["10 a 1 open wss://one", "30 a 1 frame {}"],
+    ),
+  );
+  live(
+    &root,
+    "a.2",
+    &kick_journal("0.1", "wss://two", &["20 a 2 open wss://two"]),
+  );
+
+  let done = compact_day(root.path(), DAY, 3).unwrap().unwrap();
+  assert_eq!((done.files, done.archive.records), (2, 3));
+  // In the newest version, keeping only what both headers say.
+  assert_eq!(
+    archived(&root),
+    "journal kick.0.1 ; channel=c\u{1e}\n\
+     10 a 1 open wss://one\u{1e}\n\
+     20 a 2 open wss://two\u{1e}\n\
+     30 a 1 frame {}\u{1e}\n"
+  );
+  let manifest = fs::read_to_string(archive::manifest_path(root.path(), DAY));
+  assert!(manifest.unwrap().starts_with("journal-archive kick.0.0"));
+  let reader = Reader::open(&archive_file(root.path(), DAY), 0).unwrap();
+  assert_eq!(reader.count(), 3);
+
+  // A day with one endpoint keeps it, merged into the existing archive.
+  live(
+    &root,
+    "b",
+    &kick_journal("0.1", "wss://one", &["40 b 1 open wss://one"]),
+  );
+  let done = compact_day(root.path(), DAY, 3).unwrap().unwrap();
+  assert!(done.remerged);
+  assert!(archived(&root).starts_with("journal kick.0.1 ; channel=c\u{1e}\n"));
+}
+
+#[test]
+fn refuses_a_day_of_mixed_variants() {
+  let root = TempDir::new("logger-compact");
+  live(&root, "a", &journal(&["10 a 1 frame MSG 1"]));
+  live(
+    &root,
+    "b",
+    &kick_journal("0.1", "wss://one", &["20 b 1 frame {}"]),
+  );
+  assert!(compact_day(root.path(), DAY, 3).is_err());
+  assert!(!archive_file(root.path(), DAY).exists());
+}
+
+#[test]
+fn keeps_a_single_endpoint() {
+  let root = TempDir::new("logger-compact");
+  live(
+    &root,
+    "a",
+    &kick_journal("0.1", "wss://one", &["10 a 1 frame {}"]),
+  );
+  live(
+    &root,
+    "b",
+    &kick_journal("0.1", "wss://one", &["20 b 1 frame {}"]),
+  );
+  compact_day(root.path(), DAY, 3).unwrap().unwrap();
+  assert!(
+    archived(&root)
+      .starts_with("journal kick.0.1 ; endpoint=wss://one channel=c\u{1e}\n")
+  );
+}

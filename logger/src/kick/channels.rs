@@ -13,7 +13,8 @@
 use {
   ::common::{atomic_file, fs::MissingOk},
   ::kick_api::channel,
-  ::std::{fs, path::Path},
+  ::logger_journal::layout::kick_root,
+  ::std::{fs, io, path::Path},
 };
 
 /// The channel list, in an install's root.
@@ -43,6 +44,26 @@ pub fn valid_slug(slug: &str) -> bool {
     && slug.bytes().all(|b| {
       b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_'
     })
+}
+
+/// The channels with journals under dgg's journal root `journal_root`
+/// (see [`kick_root`]), sorted: every directory there named by a
+/// [`valid_slug`], whether or not the list still has it.
+pub fn journaled(journal_root: &Path) -> io::Result<Vec<String>> {
+  let mut slugs = Vec::new();
+  let Some(entries) = fs::read_dir(kick_root(journal_root)).missing_ok()?
+  else {
+    return Ok(slugs);
+  };
+  for entry in entries {
+    let entry = entry?;
+    let slug = entry.file_name().to_string_lossy().into_owned();
+    if entry.file_type()?.is_dir() && valid_slug(&slug) {
+      slugs.push(slug);
+    }
+  }
+  slugs.sort();
+  Ok(slugs)
 }
 
 /// A list's channels, each slug once.
