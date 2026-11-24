@@ -110,7 +110,11 @@ fn exits_when_capture_hands_off() {
   let index = script(
     dir.path(),
     "index",
-    &[Step::Say("indexing"), Step::Say("WARN slow"), Step::Sleep(20)],
+    &[
+      Step::Say("indexing"),
+      Step::Say("WARN slow"),
+      Step::Sleep(20),
+    ],
   );
   let started = Instant::now();
   let exit = run(&config(&dir, capture, index), &Stop::new()).unwrap();
