@@ -23,8 +23,9 @@ use {
 /// and live chat for kick-mod.
 #[derive(Args)]
 pub struct Serve {
-  /// Address to listen on. Use 0.0.0.0 to accept other hosts, with
-  /// --tls-cert and --tls-key: without them, tokens aren't encrypted.
+  /// Address to listen on. Use 0.0.0.0 to accept other hosts, with TLS
+  /// (--tls-cert and --tls-key, or the config's `tls`): without it, tokens
+  /// aren't encrypted.
   #[arg(long, default_value = "127.0.0.1:8788")]
   listen: SocketAddr,
   /// This node's certificate, from `cert node`: serves HTTPS with it.
@@ -34,7 +35,9 @@ pub struct Serve {
   #[arg(long, requires = "tls_cert")]
   tls_key: Option<PathBuf>,
   /// Its config: its bearer tokens, `{"tokens": {"read": "...",
-  /// "control": "...", "query": "..."}}`, `control` and `query` optional.
+  /// "control": "...", "query": "..."}}`, `control` and `query` optional;
+  /// and optionally, in place of --tls-cert and --tls-key, `"tls":
+  /// {"cert": "<PEM>", "key": "<PEM>"}`.
   #[command(flatten)]
   config: ConfigFrom,
 }
@@ -44,6 +47,18 @@ pub struct Serve {
 #[serde(deny_unknown_fields)]
 pub struct Config {
   pub tokens: ConfigTokens,
+  #[serde(default)]
+  pub tls: Option<ConfigTls>,
+}
+
+/// What `serve` serves HTTPS with.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConfigTls {
+  /// This node's certificate (PEM), from `cert node`.
+  pub cert: String,
+  /// Its key (PEM).
+  pub key: Secret,
 }
 
 /// `serve`'s bearer tokens, each at least [`MIN_TOKEN`] characters, and no
@@ -69,6 +84,7 @@ impl Serve {
   async fn serve(self, data: &Path) -> ExitCode {
     let shape =
       r#"{"tokens": {"read": "...", "control": "...", "query": "..."}}"#;
+    let given = self.tls_cert.is_some();
     let config: Config = match self.config.require(shape) {
       Ok(config) => config,
       Err(e) => {
@@ -87,15 +103,25 @@ impl Serve {
       error!("{why} (a random {MIN_TOKEN}+ character string will do)");
       return ExitCode::FAILURE;
     }
-    let tls = match (&self.tls_cert, &self.tls_key) {
-      (Some(cert), Some(key)) => match tls(cert, key) {
-        Ok(tls) => Some(tls),
-        Err(e) => {
-          error!("{e}");
-          return ExitCode::FAILURE;
-        }
-      },
-      _ => None,
+    let tls = match (config.tls, &self.tls_cert, &self.tls_key) {
+      (Some(_), _, _) if given => {
+        Err("--tls-cert and --tls-key or the config's tls, not both".into())
+      }
+      (Some(tls), _, _) => {
+        let key = ::zeroize::Zeroizing::new(tls.key.expose().to_owned());
+        cert::server_config(&tls.cert, &key)
+          .map(Some)
+          .map_err(|e| format!("the config's tls: {e}"))
+      }
+      (None, Some(cert), Some(key)) => read_tls(cert, key).map(Some),
+      (None, _, _) => Ok(None),
+    };
+    let tls = match tls {
+      Ok(tls) => tls,
+      Err(e) => {
+        error!("{e}");
+        return ExitCode::FAILURE;
+      }
     };
     let pushes = tokens.control.is_some();
     let listener = match ::tokio::net::TcpListener::bind(self.listen).await {
@@ -108,7 +134,7 @@ impl Serve {
     if tls.is_none() && !self.listen.ip().is_loopback() {
       warn!(
         "serving plain HTTP to other hosts, so tokens travel in \
-         the clear; give --tls-cert and --tls-key"
+         the clear; give it TLS"
       );
     }
     info!(
@@ -135,8 +161,8 @@ impl Serve {
   }
 }
 
-/// The TLS config serving `cert` with `key`.
-fn tls(cert: &Path, key: &Path) -> Result<::rustls::ServerConfig, String> {
+/// The TLS config serving the certificate in `cert` with the key in `key`.
+fn read_tls(cert: &Path, key: &Path) -> Result<::rustls::ServerConfig, String> {
   let read = |path: &Path| {
     fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))
   };
