@@ -1,9 +1,9 @@
-//! The settings: `kick-mod.env.json`, edited by hand and never written, or
-//! the same JSON on stdin (see [`::common::config`]). It holds the app's
-//! secret and the logger's token, so it's kept out of git; `kick-mod
+//! The settings: `kick-mod.env.jsonc`, edited by hand and never written,
+//! or the same on stdin: JSONC (see [`::common::config`]). It holds the
+//! app's secret and the logger's token, so it's kept out of git; `kick-mod
 //! config` shows it without them.
 //!
-//! ```json
+//! ```jsonc
 //! {
 //!   "app": {"client_id": "...", "client_secret": "..."},
 //!   "server": {"listen": "127.0.0.1:8787"},
@@ -25,7 +25,7 @@ use {
   ::std::net::SocketAddr,
 };
 
-pub const DEFAULT_PATH: &str = "kick-mod.env.json";
+pub const DEFAULT_PATH: &str = "kick-mod.env.jsonc";
 
 /// Where the page is served unless `server` says otherwise.
 pub const DEFAULT_LISTEN: &str = "127.0.0.1:8787";

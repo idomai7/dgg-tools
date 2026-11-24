@@ -6,8 +6,9 @@
 //! which never print. Errors name the field that's missing or unknown, or
 //! where a value of the wrong type is, but never quote a value.
 //!
-//! Since configs are written by hand, they may have comments, `// ...` to
-//! the end of the line and `/* ... */`, outside strings.
+//! Since configs are written by hand, they're read as JSONC: they may have
+//! comments, `// ...` to the end of the line and `/* ... */`, outside
+//! strings, and a trailing comma after an object's or array's last value.
 
 use {
   ::serde::{Deserialize, Deserializer, Serialize, Serializer},
@@ -95,13 +96,62 @@ fn read_all(from: impl Read) -> io::Result<Zeroizing<String>> {
   }
 }
 
-/// A `T` from `text`, which may have comments.
+/// A `T` from `text`, JSONC.
 pub fn parse<T: for<'de> Deserialize<'de>>(text: &str) -> Result<T, String> {
-  ::serde_json::from_str(&without_comments(text)).map_err(|e| describe(&e))
+  ::serde_json::from_str(&as_json(text)).map_err(|e| describe(&e))
+}
+
+/// `text` as JSON: its comments and trailing commas as spaces, a byte for
+/// a byte, and comments' line breaks kept, so errors' lines and columns are
+/// still `text`'s.
+fn as_json(text: &str) -> Zeroizing<String> {
+  let mut json = without_comments(text);
+  let trailing = trailing_commas(&json);
+  for at in trailing {
+    json.replace_range(at..at + 1, " ");
+  }
+  json
+}
+
+/// Where the commas are in `json` (without comments) that follow a value
+/// and come right before a `}` or `]`. A comma that follows none, as in
+/// `[,]` or `[1,,]`, is left to be refused.
+fn trailing_commas(json: &str) -> Vec<usize> {
+  let bytes = json.as_bytes();
+  let mut found = Vec::new();
+  let mut in_string = false;
+  let mut escaped = false;
+  // The last byte outside a string that isn't whitespace.
+  let mut last = None;
+  for (at, &b) in bytes.iter().enumerate() {
+    if in_string {
+      match (escaped, b) {
+        (true, _) => escaped = false,
+        (false, b'\\') => escaped = true,
+        (false, b'"') => in_string = false,
+        _ => {}
+      }
+      continue;
+    }
+    match b {
+      b'"' => in_string = true,
+      b',' if !matches!(last, Some(b'[' | b'{' | b',') | None) => {
+        let next = bytes[at + 1..].iter().find(|b| !b.is_ascii_whitespace());
+        if matches!(next, Some(b'}' | b']')) {
+          found.push(at);
+        }
+      }
+      _ => {}
+    }
+    if !b.is_ascii_whitespace() {
+      last = Some(b);
+    }
+  }
+  found
 }
 
 /// `text` with its comments as spaces, a byte for a byte, and their line
-/// breaks kept, so errors' lines and columns are still `text`'s.
+/// breaks kept.
 fn without_comments(text: &str) -> Zeroizing<String> {
   #[derive(Clone, Copy, PartialEq)]
   enum In {

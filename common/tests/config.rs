@@ -107,3 +107,23 @@ fn comments_are_allowed() {
     "{wrong}"
   );
 }
+
+#[test]
+fn a_trailing_comma_is_allowed() {
+  let config: Config = parse(&format!(
+    r#"{{
+      "url": "a,}}", // a comma in a string isn't one
+      "token": "{TOKEN}", /* last */
+    }}"#
+  ))
+  .unwrap();
+  assert_eq!(config.url, "a,}");
+  let list: Vec<u32> = parse("[1, 2,\n]").unwrap();
+  assert_eq!(list, [1, 2]);
+  let nested: Vec<Vec<u32>> = parse("[[1,], [],]").unwrap();
+  assert_eq!(nested, [vec![1], vec![]]);
+  // Only after a value: these are still refused.
+  for wrong in ["[,]", "[1,,]", "{,}", "[1,,2]"] {
+    assert!(parse::<Vec<u32>>(wrong).is_err(), "{wrong}");
+  }
+}

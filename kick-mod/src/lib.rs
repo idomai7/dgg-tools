@@ -3,7 +3,7 @@
 //!
 //! - [`account`]: the moderator's Kick account, and signing in.
 //! - [`actions`]: what a moderator does from the page.
-//! - [`config`]: `kick-mod.env.json`, the settings and secrets, edited by
+//! - [`config`]: `kick-mod.env.jsonc`, the settings and secrets, edited by
 //!   hand.
 //! - [`channels`]: `data/kick-mod/channels.json`, the channels kick-mod
 //!   knows, which it writes too.
