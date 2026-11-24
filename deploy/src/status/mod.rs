@@ -135,6 +135,8 @@ pub struct Report {
   pub journal: Journal,
   /// The index's size and last write (unix ms).
   pub index: Option<(u64, i64)>,
+  /// Kick's index's, likewise.
+  pub kick_index: Option<(u64, i64)>,
   /// Free space on the data directory's disk.
   pub free: Option<u64>,
   pub sync: Option<Sync>,
@@ -239,9 +241,8 @@ impl Watcher {
       captures: self
         .count_frames(&journal_root, captures(&journal_root, now)?)?,
       journal: self.journal(&journal_root, now)?,
-      index: fs::metadata(paths.data.join("index.sqlite"))
-        .ok()
-        .and_then(|metadata| Some((metadata.len(), modified_ms(&metadata)?))),
+      index: size_and_write(&paths.data.join("index.sqlite")),
+      kick_index: size_and_write(&paths.data.join(::logger::kick::index::FILE)),
       free: free_space(&paths.data),
       sync: sync(paths),
       kick: kick(paths, &journal_root, now)?,
@@ -751,7 +752,15 @@ pub fn kick_lines(report: &Report) -> Vec<String> {
   out
 }
 
-/// The journal and index, one line each.
+/// The size and last write (unix ms) of the file at `path`, if there's
+/// one.
+fn size_and_write(path: &Path) -> Option<(u64, i64)> {
+  let metadata = fs::metadata(path).ok()?;
+  Some((metadata.len(), modified_ms(&metadata)?))
+}
+
+/// The journal and indexes, one line each; Kick's index only if there's
+/// one.
 pub fn journal_lines(report: &Report) -> Vec<String> {
   let journal = &report.journal;
   let now = report.now;
@@ -796,14 +805,18 @@ pub fn journal_lines(report: &Report) -> Vec<String> {
     ));
   }
   out.extend(archived("backfill archived", &journal.backfill_archived));
-  out.push(match report.index {
-    Some((bytes, at)) => format!(
-      "index  {}  last write {} ago",
+  let index = |label: &str, (bytes, at): (u64, i64)| {
+    format!(
+      "{label}  {}  last write {} ago",
       format::size(bytes as f64),
       format::duration(now - at)
-    ),
+    )
+  };
+  out.push(match report.index {
+    Some(index_file) => index("index", index_file),
     None => "index  none yet".into(),
   });
+  out.extend(report.kick_index.map(|file| index("kick index", file)));
   if let Some(sync) = &report.sync {
     for peer in &sync.peers {
       let last = peer.last.as_deref().unwrap_or("no round yet");
