@@ -32,8 +32,8 @@
 //! [`Options::peers`] changes them, in its config, `install.env.json`,
 //! which an older install's files are folded into. They move with the
 //! root, and in a machine install only administrators and the service can
-//! read the config. The Kick channel list, `kick-channels`, moves with the
-//! root too.
+//! read the config. The channel lists, `kick-channels` and `dgg-channels`,
+//! move with the root too.
 
 #[cfg(windows)]
 pub mod acl;
@@ -56,7 +56,7 @@ use {
   },
   ::logger::{
     control,
-    dgg::Dgg,
+    dgg::{self, Dgg},
     kick::{capture::control_dir, channels},
     service::Service,
   },
@@ -71,6 +71,9 @@ use {
 
 /// What a build holds, both beside `dgg-logger` when it's run.
 pub const BINARIES: [&str; 2] = ["dgg-supervisor", "dgg-logger"];
+
+/// The channel lists in an install's root, which move with it.
+const CHANNEL_LISTS: [&str; 2] = [channels::FILE, dgg::channels::FILE];
 
 /// dgg's capture's log, `capture.log` before builds named it by service.
 const DGG_CAPTURE_LOG: &str = "dgg-capture.log";
@@ -400,18 +403,24 @@ pub fn install(options: &Options) -> io::Result<Done> {
     service::configure(service::NAME, &launch)?;
     allow_service(&paths)?;
   }
-  // Kick's channels, if Kick is captured: the list moves with the root.
-  let kick_list = paths.root.join(channels::FILE);
-  if let Some(old) = &old
-    && !same(&old.root, &paths.root)
-    && !kick_list.exists()
-  {
-    let from = old.root.join(channels::FILE);
-    if from.exists() {
-      fs::copy(&from, &kick_list)?;
+  // The channel lists move with the root.
+  for list in CHANNEL_LISTS {
+    let to = paths.root.join(list);
+    if let Some(old) = &old
+      && !same(&old.root, &paths.root)
+      && !to.exists()
+    {
+      let from = old.root.join(list);
+      if from.exists() {
+        fs::copy(&from, &to)?;
+      }
     }
   }
+  // Kick's channels, if Kick is captured.
+  let kick_list = paths.root.join(channels::FILE);
   let kick_channels = channels::load(&kick_list).map_err(error)?;
+  // dgg's, not captured by yet, but a broken list is refused now.
+  dgg::channels::load(&paths.root.join(dgg::channels::FILE)).map_err(error)?;
   let mut problems = Vec::new();
 
   let journal_root = paths.data.join("journal");
@@ -498,7 +507,9 @@ pub fn install(options: &Options) -> io::Result<Done> {
       if options.scope == Scope::Machine {
         allow_service(&paths)?;
       }
-      fs::remove_file(old.root.join(channels::FILE)).missing_ok()?;
+      for list in CHANNEL_LISTS {
+        fs::remove_file(old.root.join(list)).missing_ok()?;
+      }
       remove_root(&old)?;
     }
     match options.scope {
