@@ -6,7 +6,7 @@ directory:
 | Command | Job | Runs |
 |---|---|---|
 | `capture` | Connects to dgg chat and writes everything to the journal | all the time |
-| `index` | Reads the journal into `index.sqlite` | all the time, with `--follow` |
+| `index` | Reads the journal into `index.sqlite` | all the time, with `--follow`: once 500 records are waiting (at most once a minute), or every 10 minutes |
 | `compact` | Packs each finished day into one compressed archive | every hour |
 | `gaps` | Lists when no capture was connected | when you want |
 | `backfill` | Fetches missed messages from public logs | after an outage |
