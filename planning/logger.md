@@ -524,7 +524,7 @@ Planned 2026-11-25. Each step a pause for review.
 3. **`install` waits for every Kick channel:** a bridge per channel,
    waited on together, and the new install's Kick captures waited on too,
    not only dgg's. A channel not healthy in time is warned of, by name:
-   dgg's capture comes first.
+   dgg's capture comes first. Done 2026-11-25 (`8ec7447`, `a424234`).
 4. **One captures box in `status`:** dgg's and Kick's captures together,
    each coloured by health, and after its instance what it listens to:
    dgg's WebSocket URL (from its live file's header) and Kick's channel
