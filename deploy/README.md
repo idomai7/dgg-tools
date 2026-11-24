@@ -13,7 +13,7 @@ directory:
 | `sync`, `serve` | Copy the journal between hosts | when moving hosts, or every 15 minutes from a peer |
 | `kick-ids` | Records Kick channels' ids in `kick-channels`, for `kick-capture` | when adding a channel |
 | `kick-capture` | Connects to Kick chat, each channel in `kick-channels`, and writes everything to the journal | all the time, once `kick-channels` has channels |
-| `install`, `uninstall`, `status`, `supervise` | Run, install and inspect the rest | when you want |
+| `install`, `uninstall`, `status`, `config`, `supervise` | Run, install and inspect the rest | when you want |
 
 `dgg-supervisor` keeps capture and index running, restarts them after
 failures, and runs compact (and sync, given a peer); it's `dgg-logger
@@ -44,9 +44,11 @@ An install lives in one folder:
     index-kick.sqlite      Kick's, likewise
   logs\                    capture.log, index.log, compact.log, supervisor.log,
                            sync.log, migrate.log, kick-capture.log
-  nodes, mesh.env          the mesh this node is in, if any (mesh.env holds
-                           its token)
-  peers\                   other hosts to sync from (each holds a token)
+  install.env.json         the install's config, secrets included: the mesh
+                           this node is in, other hosts to sync from, the
+                           mesh's CA (`dgg-logger config` shows it without
+                           its secrets)
+  nodes                    the mesh's node list, if any
   kick-channels            the Kick channels to capture, from `kick-ids`
 ```
 
@@ -230,36 +232,45 @@ oracle    https://198.51.100.7:8788
 pi        push
 ```
 
-Then, on each node, with the mesh's read token (the same on every node):
+Then, on each node, with the mesh's read token (the same on every node).
+Secrets are given as JSON, from a file or stdin, never as a flag or in
+the environment:
 
 ```powershell
-$env:LOGGER_MESH_TOKEN = "<the mesh token>"   # or LOGGER_MESH_TOKEN=... in .env
-target\release\dgg-logger install --name pi --nodes nodes
+'{"mesh_token": "<the mesh token>"}' | target\release\dgg-logger install --name pi --nodes nodes --config-stdin
 ```
 
 Each node syncs from every other node with a URL. The list is copied to
 `nodes` in the install's folder, and `--name` and the token go in
-`mesh.env`; to change the list, edit it and run `install --nodes` again on
-each node (or edit `nodes` by hand: it's read before each round).
-`install --no-mesh` leaves the mesh.
+`install.env.json`; to change the list, edit it and run `install --nodes`
+again on each node (or edit `nodes` by hand: it's read before each round).
+`install --no-mesh` leaves the mesh. `install --ca <ca.pem>` keeps the
+mesh CA's certificate in the config: `https://` peers are then trusted on
+its word alone.
 
 ### One-off peers
 
 To also sync from a host outside the mesh, such as one being moved off:
 
 ```powershell
-$env:LOGGER_PEER_TOKEN = "<its token>"   # or LOGGER_PEER_TOKEN=... in .env
-target\release\dgg-logger install --peer http://other-host:8788
+'{"peer_token": "<its token>"}' | target\release\dgg-logger install --peer http://other-host:8788 --config-stdin
 ```
 
-That writes `peers\other-host.env` (`--peer-name` names it otherwise).
-`install --no-peer other-host` removes it, and `--no-peers` all of them.
-An older install's `peer.env` is moved there by the next `install`.
+That adds `other-host` to the config's `peers` (`--peer-name` names it
+otherwise). `install --no-peer other-host` removes it, and `--no-peers` all
+of them.
 
-Every file is read before each round, so they can be edited by hand too.
-In a machine install, only administrators and the service can read the
-ones holding tokens. The next `install` keeps them; `uninstall` removes
-them. Each round's output is in `sync.log`, each line after the peer's
+The config and node list are read before each round, so they can be edited
+by hand too. If the config can't be read, the supervisor says why and syncs
+as it did before. `dgg-logger config` shows the config with every secret as
+`<secret>`, and anything wrong with it. In a machine install, only
+administrators and the service can read it. The next `install` keeps it;
+`uninstall` removes it.
+
+Installs from before kept these in `mesh.env`, `peers\<name>.env`,
+`peer.env` and `ca.pem`. The next `install` folds them into
+`install.env.json` and removes them; until then, they're warned of, and
+not read. Each round's output is in `sync.log`, each line after the peer's
 name; `status` shows each peer's last round. The index picks up what
 arrives.
 
