@@ -469,7 +469,7 @@ yet, so old peers need no compatibility. Planned 2026-11-24.
   `service::locate`), the second heartbeat (`Config::legacy_control`, and
   serve's `legacy_control`), the `/control` fallback, and `dgg::migrate`.
   `migrate` then only checks that the old layout is gone, and logs anything
-  left.
+  left (`migrate::OLD_LAYOUT`).
 - **Steps,** each a pause for review:
   1. The index flags.
   2. The `Service` trait and `dgg/`, moving code without changing
@@ -479,24 +479,23 @@ yet, so old peers need no compatibility. Planned 2026-11-24.
   4. The layout and its migration.
   5. Docs.
   6. Removing the old code, after the rollout.
-- **Status:** steps 1 to 5 done (2026-11-24), not yet run on a host, nor
-  tested with both builds.
+- **Status:** done. Steps 1 to 5 on 2026-11-24, rolled out to both hosts
+  the same day; step 6 on 2026-11-25, once both had migrated and run
+  `compact --early`.
   - `Service` (`logger/src/service.rs`): its name, variant, index file and
-    stats, its directory, its journal roots, how a path splits into a root's
-    prefix and the rest, and a root's legacy directory. dgg's is in `dgg/`
-    (capture, index, gaps, backfill, and the move), Kick's in `kick/`.
+    stats, its directory, its journal roots, and how a path splits into a
+    root's prefix and the rest. dgg's is in `dgg/` (capture, index, gaps,
+    backfill), Kick's in `kick/`.
     Capture's handoff machinery (`capture.rs`) and the index's opening and
     pacing (`index.rs`) are shared.
   - Not as planned: Kick has no `/kick/v0/control` (`kick-capture` has no
     `--peer` yet), so only dgg's control routes moved.
-  - The move is `dgg::migrate`, called by `migrate`. Each step is safe to
-    repeat; a file at both paths, or an index at both names, fails the
-    migration for a person to sort out, which keeps index, compact and sync
-    from starting until the next start.
+  - The move was `dgg::migrate`, called by `migrate`, until step 6. Each
+    step was safe to repeat; a file at both paths, or an index at both
+    names, failed the migration for a person to sort out.
   - In an install, the bridge starts before the old capture hands off, and
-    `migrate` runs only once the old supervisor has stopped, so normally
-    nothing is left being written: reading the old places is for a capture
-    run by hand, or a host where the handoff didn't happen.
+    `migrate` runs only once the old supervisor has stopped, so nothing was
+    left being written on either host: both moved everything at once.
 
 ## Status
 - **`logger-journal`:** live files, plus a writer and a reader. The `.zst`
