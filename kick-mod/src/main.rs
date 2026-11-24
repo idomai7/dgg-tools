@@ -12,9 +12,9 @@ use {
   ::kick_mod::{
     account::{self, Account},
     channels::{self, Channels},
-    chat::{self, Chat, Journal, logger::Feed},
+    chat::{self, Chat, Journal},
     config::{self, Config},
-    modlog,
+    logger, modlog,
     serve::{self, Served},
   },
   ::std::{
@@ -144,11 +144,15 @@ async fn run(config: Source<'_>, files: Files) -> Result<(), String> {
     known.len(),
     listen.port()
   );
-  let chat = match &config.logger {
-    Some(logger) => {
-      println!("live chat from the logger at {}", logger.url);
-      Chat::from_logger(&known, &Feed::new(logger)?)
+  let logger = match &config.logger {
+    Some(config) => {
+      println!("chat and history from the logger at {}", config.url);
+      Some(logger::Client::new(config)?)
     }
+    None => None,
+  };
+  let chat = match &logger {
+    Some(logger) => Chat::from_logger(&known, logger),
     None => Chat::start(
       &known,
       &Options::default(),
@@ -162,6 +166,7 @@ async fn run(config: Source<'_>, files: Files) -> Result<(), String> {
     journal,
     modlog,
     account,
+    logger,
   };
   serve::run(listener, served)
     .await

@@ -7,10 +7,13 @@
 //! as live chat; a file still being written is read up to its last complete
 //! record. The messages a gap was filled with (its `history` records) are
 //! read too, but those it has from the connection itself.
+//!
+//! Or, with the logger's `serve` in the config, the logger's answer is
+//! read instead of the journal (see [`from_logger`]), in the same shape.
 
 use {
   crate::{
-    chat::{self, What},
+    chat::{self, Named, What},
     modlog::{self, Entry},
   },
   ::kick_api::{realtime::Frame, web},
@@ -19,7 +22,7 @@ use {
     layout::{channel_root, live_files},
     record::kick::v0::Body,
   },
-  ::serde::Serialize,
+  ::serde::{Deserialize, Serialize},
   ::std::{
     collections::{HashMap, HashSet},
     io,
@@ -73,7 +76,7 @@ impl Said {
 }
 
 /// A message's deletion.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Deletion {
   /// When kick-mod received it, unix ms.
   pub received: i64,
@@ -113,7 +116,109 @@ pub fn read(
     let files = files(&root).map_err(|e| format!("{}: {e}", root.display()))?;
     read_journal(&files, &mut history);
   }
+  add_actions(&mut history, modlog, slug)?;
+  Ok(history)
+}
 
+/// The history of `user_id` in the channel `slug`, from `logged`, the
+/// logger's answer (none if it has no such channel), and `modlog`, the mod
+/// log's contents.
+pub fn from_logger(
+  logged: Option<&str>,
+  modlog: &str,
+  slug: &str,
+  user_id: u64,
+) -> Result<History, String> {
+  let logged: Logged = match logged {
+    Some(text) => ::serde_json::from_str(text)
+      .map_err(|e| format!("the logger's answer: {e}"))?,
+    None => Logged::default(),
+  };
+  let named = Named {
+    id: user_id,
+    username: logged.username.clone().unwrap_or_default(),
+  };
+  let events = logged.events.into_iter().filter_map(|event| {
+    let what = match event.kind.as_str() {
+      "ban" | "timeout" => What::Banned {
+        user: named.clone(),
+        by: event.by,
+        permanent: event.permanent.unwrap_or(event.kind == "ban"),
+        minutes: event.minutes,
+        until: event.until,
+      },
+      "unban" => What::Unbanned {
+        user: named.clone(),
+        by: event.by,
+      },
+      // From a newer logger.
+      _ => return None,
+    };
+    Some(Happened {
+      received: event.received,
+      what,
+    })
+  });
+  let messages = logged.messages.into_iter().map(|message| Said {
+    received: message.received,
+    at: message.sent,
+    id: message.id,
+    content: message.content,
+    deleted: message.deleted,
+    recovered: message.source == "history",
+  });
+  let mut history = History {
+    user_id,
+    username: logged.username,
+    messages: messages.collect(),
+    earlier: logged.earlier,
+    events: events.collect(),
+    actions: Vec::new(),
+    unreadable: Vec::new(),
+  };
+  add_actions(&mut history, modlog, slug)?;
+  Ok(history)
+}
+
+/// The logger's answer, as far as it's read.
+#[derive(Default, Deserialize)]
+struct Logged {
+  username: Option<String>,
+  messages: Vec<LoggedMessage>,
+  earlier: usize,
+  events: Vec<LoggedEvent>,
+}
+
+#[derive(Deserialize)]
+struct LoggedMessage {
+  id: String,
+  sent: Option<i64>,
+  received: i64,
+  content: String,
+  /// `live`, or `history` if only a gap's history page had it.
+  source: String,
+  deleted: Option<Deletion>,
+}
+
+#[derive(Deserialize)]
+struct LoggedEvent {
+  received: i64,
+  /// `ban`, `timeout` or `unban`.
+  kind: String,
+  by: Option<String>,
+  minutes: Option<u64>,
+  until: Option<i64>,
+  permanent: Option<bool>,
+}
+
+/// Adds the mod log's actions on the user in channel `slug` to `history`,
+/// from `modlog`, its contents.
+fn add_actions(
+  history: &mut History,
+  modlog: &str,
+  slug: &str,
+) -> Result<(), String> {
+  let user_id = history.user_id;
   let entries = modlog::parse(modlog).map_err(|e| format!("mod log: {e}"))?;
   history.actions = entries
     .into_iter()
@@ -126,7 +231,7 @@ pub fn read(
       .last()
       .map(|entry| entry.asked.user.username.clone());
   }
-  Ok(history)
+  Ok(())
 }
 
 /// A channel's journal files under its journal root: archives, then live

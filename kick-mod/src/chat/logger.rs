@@ -11,68 +11,30 @@
 //!   with, as [`What::Filled`]: its messages since the stream started, but
 //!   those already seen.
 //!
-//! A stream that drops, or can't start, is retried, after [`FIRST_RETRY`]
-//! doubling to [`LAST_RETRY`]; what's sent meanwhile is missing, which the
+//! A stream that drops, or can't start, is retried, after
+//! [`FIRST_RETRY`](crate::logger::FIRST_RETRY) doubling to [`LAST_RETRY`]; what's sent meanwhile is missing, which the
 //! status says. One refused with `400`, `401` or `403` isn't: the config
 //! needs fixing.
 
 use {
   super::{Fill, Hub, MARGIN, Seen, State, What, filled_in},
-  crate::config::Logger,
-  ::common::{config::Secret, format::duration, time::now_ms},
+  crate::logger::Client,
+  ::common::{format::duration, time::now_ms},
   ::kick_api::{
     realtime::Event,
     web::{self, Back},
   },
-  ::reqwest::{
-    Certificate, Client, StatusCode,
-    header::{ACCEPT, HeaderValue},
-  },
+  ::reqwest::StatusCode,
   ::serde::Deserialize,
   ::std::{collections::HashSet, sync::Arc, time::Duration},
   ::tokio::time::{sleep, timeout},
 };
 
-pub const FIRST_RETRY: Duration = Duration::from_secs(1);
 pub const LAST_RETRY: Duration = Duration::from_secs(30);
 
 /// How long a stream may be silent, keep-alives included, before it's
 /// taken as dropped: the logger sends one every 15 s.
 const SILENCE: Duration = Duration::from_secs(45);
-
-/// The logger's `serve`, to follow channels from.
-#[derive(Clone)]
-pub struct Feed {
-  http: Client,
-  /// Without a trailing `/`.
-  url: String,
-  token: Secret,
-  first_retry: Duration,
-}
-
-impl Feed {
-  pub fn new(logger: &Logger) -> Result<Self, String> {
-    let mut builder =
-      Client::builder().connect_timeout(Duration::from_secs(10));
-    if let Some(ca) = &logger.ca {
-      let certs = Certificate::from_pem_bundle(ca.as_bytes())
-        .map_err(|e| format!("logger.ca: can't read it: {e}"))?;
-      builder = builder.tls_certs_only(certs).https_only(true);
-    }
-    Ok(Self {
-      http: builder.build().map_err(|e| format!("logger: {e}"))?,
-      url: logger.url.trim_end_matches('/').into(),
-      token: logger.token.clone(),
-      first_retry: FIRST_RETRY,
-    })
-  }
-
-  /// Retries first after `first_retry`, doubling to [`LAST_RETRY`].
-  pub fn with_first_retry(mut self, first_retry: Duration) -> Self {
-    self.first_retry = first_retry;
-    self
-  }
-}
 
 /// How a stream ended.
 enum End {
@@ -82,9 +44,9 @@ enum End {
   Refused(String),
 }
 
-/// Follows channel `slug` through `feed` for good, or until it's refused,
+/// Follows channel `slug` through `logger` for good, or until it's refused,
 /// publishing what happens in `hub`.
-pub(super) async fn follow(slug: String, feed: Feed, hub: Arc<Hub>) {
+pub(super) async fn follow(slug: String, logger: Client, hub: Arc<Hub>) {
   let mut following = Following {
     slug: &slug,
     hub: &hub,
@@ -93,11 +55,11 @@ pub(super) async fn follow(slug: String, feed: Feed, hub: Arc<Hub>) {
     open: HashSet::new(),
     shown: Some((State::Connecting, None)),
   };
-  let mut retry = feed.first_retry;
+  let mut retry = logger.first_retry;
   loop {
-    let (up, end) = following.stream(&feed).await;
+    let (up, end) = following.stream(&logger).await;
     if up {
-      retry = feed.first_retry;
+      retry = logger.first_retry;
     }
     let why = match end {
       End::Refused(why) => {
@@ -150,13 +112,8 @@ struct Sent {
 
 impl Following<'_> {
   /// Streams once, until it ends: whether it started, and how it ended.
-  async fn stream(&mut self, feed: &Feed) -> (bool, End) {
-    let url = format!("{}/kick/v0/channels/{}/events", feed.url, self.slug);
-    let request = feed
-      .http
-      .get(url)
-      .bearer_auth(feed.token.expose())
-      .header(ACCEPT, HeaderValue::from_static("text/event-stream"));
+  async fn stream(&mut self, logger: &Client) -> (bool, End) {
+    let request = logger.events(self.slug);
     let mut response = match timeout(SILENCE, request.send()).await {
       Err(_) => return (false, End::Dropped("no answer".into())),
       Ok(Err(e)) => return (false, End::Dropped(e.to_string())),

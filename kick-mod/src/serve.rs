@@ -11,7 +11,8 @@
 //!   status first, then every [`Update`] as JSON. An event `missed`, with
 //!   a count, says the page fell behind and that many were dropped.
 //! - `GET /api/history?channel=<slug>&user=<id>`: the user's
-//!   [history](History) in the channel.
+//!   [history](History) in the channel. `502` with why, as text, when the
+//!   logger couldn't be asked.
 //! - `POST /api/actions`: an [action](Asked), as the signed-in moderator,
 //!   logged in the [mod log](modlog). `204` when Kick did it; otherwise why
 //!   not, as text.
@@ -29,6 +30,7 @@ use {
     channels,
     chat::{Chat, Update},
     history::{self, History},
+    logger,
     modlog::{self, Answer, Entry, Moderator},
   },
   ::axum::{
@@ -72,6 +74,8 @@ pub struct Served {
   pub account: Account,
   /// The channels' chat.
   pub chat: Chat,
+  /// Where history comes from, if not the journal.
+  pub logger: Option<logger::Client>,
 }
 
 /// What the routes share.
@@ -303,6 +307,16 @@ async fn lookup(
   State(shared): State<Arc<Shared>>,
   Query(lookup): Query<Lookup>,
 ) -> Response {
+  let logged = match &shared.served.logger {
+    Some(logger) => match logger.user(&lookup.channel, lookup.user).await {
+      Ok(logged) => Some(logged),
+      Err(e) => {
+        let why = format!("the logger: {e}");
+        return (StatusCode::BAD_GATEWAY, why).into_response();
+      }
+    },
+    None => None,
+  };
   let read = ::tokio::task::spawn_blocking(move || {
     let served = &shared.served;
     let modlog = {
@@ -313,7 +327,13 @@ async fn lookup(
     let modlog = modlog
       .map_err(|e| format!("{}: {e}", served.modlog.display()))?
       .unwrap_or_default();
-    history::read(&served.journal, &modlog, &lookup.channel, lookup.user)
+    let (slug, user) = (&lookup.channel, lookup.user);
+    match logged {
+      Some(logged) => {
+        history::from_logger(logged.as_deref(), &modlog, slug, user)
+      }
+      None => history::read(&served.journal, &modlog, slug, user),
+    }
   });
   match read.await.expect("reading history doesn't panic") {
     Ok(history) => Json::<History>(history).into_response(),

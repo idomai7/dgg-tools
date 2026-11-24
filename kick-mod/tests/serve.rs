@@ -4,13 +4,14 @@
 mod fake;
 
 use {
-  ::common::temp_dir::TempDir,
+  ::common::{config::Secret, temp_dir::TempDir},
   ::kick_api::{official::oauth::App, realtime::Options, web::Web},
   ::kick_mod::{
     account::Account,
     actions::{Action, Asked, Target},
     channels,
     chat::{Chat, Journal},
+    config, logger,
     modlog::{self, Answer, Entry, Moderator},
     serve::{self, Served},
   },
@@ -47,6 +48,15 @@ impl Server {
   /// With `channels` as `channels.json`, their chat connecting with
   /// `options`.
   async fn start_with(channels: &str, options: Options) -> Self {
+    Self::start_full(channels, options, false).await
+  }
+
+  /// With history from the logger, which the fake Kick stands in for too.
+  async fn start_with_logger() -> Self {
+    Self::start_full("{}", Options::default(), true).await
+  }
+
+  async fn start_full(channels: &str, options: Options, logger: bool) -> Self {
     let dir = TempDir::new("kick-mod-serve");
     dir.write("channels.json", channels);
     let kick = Kick::start().await;
@@ -73,6 +83,14 @@ impl Server {
       journal: dir.path().join("journal"),
       modlog: dir.path().join("modlog.jsonl"),
       account: account.unwrap(),
+      logger: logger.then(|| {
+        let config = config::Logger {
+          url: kick.base.clone(),
+          token: Secret::new("made-up-query-token"),
+          ca: None,
+        };
+        logger::Client::new(&config).unwrap()
+      }),
     };
     ::tokio::spawn(serve::run(listener, served));
     Self {
@@ -720,6 +738,138 @@ async fn looks_up_a_users_history() {
 
   let (status, _) = server.get("/api/history?channel=one", &[]).await;
   assert_eq!(status, 400);
+}
+
+#[tokio::test]
+async fn looks_up_a_users_history_from_the_logger() {
+  let server = Server::start_with_logger().await;
+  let logged = json!({
+    "channel": "one",
+    "user_id": 9,
+    "username": "someone",
+    "messages": [
+      {
+        "id": "m1",
+        "sent": 1709251200000_i64,
+        "received": 1709251200001_i64,
+        "content": "hello",
+        "source": "live",
+        "deleted": {"received": 1709251200005_i64, "ai": true},
+      },
+      {
+        "id": "m2",
+        "sent": null,
+        "received": 1709251200009_i64,
+        "content": "again",
+        "source": "history",
+        "deleted": null,
+      },
+    ],
+    "earlier": 3,
+    "events": [
+      {
+        "id": "b1",
+        "received": 1709251200006_i64,
+        "kind": "timeout",
+        "by": "moderator",
+        "minutes": 10,
+        "until": 1709251800006_i64,
+        "permanent": null,
+      },
+      {
+        "id": "u1",
+        "received": 1709251200007_i64,
+        "kind": "unban",
+        "by": "moderator",
+        "minutes": null,
+        "until": null,
+        "permanent": null,
+      },
+    ],
+  });
+  let path = "/kick/v0/channels/one/users/9";
+  server.kick.answer(path, 200, &logged.to_string());
+  let user = json!({"id": 9, "username": "someone"});
+  let entry = json!({
+    "at": 1709251200002_i64,
+    "by": {"user_id": 7, "name": "moderator"},
+    "channel": "one",
+    "action": "ban",
+    "user": user,
+    "broadcaster_user_id": 456,
+    "message_id": null,
+    "reason": null,
+    "answer": {"result": "done"},
+  });
+  server.dir.write(
+    "modlog.jsonl",
+    format!(
+      "{entry}
+"
+    ),
+  );
+
+  let (status, body) = server.get("/api/history?channel=one&user=9", &[]).await;
+  assert_eq!(status, 200, "{body}");
+  let history: Value = ::serde_json::from_str(&body).unwrap();
+  let messages = json!([
+    {
+      "received": 1709251200001_i64,
+      "at": 1709251200000_i64,
+      "id": "m1",
+      "content": "hello",
+      "deleted": {"received": 1709251200005_i64, "ai": true},
+      "recovered": false,
+    },
+    {
+      "received": 1709251200009_i64,
+      "at": null,
+      "id": "m2",
+      "content": "again",
+      "deleted": null,
+      "recovered": true,
+    },
+  ]);
+  let events = json!([
+    {
+      "received": 1709251200006_i64,
+      "kind": "banned",
+      "user": user,
+      "by": "moderator",
+      "permanent": false,
+      "minutes": 10,
+      "until": 1709251800006_i64,
+    },
+    {
+      "received": 1709251200007_i64,
+      "kind": "unbanned",
+      "user": user,
+      "by": "moderator",
+    },
+  ]);
+  assert_eq!(history["user_id"], 9);
+  assert_eq!(history["username"], "someone");
+  assert_eq!(history["messages"], messages);
+  assert_eq!(history["earlier"], 3);
+  assert_eq!(history["events"], events);
+  assert_eq!(history["actions"][0]["action"], "ban");
+  assert_eq!(history["unreadable"], json!([]));
+  let asked = server.kick.requests();
+  assert_eq!(asked[0].path, path);
+  assert_eq!(asked[0].bearer.as_deref(), Some("made-up-query-token"));
+
+  // A channel the logger doesn't have: only the mod log's.
+  let (status, body) = server.get("/api/history?channel=two&user=9", &[]).await;
+  assert_eq!(status, 200, "{body}");
+  let history: Value = ::serde_json::from_str(&body).unwrap();
+  assert_eq!(history["username"], Value::Null);
+  assert_eq!(history["messages"], json!([]));
+  assert_eq!(history["actions"], json!([]));
+
+  server.kick.answer(path, 503, "");
+  let (status, body) = server.get("/api/history?channel=one&user=9", &[]).await;
+  assert_eq!(status, 502);
+  assert_eq!(body, "the logger: answered 503 Service Unavailable");
 }
 
 /// A history message, sent `ago` ms before now.

@@ -25,8 +25,7 @@
 pub mod logger;
 
 use {
-  self::logger::Feed,
-  crate::channels::Channels,
+  crate::{channels::Channels, logger::Client as Logger},
   ::common::time::now_ms,
   ::kick_api::{
     realtime::{Client, Event, Item, Options, event::User},
@@ -391,9 +390,9 @@ impl Chat {
     Self { hub, tasks }
   }
 
-  /// Follows each of `channels` through the logger's `feed`, instead of
+  /// Follows each of `channels` through `logger`, instead of
   /// connecting to Kick.
-  pub fn from_logger(channels: &Channels, feed: &Feed) -> Self {
+  pub fn from_logger(channels: &Channels, logger: &Logger) -> Self {
     let hub = Hub::new();
     let mut tasks = Vec::new();
     for slug in channels.keys() {
@@ -403,7 +402,8 @@ impl Chat {
         continue;
       }
       hub.status(slug, State::Connecting, None);
-      let follow = logger::follow(slug.clone(), feed.clone(), hub.clone());
+      let follow =
+        self::logger::follow(slug.clone(), logger.clone(), hub.clone());
       tasks.push(::tokio::spawn(follow));
     }
     Self { hub, tasks }

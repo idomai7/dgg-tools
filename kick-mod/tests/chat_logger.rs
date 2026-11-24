@@ -16,8 +16,8 @@ use {
   ::futures_util::stream,
   ::kick_mod::{
     channels::Channels,
-    chat::{Chat, Update, logger::Feed},
-    config,
+    chat::{Chat, Update},
+    config, logger,
   },
   ::serde_json::{Value, json},
   ::std::{
@@ -53,14 +53,14 @@ impl Logger {
     Self { url, stream }
   }
 
-  fn feed(&self, token: &str) -> Feed {
+  fn client(&self, token: &str) -> logger::Client {
     let logger = config::Logger {
       url: format!("{}/", self.url),
       token: Secret::new(token),
       ca: None,
     };
-    let feed = Feed::new(&logger).unwrap();
-    feed.with_first_retry(Duration::from_millis(10))
+    let client = logger::Client::new(&logger).unwrap();
+    client.with_first_retry(Duration::from_millis(10))
   }
 
   /// Sends event `kind` with `data`, once a stream is open.
@@ -139,7 +139,7 @@ impl Updates {
 
 /// Follows channel `one`, past its first status: connecting.
 fn follow(logger: &Logger, token: &str) -> (Chat, Updates) {
-  let chat = Chat::from_logger(&channels(), &logger.feed(token));
+  let chat = Chat::from_logger(&channels(), &logger.client(token));
   let (now, later) = chat.watch();
   let now: Vec<_> = now
     .iter()

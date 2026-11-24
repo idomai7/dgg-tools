@@ -11,6 +11,7 @@
 //!   `data/kick-mod/journal/`.
 //! - [`history`]: a user's history in a channel, from the journal and the
 //!   mod log.
+//! - [`logger`]: the logger's `serve`, which kick-mod reads Kick from.
 //! - [`modlog`]: `data/kick-mod/modlog.jsonl`, every action taken.
 //! - [`serve`]: the page.
 
@@ -20,5 +21,6 @@ pub mod channels;
 pub mod chat;
 pub mod config;
 pub mod history;
+pub mod logger;
 pub mod modlog;
 pub mod serve;
