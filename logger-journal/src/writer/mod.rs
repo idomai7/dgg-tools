@@ -5,6 +5,11 @@
 //! would write. Otherwise, as for a file of an older version, it starts the
 //! day's next file, `<instance>.<n>.journal` (see [`numbered_live_file`]),
 //! so new records never land in a file of another format.
+//!
+//! A live file's header names the endpoint its connections opened to
+//! (`endpoint=`), as the last `open` record before it had it; an `open` to
+//! another starts the day's next file, so the header holds for the whole
+//! file. Backfill files name none.
 
 pub mod kick;
 
@@ -13,7 +18,7 @@ use {
     layout::{backfill_root, live_lock_file, lock_file, numbered_live_file},
     record::{
       END, Header, Variant,
-      v0::{self, Body},
+      v0::{self, Body, valid_token},
     },
   },
   ::common::{fs::MissingOk, time::utc_day},
@@ -41,7 +46,10 @@ pub struct Writer {
   backfill: bool,
   /// The lock it holds, if any: a capture's or a backfill run's.
   lock: Option<Lock>,
-  open: Option<(String, File)>,
+  /// The last `open` record's endpoint, for live files.
+  endpoint: Option<String>,
+  /// The file being written: its day, the endpoint in its header, and it.
+  open: Option<(String, Option<String>, File)>,
   dirty: bool,
   last_sync: Instant,
 }
@@ -64,6 +72,7 @@ impl Writer {
       instance,
       backfill: false,
       lock: None,
+      endpoint: None,
       open: None,
       dirty: false,
       last_sync: Instant::now(),
@@ -114,8 +123,10 @@ impl Writer {
     &self.instance
   }
 
-  /// Appends one record to the live file for `receive_time`'s UTC day,
-  /// opening (and on a day change, syncing and switching) files as needed.
+  /// Appends one record to the live file for `receive_time`'s UTC day and
+  /// the endpoint, opening (and on a change, syncing and switching) files as
+  /// needed. An `open` record's endpoint that isn't a [`valid_token`] isn't
+  /// put in headers.
   /// The record reaches the OS before this returns, but isn't fsynced; see
   /// [`Writer::sync`].
   pub fn write(
@@ -136,14 +147,18 @@ impl Writer {
     connection: u64,
     body: Body,
   ) -> io::Result<()> {
-    let day = utc_day(file_time);
-    if self
-      .open
-      .as_ref()
-      .is_none_or(|(current, _)| *current != day)
+    if let Body::Open(endpoint) = &body
+      && !self.backfill
     {
+      self.endpoint = valid_token(endpoint).then(|| endpoint.clone());
+    }
+    let day = utc_day(file_time);
+    if self.open.as_ref().is_none_or(|(current, endpoint, _)| {
+      *current != day || *endpoint != self.endpoint
+    }) {
       self.sync()?;
-      self.open = Some((day.clone(), self.open_day(&day)?));
+      let file = self.open_day(&day)?;
+      self.open = Some((day, self.endpoint.clone(), file));
     }
     let record = v0::Record {
       receive_time,
@@ -153,7 +168,7 @@ impl Writer {
     };
     let mut encoded = Vec::new();
     record.encode(&mut encoded);
-    let (_, file) = self.open.as_mut().unwrap();
+    let (_, _, file) = self.open.as_mut().unwrap();
     file.write_all(&encoded)?;
     self.dirty = true;
     Ok(())
@@ -161,7 +176,7 @@ impl Writer {
 
   /// Fsyncs the open file if anything was written since the last sync.
   pub fn sync(&mut self) -> io::Result<()> {
-    if let Some((_, file)) = &self.open
+    if let Some((_, _, file)) = &self.open
       && self.dirty
     {
       file.sync_data()?;
@@ -179,7 +194,8 @@ impl Writer {
     Ok(())
   }
 
-  /// Opens (creating if needed) this instance's file for `day`.
+  /// Opens (creating if needed) this instance's file for `day` and the
+  /// endpoint.
   fn open_day(&self, day: &str) -> io::Result<File> {
     let root = if self.backfill {
       backfill_root(&self.root)
@@ -187,6 +203,10 @@ impl Writer {
       self.root.clone()
     };
     let header = Header::new(Variant::Dgg, v0::VERSION);
+    let header = match &self.endpoint {
+      Some(endpoint) => header.with("endpoint", endpoint),
+      None => header,
+    };
     open_day(&root, day, &self.instance, &header)
   }
 }

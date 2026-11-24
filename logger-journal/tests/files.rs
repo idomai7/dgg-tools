@@ -80,6 +80,46 @@ fn write_read_and_rollover() {
 }
 
 #[test]
+fn live_headers_name_the_endpoint() {
+  let root = TempDir::new("logger-journal-endpoint");
+  let mut writer = Writer::new(root.path(), "a");
+  let open = |endpoint: &str| Body::Open(endpoint.into());
+  let day = 1_709_251_199_000;
+  writer.write(day, 1, open("wss://one")).unwrap();
+  writer
+    .write(day + 1, 1, Body::Frame("MSG {}".into()))
+    .unwrap();
+  // The next day's file names it too, with no open of its own.
+  writer
+    .write(day + 1000, 1, Body::Frame("MSG {}".into()))
+    .unwrap();
+  // Another endpoint starts the day's next file.
+  writer.write(day + 1001, 2, open("wss://two")).unwrap();
+  drop(writer);
+
+  let headers: Vec<(String, Option<String>)> = live_files(root.path())
+    .unwrap()
+    .iter()
+    .map(|file| {
+      let name = file.strip_prefix(live_dir(root.path())).unwrap();
+      let reader = Reader::open(file, 0).unwrap();
+      let endpoint = reader.header().unwrap().get("endpoint");
+      let name = name.to_string_lossy().replace('\\', "/");
+      (name, endpoint.map(str::to_owned))
+    })
+    .collect();
+  let named = |name: &str, endpoint: &str| (name.into(), Some(endpoint.into()));
+  assert_eq!(
+    headers,
+    [
+      named("2024-02-29/a.journal", "wss://one"),
+      named("2024-03-01/a.2.journal", "wss://two"),
+      named("2024-03-01/a.journal", "wss://one"),
+    ]
+  );
+}
+
+#[test]
 fn backfill_files_by_the_given_day() {
   let root = TempDir::new("logger-journal-files");
   let mut writer = Writer::backfill(root.path(), "backfill-x").unwrap();
