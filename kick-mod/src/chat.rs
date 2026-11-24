@@ -22,11 +22,7 @@ use {
   crate::channels::Channels,
   ::common::time::now_ms,
   ::kick_api::{
-    realtime::{
-      Client, Event, Frame, Item, Options,
-      centrifugo::{push, reply},
-      event::User,
-    },
+    realtime::{Client, Event, Item, Options, event::User},
     web::{self, Web},
   },
   ::logger_journal::{
@@ -306,17 +302,6 @@ fn journaled(item: &Item, open: &mut Option<u64>) -> Option<(u64, Body)> {
   })
 }
 
-/// The events published in `frame`.
-pub fn events(frame: &Frame) -> impl Iterator<Item = Event> + '_ {
-  frame.replies().filter_map(|reply| match reply.ok()?.body? {
-    reply::Body::Push(push::Push {
-      body: Some(push::Body::Publication(publication)),
-      ..
-    }) => Event::from_publication(&publication.data),
-    _ => None,
-  })
-}
-
 /// What the connections share: where updates go, and each channel's
 /// status, for pages that start watching later.
 struct Hub {
@@ -560,7 +545,7 @@ async fn listen(
     }
     match &item {
       Item::Frame(frame) => {
-        for what in events(frame).filter_map(What::from_event) {
+        for what in frame.events().filter_map(What::from_event) {
           if let What::Message { id, .. } = &what {
             state.seen.insert(id);
           }

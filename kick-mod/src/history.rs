@@ -204,7 +204,7 @@ fn read_journal(files: &[PathBuf], history: &mut History) {
         _ => continue,
       };
       let frame = Frame::new(record.connection, raw);
-      for what in chat::events(&frame).filter_map(What::from_event) {
+      for what in frame.events().filter_map(What::from_event) {
         match what {
           What::Message {
             id,
