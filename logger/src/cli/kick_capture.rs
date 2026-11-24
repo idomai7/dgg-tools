@@ -23,7 +23,8 @@ use {
 
 /// Capture Kick chat into the journal: every channel in the channel list,
 /// each into its own journal root, `kick/<slug>`, read anonymously. Gaps
-/// are filled from Kick's chat history.
+/// are filled from Kick's chat history. The list is read again every
+/// minute: channels added or removed are followed.
 #[derive(Args)]
 pub struct KickCapture {
   /// The channel list (`kick-channels`, see `kick-ids`).
@@ -99,6 +100,8 @@ impl KickCapture {
     ));
     let config = Config {
       channels,
+      list: Some(self.channels.clone()),
+      reread_every: Duration::from_secs(60),
       realtime: Options::default(),
       web,
       kick_root,
