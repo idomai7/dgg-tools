@@ -7,9 +7,8 @@
 //!   hand.
 //! - [`channels`]: `data/kick-mod/channels.json`, the channels kick-mod
 //!   knows, which it writes too.
-//! - [`chat`]: live chat, a connection per channel, journaled in
-//!   `data/kick-mod/journal/`.
-//! - [`history`]: a user's history in a channel, from the journal and the
+//! - [`chat`]: live chat, a stream per channel from the logger.
+//! - [`history`]: a user's history in a channel, from the logger and the
 //!   mod log.
 //! - [`logger`]: the logger's `serve`, which kick-mod reads Kick from.
 //! - [`modlog`]: `data/kick-mod/modlog.jsonl`, every action taken.

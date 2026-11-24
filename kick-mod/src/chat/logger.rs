@@ -2,7 +2,7 @@
 //! channel's `GET /kick/v0/channels/<slug>/events`, server-sent events from
 //! when the stream starts, with nothing replayed.
 //!
-//! - `event`: one of Kick's, decoded as kick-mod's own connection's are.
+//! - `event`: one of Kick's, decoded with `kick-api`.
 //! - `open` and `close`: the capture's connections, as the column's status:
 //!   live while one's open. One opened before the stream started isn't
 //!   known, so a stream starts live, and a close leaves it down until an
@@ -12,18 +12,15 @@
 //!   those already seen.
 //!
 //! A stream that drops, or can't start, is retried, after
-//! [`FIRST_RETRY`](crate::logger::FIRST_RETRY) doubling to [`LAST_RETRY`]; what's sent meanwhile is missing, which the
-//! status says. One refused with `400`, `401` or `403` isn't: the config
-//! needs fixing.
+//! [`FIRST_RETRY`](crate::logger::FIRST_RETRY) doubling to [`LAST_RETRY`];
+//! what's sent meanwhile is missing, which the status says. One refused
+//! with `400`, `401` or `403` isn't: the config needs fixing.
 
 use {
-  super::{Fill, Hub, MARGIN, Seen, State, What, filled_in},
+  super::{Hub, Seen, State, What},
   crate::logger::Client,
   ::common::{format::duration, time::now_ms},
-  ::kick_api::{
-    realtime::Event,
-    web::{self, Back},
-  },
+  ::kick_api::{realtime::Event, web},
   ::reqwest::StatusCode,
   ::serde::Deserialize,
   ::std::{collections::HashSet, sync::Arc, time::Duration},
@@ -31,6 +28,10 @@ use {
 };
 
 pub const LAST_RETRY: Duration = Duration::from_secs(30);
+
+/// How long before following started a gap's messages are shown from
+/// (ms): Kick's times are whole seconds, and its clock isn't ours.
+const MARGIN: i64 = 5_000;
 
 /// How long a stream may be silent, keep-alives included, before it's
 /// taken as dropped: the logger sends one every 15 s.
@@ -188,20 +189,20 @@ impl Following<'_> {
       }
       "history" => match web::parse(&sent.page) {
         Ok(page) => {
-          let fill = Fill {
-            connection: sent.connection,
-            since: self.since,
-            back: Back {
-              messages: page.messages,
-              complete: true,
-              ..Back::default()
-            },
-          };
-          let filled = filled_in(fill, &mut self.seen);
-          if let What::Filled { messages, .. } = &filled
-            && !messages.is_empty()
-          {
-            self.hub.publish(self.slug, filled);
+          let mut messages: Vec<_> = page
+            .messages
+            .into_iter()
+            .filter(|m| m.created_at.is_none_or(|at| at > self.since))
+            .filter(|m| self.seen.insert(&m.id))
+            .collect();
+          if !messages.is_empty() {
+            messages.reverse();
+            messages.sort_by_key(|m| m.created_at);
+            let messages = messages
+              .into_iter()
+              .map(|m| What::message(m.id, m.created_at, m.sender, m.content))
+              .collect();
+            self.hub.publish(self.slug, What::Filled { messages });
           }
         }
         Err(e) => eprintln!("{}: the logger's history page: {e}", self.slug),

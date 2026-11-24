@@ -15,9 +15,9 @@
 //! }
 //! ```
 //!
-//! `server` is optional, and so, for now, is `logger`: the logger's `serve`
-//! that kick-mod reads Kick from, with its query token, and the mesh CA's
-//! certificate when it's served over HTTPS.
+//! `server` is optional. `logger` is the logger's `serve` that kick-mod
+//! reads Kick from, with its query token, and the mesh CA's certificate
+//! when it's served over HTTPS.
 
 use {
   ::common::config::{self as json, Secret, Source},
@@ -37,8 +37,7 @@ pub struct Config {
   pub app: App,
   #[serde(default)]
   pub server: Server,
-  #[serde(default)]
-  pub logger: Option<Logger>,
+  pub logger: Logger,
 }
 
 /// The Kick app, as registered on kick.com.
@@ -101,9 +100,7 @@ impl Config {
          login yet"
       ));
     }
-    if let Some(logger) = &config.logger {
-      logger.check()?;
-    }
+    config.logger.check()?;
     Ok(config)
   }
 

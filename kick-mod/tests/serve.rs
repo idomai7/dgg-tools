@@ -4,21 +4,15 @@
 mod fake;
 
 use {
-  ::common::{config::Secret, temp_dir::TempDir},
-  ::kick_api::{official::oauth::App, realtime::Options, web::Web},
+  ::common::temp_dir::TempDir,
+  ::kick_api::official::oauth::App,
   ::kick_mod::{
     account::Account,
     actions::{Action, Asked, Target},
     channels,
-    chat::{Chat, Journal},
-    config, logger,
+    chat::Chat,
     modlog::{self, Answer, Entry, Moderator},
     serve::{self, Served},
-  },
-  ::logger_journal::{
-    Reader, Record,
-    layout::live_files,
-    record::kick::v0::{self, Body},
   },
   ::reqwest::{
     Url,
@@ -26,9 +20,9 @@ use {
     redirect::Policy,
   },
   ::serde_json::{Value, json},
-  ::std::{fs, sync::Arc, time::Duration},
+  ::std::{fs, time::Duration},
   ::tokio::{net::TcpListener, time::timeout},
-  fake::{Centrifugo, Kick},
+  fake::{Kick, QUERY_TOKEN, kick_event},
 };
 
 /// The server, with its files in a directory removed when the test ends.
@@ -42,21 +36,12 @@ struct Server {
 
 impl Server {
   async fn start() -> Self {
-    Self::start_with("{}", Options::default()).await
+    Self::start_with("{}").await
   }
 
-  /// With `channels` as `channels.json`, their chat connecting with
-  /// `options`.
-  async fn start_with(channels: &str, options: Options) -> Self {
-    Self::start_full(channels, options, false).await
-  }
-
-  /// With history from the logger, which the fake Kick stands in for too.
-  async fn start_with_logger() -> Self {
-    Self::start_full("{}", Options::default(), true).await
-  }
-
-  async fn start_full(channels: &str, options: Options, logger: bool) -> Self {
+  /// With `channels` as `channels.json`, their chat and history from the
+  /// fake Kick, standing in for the logger too.
+  async fn start_with(channels: &str) -> Self {
     let dir = TempDir::new("kick-mod-serve");
     dir.write("channels.json", channels);
     let kick = Kick::start().await;
@@ -69,28 +54,13 @@ impl Server {
     let http = ::reqwest::Client::new();
     let account = Account::new(http, app, &kick.base, redirect, token);
     let channels = dir.path().join("channels.json");
+    let logger = kick.logger(QUERY_TOKEN);
     let served = Served {
-      chat: Chat::start(
-        &channels::load(&channels).unwrap(),
-        &options,
-        &Journal::new(dir.path().join("journal"), 5),
-        Some(Arc::new(
-          Web::new(::reqwest::Client::new(), "kick-mod-tests")
-            .with_base(&kick.base),
-        )),
-      ),
+      chat: Chat::start(&channels::load(&channels).unwrap(), &logger),
       channels,
-      journal: dir.path().join("journal"),
       modlog: dir.path().join("modlog.jsonl"),
       account: account.unwrap(),
-      logger: logger.then(|| {
-        let config = config::Logger {
-          url: kick.base.clone(),
-          token: Secret::new("made-up-query-token"),
-          ca: None,
-        };
-        logger::Client::new(&config).unwrap()
-      }),
+      logger,
     };
     ::tokio::spawn(serve::run(listener, served));
     Self {
@@ -349,16 +319,13 @@ async fn signing_out_needs_its_own_origin() {
   assert_eq!(out.send().await.unwrap().status().as_u16(), 403);
 }
 
-const ROOM: &str = "chatrooms.1000.v2";
-
 #[tokio::test]
 async fn streams_chat() {
-  let centrifugo = Centrifugo::start().await;
   let channels = r#"{
-    "one": {"broadcaster_user_id": 1, "chatroom_id": 1000},
-    "two": {"broadcaster_user_id": 2, "chatroom_id": null}
+    "one": {"broadcaster_user_id": 1},
+    "two!": {"broadcaster_user_id": 2}
   }"#;
-  let server = Server::start_with(channels, centrifugo.options()).await;
+  let server = Server::start_with(channels).await;
   let mut events = server.events().await;
   // Each channel's status first.
   assert_eq!(
@@ -368,14 +335,16 @@ async fn streams_chat() {
   assert_eq!(
     events.next().await,
     json!({
-      "slug": "two",
+      "slug": "two!",
       "kind": "status",
       "state": "off",
-      "detail": "no chatroom id: enter it in channels.json",
+      "detail": "not a slug the logger serves",
     })
   );
-  let mut ws = centrifugo.accept(ROOM).await;
   assert_eq!(events.status("one").await, "live");
+  let publish = |event: &str, data: Value| {
+    server.kick.send("one", "event", kick_event(event, data))
+  };
 
   let sender = json!({
     "id": 7,
@@ -395,7 +364,7 @@ async fn streams_chat() {
     "sender": sender,
     "metadata": null,
   });
-  fake::publish(&mut ws, ROOM, "ChatMessageEvent", message).await;
+  publish("ChatMessageEvent", message).await;
   assert_eq!(
     events.next().await,
     json!({
@@ -415,7 +384,7 @@ async fn streams_chat() {
 
   let deleted =
     json!({"id": "d1", "message": {"id": "m1"}, "aiModerated": true});
-  fake::publish(&mut ws, ROOM, "MessageDeletedEvent", deleted).await;
+  publish("MessageDeletedEvent", deleted).await;
   assert_eq!(
     events.next().await,
     json!({"slug": "one", "kind": "deleted", "id": "m1", "ai": true})
@@ -432,7 +401,7 @@ async fn streams_chat() {
     "duration": 5,
     "expires_at": "2026-11-23T10:05:00+00:00",
   });
-  fake::publish(&mut ws, ROOM, "UserBannedEvent", banned).await;
+  publish("UserBannedEvent", banned).await;
   assert_eq!(
     events.next().await,
     json!({
@@ -447,7 +416,7 @@ async fn streams_chat() {
   );
 
   let unbanned = json!({"id": "u1", "user": user, "unbanned_by": moderator});
-  fake::publish(&mut ws, ROOM, "UserUnbannedEvent", unbanned).await;
+  publish("UserUnbannedEvent", unbanned).await;
   assert_eq!(
     events.next().await,
     json!({
@@ -459,76 +428,35 @@ async fn streams_chat() {
   );
 
   // What the page doesn't show is skipped.
-  fake::publish(&mut ws, ROOM, "PinnedMessageDeletedEvent", json!([])).await;
-  fake::publish(&mut ws, ROOM, "ChatroomClearEvent", json!({"id": "c1"})).await;
+  publish("PinnedMessageDeletedEvent", json!([])).await;
+  publish("ChatroomClearEvent", json!({"id": "c1"})).await;
   assert_eq!(
     events.next().await,
     json!({"slug": "one", "kind": "cleared"})
   );
 
-  // A dropped connection is retried, and shown.
-  drop(ws);
+  // A dropped stream is retried, and shown.
+  server.kick.drop_stream("one");
   assert_eq!(events.status("one").await, "reconnecting");
-  let _ws = centrifugo.accept(ROOM).await;
   assert_eq!(events.status("one").await, "live");
-
-  // And all of it was journaled, raw, in one file: the endpoint's the same.
-  let journal = server.dir.path().join("journal");
-  assert!(!journal.join("two").exists());
-  let files = live_files(&journal.join("one")).unwrap();
-  assert_eq!(files.len(), 1);
-  assert!(files[0].ends_with("kick-mod-5.journal"));
-  let reader = Reader::open(&files[0], 0).unwrap();
-  let header = reader.header().unwrap();
-  assert_eq!(header.get("endpoint"), Some(centrifugo.url.as_str()));
-  assert_eq!(header.get("channel"), Some("one"));
-  let records: Vec<v0::Record> = reader
-    .map(|entry| {
-      let Record::Kick0(record) = entry.unwrap().record else {
-        panic!("not Kick's")
-      };
-      assert_eq!(record.instance, "kick-mod-5");
-      record
-    })
-    .collect();
-  let open = Body::Open(centrifugo.url.clone());
-  assert_eq!((records[0].connection, &records[0].body), (1, &open));
-  let frames = |connection| {
-    records
-      .iter()
-      .filter(move |r| r.connection == connection)
-      .filter_map(|r| match &r.body {
-        Body::Frame(frame) => Some(frame.as_str()),
-        _ => None,
-      })
-  };
-  assert!(frames(1).any(|frame| frame.contains(r#"\"id\":\"m1\""#)));
-  let closed = records
-    .iter()
-    .position(|r| matches!(r.body, Body::Close(_)));
-  let reopened = &records[closed.unwrap() + 1];
-  assert_eq!((reopened.connection, &reopened.body), (2, &open));
-  assert!(frames(2).next().is_some());
 }
 
 #[tokio::test]
 async fn a_page_opened_later_sees_the_status_now() {
-  let centrifugo = Centrifugo::start().await;
-  let channels = r#"{"one": {"broadcaster_user_id": 1, "chatroom_id": 1000}}"#;
-  let server = Server::start_with(channels, centrifugo.options()).await;
+  let channels = r#"{"one": {"broadcaster_user_id": 1}}"#;
+  let server = Server::start_with(channels).await;
   let mut first = server.events().await;
   assert_eq!(first.status("one").await, "connecting");
-  let _ws = centrifugo.accept(ROOM).await;
   assert_eq!(first.status("one").await, "live");
   let mut later = server.events().await;
   assert_eq!(later.status("one").await, "live");
 }
 
-const ONE: &str = r#"{"one": {"broadcaster_user_id": 1, "chatroom_id": null}}"#;
+const ONE: &str = r#"{"one": {"broadcaster_user_id": 1}}"#;
 
 #[tokio::test]
 async fn acts_as_the_moderator_and_logs_it() {
-  let server = Server::start_with(ONE, Options::default()).await;
+  let server = Server::start_with(ONE).await;
   server.sign_in().await;
   server
     .kick
@@ -628,7 +556,7 @@ async fn acts_as_the_moderator_and_logs_it() {
 
 #[tokio::test]
 async fn says_and_logs_what_kick_refused() {
-  let server = Server::start_with(ONE, Options::default()).await;
+  let server = Server::start_with(ONE).await;
   server.sign_in().await;
   server
     .kick
@@ -655,7 +583,7 @@ async fn says_and_logs_what_kick_refused() {
 
 #[tokio::test]
 async fn refuses_what_it_cant_do() {
-  let server = Server::start_with(ONE, Options::default()).await;
+  let server = Server::start_with(ONE).await;
   let user = json!({"id": 9, "username": "someone"});
   let ban = json!({"channel": "one", "action": "ban", "user": user});
   assert_eq!(server.act(ban).await, (401, "sign in to moderate".into()));
@@ -689,60 +617,6 @@ async fn refuses_what_it_cant_do() {
 #[tokio::test]
 async fn looks_up_a_users_history() {
   let server = Server::start().await;
-  let data = json!({
-    "id": "m1",
-    "content": "hello",
-    "sender": {"id": 9, "username": "someone"},
-  });
-  let push = json!({
-    "push": {
-      "channel": ROOM,
-      "pub": {
-        "data": {
-          "event": r"App\Events\ChatMessageEvent",
-          "data": data.to_string(),
-        },
-      },
-    },
-  });
-  let journal = format!(
-    "journal kick.0.0 ; channel=one\u{1e}\n\
-     1709251200001 kick-mod-1 1 frame {push}\u{1e}\n"
-  );
-  let file = "journal/one/live/2024-03-01/kick-mod-1.journal";
-  server.dir.write(file, journal);
-  let user = json!({"id": 9, "username": "someone"});
-  let asked = json!({"channel": "one", "action": "ban", "user": user});
-  let entry = json!({
-    "at": 1709251200002_i64,
-    "by": {"user_id": 7, "name": "moderator"},
-    "broadcaster_user_id": 456,
-    "message_id": null,
-    "reason": null,
-    "answer": {"result": "done"},
-  });
-  let mut entry = entry.as_object().unwrap().clone();
-  entry.extend(asked.as_object().unwrap().clone());
-  server
-    .dir
-    .write("modlog.jsonl", format!("{}\n", Value::from(entry)));
-
-  let (status, body) = server.get("/api/history?channel=one&user=9", &[]).await;
-  assert_eq!(status, 200, "{body}");
-  let history: Value = ::serde_json::from_str(&body).unwrap();
-  assert_eq!(history["username"], "someone");
-  assert_eq!(history["messages"][0]["content"], "hello");
-  assert_eq!(history["messages"][0]["received"], 1709251200001_i64);
-  assert_eq!(history["actions"][0]["action"], "ban");
-  assert_eq!(history["events"], json!([]));
-
-  let (status, _) = server.get("/api/history?channel=one", &[]).await;
-  assert_eq!(status, 400);
-}
-
-#[tokio::test]
-async fn looks_up_a_users_history_from_the_logger() {
-  let server = Server::start_with_logger().await;
   let logged = json!({
     "channel": "one",
     "user_id": 9,
@@ -853,10 +727,9 @@ async fn looks_up_a_users_history_from_the_logger() {
   assert_eq!(history["earlier"], 3);
   assert_eq!(history["events"], events);
   assert_eq!(history["actions"][0]["action"], "ban");
-  assert_eq!(history["unreadable"], json!([]));
   let asked = server.kick.requests();
   assert_eq!(asked[0].path, path);
-  assert_eq!(asked[0].bearer.as_deref(), Some("made-up-query-token"));
+  assert_eq!(asked[0].bearer.as_deref(), Some(QUERY_TOKEN));
 
   // A channel the logger doesn't have: only the mod log's.
   let (status, body) = server.get("/api/history?channel=two&user=9", &[]).await;
@@ -870,147 +743,4 @@ async fn looks_up_a_users_history_from_the_logger() {
   let (status, body) = server.get("/api/history?channel=one&user=9", &[]).await;
   assert_eq!(status, 502);
   assert_eq!(body, "the logger: answered 503 Service Unavailable");
-}
-
-/// A history message, sent `ago` ms before now.
-fn history_message(id: &str, ago: i64) -> Value {
-  let at = ::common::time::rfc3339(::common::time::now_ms() - ago);
-  json!({
-    "id": id,
-    "chat_id": 1001,
-    "user_id": 7,
-    "content": format!("said {id}"),
-    "type": "message",
-    "metadata": "{}",
-    "sender": {"id": 7, "username": "someone", "slug": "someone"},
-    "created_at": at,
-    "thread_parent_id": null,
-  })
-}
-
-/// Kick's history page of `messages`, newest first.
-fn history_page(messages: &[Value], cursor: &str) -> String {
-  json!({
-    "data": {"messages": messages, "cursor": cursor, "pinned_message": null},
-    "message": "OK",
-  })
-  .to_string()
-}
-
-const WITH_ID: &str = r#"{
-  "one": {"broadcaster_user_id": 1, "channel_id": 1001, "chatroom_id": 1000}
-}"#;
-
-#[tokio::test]
-async fn fills_a_blip_from_the_history() {
-  let centrifugo = Centrifugo::start().await;
-  let server = Server::start_with(WITH_ID, centrifugo.options()).await;
-  // m1 was received; m2 was sent while down; m0 long before.
-  let page = history_page(
-    &[
-      history_message("m2", 0),
-      history_message("m1", 0),
-      history_message("m0", 3_600_000),
-    ],
-    "1000",
-  );
-  server.kick.answer("/chat/1001/history", 200, &page);
-  let mut events = server.events().await;
-  assert_eq!(events.status("one").await, "connecting");
-  let mut ws = centrifugo.accept(ROOM).await;
-  assert_eq!(events.status("one").await, "live");
-  // The first subscribe isn't a gap.
-  assert!(server.kick.paths().is_empty());
-  // As the socket has it: its metadata isn't a string.
-  let mut m1 = history_message("m1", 0);
-  m1["metadata"] = Value::Null;
-  fake::publish(&mut ws, ROOM, "ChatMessageEvent", m1).await;
-  assert_eq!(events.next().await["id"], "m1");
-
-  drop(ws);
-  assert_eq!(events.status("one").await, "reconnecting");
-  let _ws = centrifugo.accept(ROOM).await;
-  assert_eq!(events.status("one").await, "live");
-  let filled = events.next().await;
-  assert_eq!(filled["kind"], "filled");
-  assert_eq!(filled["partial"], false);
-  assert_eq!(filled["error"], Value::Null);
-  let messages = filled["messages"].as_array().unwrap();
-  assert_eq!(messages.len(), 1, "{messages:?}");
-  assert_eq!(messages[0]["kind"], "message");
-  assert_eq!(messages[0]["id"], "m2");
-  assert_eq!(messages[0]["content"], "said m2");
-  // One page did: it reached back past the drop.
-  let requests = server.kick.requests();
-  assert_eq!(requests.len(), 1);
-  assert_eq!(requests[0].query, "");
-
-  // The page was journaled, raw, on the connection that came back.
-  let journal = server.dir.path().join("journal").join("one");
-  let records: Vec<v0::Record> = live_files(&journal)
-    .unwrap()
-    .iter()
-    .flat_map(|file| Reader::open(file, 0).unwrap())
-    .map(|entry| match entry.unwrap().record {
-      Record::Kick0(record) => record,
-      record => panic!("not Kick's: {record:?}"),
-    })
-    .collect();
-  let history: Vec<_> = records
-    .iter()
-    .filter_map(|r| match &r.body {
-      Body::History { cursor, page } => Some((r.connection, cursor, page)),
-      _ => None,
-    })
-    .collect();
-  assert_eq!(history, [(2, &None, &page)]);
-}
-
-#[tokio::test]
-async fn fills_at_most_ten_pages() {
-  let centrifugo = Centrifugo::start().await;
-  let server = Server::start_with(WITH_ID, centrifugo.options()).await;
-  // Every page is newer than the drop: it never reaches back.
-  let page = history_page(&[history_message("m9", -60_000)], "1000");
-  server.kick.answer("/chat/1001/history", 200, &page);
-  let mut events = server.events().await;
-  assert_eq!(events.status("one").await, "connecting");
-  let ws = centrifugo.accept(ROOM).await;
-  assert_eq!(events.status("one").await, "live");
-  drop(ws);
-  assert_eq!(events.status("one").await, "reconnecting");
-  let _ws = centrifugo.accept(ROOM).await;
-  assert_eq!(events.status("one").await, "live");
-  let filled = events.next().await;
-  assert_eq!(filled["partial"], true);
-  assert_eq!(filled["messages"].as_array().unwrap().len(), 1);
-  let queries: Vec<_> = server
-    .kick
-    .requests()
-    .into_iter()
-    .map(|r| r.query)
-    .collect();
-  assert_eq!(queries.len(), 10);
-  assert_eq!(queries[0], "");
-  assert!(queries[1..].iter().all(|query| query == "cursor=1000"));
-}
-
-#[tokio::test]
-async fn says_why_a_fill_failed() {
-  let centrifugo = Centrifugo::start().await;
-  let server = Server::start_with(WITH_ID, centrifugo.options()).await;
-  let blocked = r#"{"error": "Request blocked by security policy."}"#;
-  server.kick.answer("/chat/1001/history", 403, blocked);
-  let mut events = server.events().await;
-  assert_eq!(events.status("one").await, "connecting");
-  let ws = centrifugo.accept(ROOM).await;
-  assert_eq!(events.status("one").await, "live");
-  drop(ws);
-  assert_eq!(events.status("one").await, "reconnecting");
-  let _ws = centrifugo.accept(ROOM).await;
-  assert_eq!(events.status("one").await, "live");
-  let filled = events.next().await;
-  assert_eq!(filled["partial"], true);
-  assert_eq!(filled["messages"], json!([]));
-  assert!(filled["error"].as_str().unwrap().contains("403"));
 }

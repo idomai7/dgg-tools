@@ -6,13 +6,11 @@ use {
   ::kick_api::{
     channel,
     official::{Api, api},
-    realtime::Options,
-    web::Web,
   },
   ::kick_mod::{
     account::{self, Account},
     channels::{self, Channels},
-    chat::{self, Chat, Journal},
+    chat::Chat,
     config::{self, Config},
     logger, modlog,
     serve::{self, Served},
@@ -20,13 +18,9 @@ use {
   ::std::{
     path::{Path, PathBuf},
     process::ExitCode,
-    sync::Arc,
   },
   ::tokio::{net::TcpListener, task},
 };
-
-/// Names kick-mod, by its codename, to Kick's unofficial API, as it asks.
-const USER_AGENT: &str = concat!("gavelgab/", env!("CARGO_PKG_VERSION"));
 
 #[derive(Parser)]
 #[command(name = "kick-mod")]
@@ -51,9 +45,6 @@ struct Args {
   /// Every action taken.
   #[arg(long, global = true, default_value = modlog::DEFAULT_PATH)]
   modlog: PathBuf,
-  /// Where chat is journaled, a directory per channel.
-  #[arg(long, global = true, default_value = chat::DEFAULT_JOURNAL)]
-  journal: PathBuf,
   #[command(subcommand)]
   command: Command,
 }
@@ -93,7 +84,6 @@ async fn main() -> ExitCode {
         channels: args.channels,
         token: args.token,
         modlog: args.modlog,
-        journal: args.journal,
       };
       run(config, files).await
     }
@@ -114,7 +104,6 @@ struct Files {
   channels: PathBuf,
   token: PathBuf,
   modlog: PathBuf,
-  journal: PathBuf,
 }
 
 async fn run(config: Source<'_>, files: Files) -> Result<(), String> {
@@ -122,7 +111,6 @@ async fn run(config: Source<'_>, files: Files) -> Result<(), String> {
     channels,
     token,
     modlog,
-    journal,
   } = files;
   let config = Config::read(config)?;
   let known = channels::load(&channels)?;
@@ -144,26 +132,11 @@ async fn run(config: Source<'_>, files: Files) -> Result<(), String> {
     known.len(),
     listen.port()
   );
-  let logger = match &config.logger {
-    Some(config) => {
-      println!("chat and history from the logger at {}", config.url);
-      Some(logger::Client::new(config)?)
-    }
-    None => None,
-  };
-  let chat = match &logger {
-    Some(logger) => Chat::from_logger(&known, logger),
-    None => Chat::start(
-      &known,
-      &Options::default(),
-      &Journal::new(&journal, ::common::time::now_ms()),
-      Some(Arc::new(Web::new(http.clone(), USER_AGENT))),
-    ),
-  };
+  let logger = logger::Client::new(&config.logger)?;
+  println!("chat and history from the logger at {}", config.logger.url);
   let served = Served {
-    chat,
+    chat: Chat::start(&known, &logger),
     channels,
-    journal,
     modlog,
     account,
     logger,

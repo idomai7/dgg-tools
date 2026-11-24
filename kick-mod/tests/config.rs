@@ -4,6 +4,10 @@ use ::kick_mod::config::Config;
 
 const APP: &str = r#""app": {"client_id": "a", "client_secret": "s"}"#;
 
+/// The app, and a logger, as every config needs.
+const NEEDED: &str = r#""app": {"client_id": "a", "client_secret": "s"},
+  "logger": {"url": "http://pi:8788", "token": "t"}"#;
+
 #[test]
 fn reads_the_app_the_server_and_the_logger() {
   let config = Config::parse(
@@ -18,7 +22,7 @@ fn reads_the_app_the_server_and_the_logger() {
   assert_eq!(config.app.client_secret.expose(), "app-secret");
   assert_eq!(config.server.listen.to_string(), "127.0.0.1:9000");
   assert_eq!(config.app().client_id, "app-id");
-  let logger = config.logger.as_ref().unwrap();
+  let logger = &config.logger;
   assert_eq!(logger.url, "http://pi:8788");
   assert_eq!(logger.token.expose(), "made-up-query-token");
   assert_eq!(logger.ca, None);
@@ -34,18 +38,18 @@ fn reads_the_app_the_server_and_the_logger() {
 
 #[test]
 fn serves_on_8787_by_default() {
-  let config = Config::parse(&format!("{{{APP}}}")).unwrap();
+  let config = Config::parse(&format!("{{{NEEDED}}}")).unwrap();
   assert_eq!(config.server.listen.to_string(), "127.0.0.1:8787");
-  assert!(config.logger.is_none());
-  let config = Config::parse(&format!(r#"{{{APP}, "server": {{}}}}"#));
+  let config = Config::parse(&format!(r#"{{{NEEDED}, "server": {{}}}}"#));
   assert_eq!(config.unwrap().server.listen.to_string(), "127.0.0.1:8787");
 }
 
 #[test]
 fn refuses_what_it_doesnt_know() {
-  let with = |rest: &str| Config::parse(&format!("{{{APP}, {rest}}}"));
-  // No app, a missing secret, a misspelt field.
+  let with = |rest: &str| Config::parse(&format!("{{{NEEDED}, {rest}}}"));
+  // No app, no logger, a missing secret, a misspelt field.
   assert!(Config::parse("{}").is_err());
+  assert!(Config::parse(&format!("{{{APP}}}")).is_err());
   assert!(Config::parse(r#"{"app": {"client_id": "a"}}"#).is_err());
   assert!(with(r#""server": {"listen_on": "x"}"#).is_err());
   // A value of the wrong type isn't quoted.

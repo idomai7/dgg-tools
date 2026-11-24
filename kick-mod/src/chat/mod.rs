@@ -1,90 +1,26 @@
-//! Live chat: a realtime connection per channel, with what arrives on it
+//! Live chat, from the logger's `serve` (see [`logger`]), which captures
+//! and journals Kick's: a stream per channel, with what arrives on it
 //! turned into [`Update`]s for the page.
-//!
-//! Each channel with a chatroom id gets a [`Client`] of its own,
-//! subscribed to `chatrooms.<chatroom id>.v2`, so one channel's
-//! connection failing leaves the others. Kick keeps no history there:
-//! what's sent while a connection is down is lost.
-//!
-//! So when a connection comes back after a drop, the gap's messages are
-//! [filled](fill) from Kick's chat history, if the channel's id is known:
-//! back to the last thing heard before the drop, at most [`MAX_PAGES`]
-//! pages. Only messages come back; deletions, bans and the rest in the gap
-//! stay missing.
-//!
-//! What each connection receives is journaled as it arrives, raw, in the
-//! logger's journal format (Kick's variant): under [`Journal::root`], each
-//! channel's in a journal root of its own, as
-//! `<slug>/live/<day>/<instance>.journal`. The history pages a gap was
-//! filled from are journaled too, raw, on the connection that came back.
-//!
-//! Or, with the logger's `serve` in the config, each channel's chat comes
-//! from the logger instead (see [`logger`]), which captures and journals
-//! it: then kick-mod connects to Kick for none and journals nothing.
 
 pub mod logger;
 
 use {
   crate::{channels::Channels, logger::Client as Logger},
-  ::common::time::now_ms,
-  ::kick_api::{
-    realtime::{Client, Event, Item, Options, event::User},
-    web::{self, Web},
-  },
-  ::logger_journal::{
-    layout::channel_root,
-    record::kick::v0::Body,
-    writer::{SYNC_INTERVAL, kick::Writer},
-  },
+  ::kick_api::realtime::{Event, event::User},
   ::serde::Serialize,
   ::std::{
     collections::{BTreeMap, HashSet, VecDeque},
-    path::PathBuf,
     sync::{Arc, Mutex},
   },
-  ::tokio::{
-    sync::{broadcast, mpsc},
-    task::JoinHandle,
-    time::interval,
-  },
+  ::tokio::{sync::broadcast, task::JoinHandle},
 };
 
 /// How far a page may fall behind before it misses updates.
 const BACKLOG: usize = 1024;
 
-/// The most pages of history a gap is filled from: 250 messages.
-pub const MAX_PAGES: usize = 10;
-
-/// How long before the last thing heard a gap is filled from (ms): Kick's
-/// times are whole seconds, and its clock isn't ours.
-const MARGIN: i64 = 5_000;
-
 /// How many messages' ids are kept, to tell a filled message from one
 /// received.
 const SEEN: usize = 4096;
-
-pub const DEFAULT_JOURNAL: &str = "data/kick-mod/journal";
-
-/// Where chat is journaled.
-#[derive(Clone, Debug)]
-pub struct Journal {
-  /// Kick's journal root: each channel's is `<root>/<slug>`.
-  pub root: PathBuf,
-  /// Written on every line, and naming the files: one per run, so runs
-  /// never share a file.
-  pub instance: String,
-}
-
-impl Journal {
-  /// A journal under `root`, for a run that started at `start_ms`: its
-  /// instance is `kick-mod-<start_ms>`.
-  pub fn new(root: impl Into<PathBuf>, start_ms: i64) -> Self {
-    Self {
-      root: root.into(),
-      instance: format!("kick-mod-{start_ms}"),
-    }
-  }
-}
 
 /// Something that happened in a channel, by its slug.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -130,21 +66,17 @@ pub enum What {
     by: Option<String>,
   },
   Cleared,
-  /// Messages sent while the connection was down, recovered from Kick's
-  /// chat history: each a [`What::Message`], oldest first. `partial` if
-  /// the gap went back further than was fetched, or fetching failed, with
-  /// `error` why.
+  /// Messages sent while the capture's connection was down, recovered
+  /// from Kick's chat history: each a [`What::Message`], oldest first.
   Filled {
     messages: Vec<What>,
-    partial: bool,
-    error: Option<String>,
   },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum State {
-  /// Not listened to: no chatroom id.
+  /// Not listened to: a slug the logger can't serve.
   Off,
   Connecting,
   Live,
@@ -231,84 +163,9 @@ impl What {
       content,
     }
   }
-
-  /// The connection's state after `item`, if it changed it.
-  pub fn from_item(item: &Item) -> Option<Self> {
-    let (state, detail) = match item {
-      Item::Subscribed { .. } => (State::Live, None),
-      Item::Disconnected { code, reason, .. } => {
-        let code = code.map(|code| format!("{code} ")).unwrap_or_default();
-        (State::Reconnecting, Some(format!("{code}{reason}")))
-      }
-      Item::ConnectFailed {
-        stage,
-        error,
-        retry_in,
-      } => {
-        let again = ::common::format::duration(retry_in.as_millis() as i64);
-        let detail = format!("{stage}: {error}; again in {again}");
-        (State::Reconnecting, Some(detail))
-      }
-      Item::Unsubscribed {
-        code,
-        reason,
-        resubscribing,
-        ..
-      } => {
-        let state = if *resubscribing {
-          State::Reconnecting
-        } else {
-          State::Stopped
-        };
-        (state, Some(format!("{code} {reason}")))
-      }
-      Item::Stopped { code, reason } => {
-        (State::Stopped, Some(format!("{code} {reason}")))
-      }
-      Item::Connected { .. } | Item::Frame(_) | Item::Binary { .. } => {
-        return None;
-      }
-    };
-    Some(Self::Status { state, detail })
-  }
 }
 
-/// What `item` puts in the journal, on which connection, with `open` the
-/// connection that's open.
-fn journaled(item: &Item, open: &mut Option<u64>) -> Option<(u64, Body)> {
-  Some(match item {
-    Item::Connected {
-      connection,
-      endpoint,
-    } => {
-      *open = Some(*connection);
-      (*connection, Body::Open(endpoint.clone()))
-    }
-    Item::Frame(frame) => (frame.connection, Body::Frame(frame.raw().into())),
-    Item::Binary { connection, data } => {
-      (*connection, Body::Binary(data.clone()))
-    }
-    Item::Disconnected {
-      connection,
-      code,
-      reason,
-    } => {
-      *open = None;
-      let code = code.map(|code| format!("{code} ")).unwrap_or_default();
-      (*connection, Body::Close(format!("{code}{reason}")))
-    }
-    // Ends the open connection, with no disconnect of its own.
-    Item::Stopped { code, reason } => {
-      (open.take()?, Body::Close(format!("{code} {reason}")))
-    }
-    // In frames, or before a connection opened.
-    Item::ConnectFailed { .. }
-    | Item::Subscribed { .. }
-    | Item::Unsubscribed { .. } => return None,
-  })
-}
-
-/// What the connections share: where updates go, and each channel's
+/// What the streams share: where updates go, and each channel's
 /// status, for pages that start watching later.
 struct Hub {
   updates: broadcast::Sender<Arc<Update>>,
@@ -341,58 +198,15 @@ impl Hub {
   }
 }
 
-/// Every channel's connection. Dropping it closes them.
+/// Every channel's stream. Dropping it closes them.
 pub struct Chat {
   hub: Arc<Hub>,
   tasks: Vec<JoinHandle<()>>,
 }
 
 impl Chat {
-  /// Connects to each of `channels` with a chatroom id, with `options`
-  /// for each but its channels, journaling each in `journal`. Gaps are
-  /// filled through `web`, for the channels whose id is known.
-  pub fn start(
-    channels: &Channels,
-    options: &Options,
-    journal: &Journal,
-    web: Option<Arc<Web>>,
-  ) -> Self {
-    let hub = Hub::new();
-    let mut tasks = Vec::new();
-    for (slug, channel) in channels {
-      let Some(chatroom) = channel.chatroom_id else {
-        let detail = "no chatroom id: enter it in channels.json".into();
-        hub.status(slug, State::Off, Some(detail));
-        continue;
-      };
-      hub.status(slug, State::Connecting, None);
-      let client = Client::spawn(Options {
-        channels: vec![format!("chatrooms.{chatroom}.v2")],
-        ..options.clone()
-      });
-      let writer = if journalable(slug) {
-        let root = channel_root(&journal.root, slug);
-        match Writer::capture(root, &journal.instance, slug) {
-          Ok(writer) => Some(writer),
-          Err(e) => {
-            eprintln!("{slug}: not journaled, as it can't be locked: {e}");
-            None
-          }
-        }
-      } else {
-        eprintln!("{slug}: not journaled, as it can't be a directory's name");
-        None
-      };
-      let filler = web.clone().zip(channel.channel_id);
-      let listen = listen(slug.clone(), client, hub.clone(), writer, filler);
-      tasks.push(::tokio::spawn(listen));
-    }
-    Self { hub, tasks }
-  }
-
-  /// Follows each of `channels` through `logger`, instead of
-  /// connecting to Kick.
-  pub fn from_logger(channels: &Channels, logger: &Logger) -> Self {
+  /// Follows each of `channels` through `logger`.
+  pub fn start(channels: &Channels, logger: &Logger) -> Self {
     let hub = Hub::new();
     let mut tasks = Vec::new();
     for slug in channels.keys() {
@@ -442,31 +256,6 @@ pub fn journalable(slug: &str) -> bool {
       .all(|b| b.is_ascii_alphanumeric() || b"-_".contains(&b))
 }
 
-/// What a gap's fill fetched.
-#[derive(Debug)]
-struct Fill {
-  /// The connection that came back.
-  connection: u64,
-  /// The gap's start, in Kick's time (unix ms), margin included.
-  since: i64,
-  back: web::Back,
-}
-
-/// Fetches the channel `channel_id`'s history back to `since` (unix ms),
-/// at most [`MAX_PAGES`] pages, for the gap before `connection`.
-async fn fill(
-  web: Arc<Web>,
-  channel_id: u64,
-  connection: u64,
-  since: i64,
-) -> Fill {
-  Fill {
-    connection,
-    since,
-    back: web.back_to(channel_id, since, MAX_PAGES).await,
-  }
-}
-
 /// The ids of the messages seen lately, the newest [`SEEN`].
 #[derive(Default)]
 struct Seen {
@@ -487,129 +276,5 @@ impl Seen {
       self.ids.remove(&oldest);
     }
     true
-  }
-}
-
-/// A channel's connection's state between items.
-#[derive(Default)]
-struct Listening {
-  /// The connection that's open, for a stop to close.
-  open: Option<u64>,
-  /// The connection last opened, for a fill to be journaled on.
-  connection: Option<u64>,
-  /// When (unix ms) something was last heard while subscribed.
-  heard: Option<i64>,
-  /// When something was last heard before a drop, until it's filled.
-  gap: Option<i64>,
-  seen: Seen,
-}
-
-async fn listen(
-  slug: String,
-  mut client: Client,
-  hub: Arc<Hub>,
-  mut journal: Option<Writer>,
-  filler: Option<(Arc<Web>, u64)>,
-) {
-  let mut sync = interval(SYNC_INTERVAL);
-  let mut state = Listening::default();
-  let (filled, mut fills) = mpsc::unbounded_channel::<Fill>();
-  let write = |journal: &mut Option<Writer>, connection, body| {
-    if let Some(writer) = journal
-      && let Err(e) = writer.write(now_ms(), connection, body)
-    {
-      eprintln!("{slug}: no longer journaled: {e}");
-      *journal = None;
-    }
-  };
-  loop {
-    let item = ::tokio::select! {
-      item = client.next() => item,
-      Some(mut fill) = fills.recv() => {
-        for (cursor, page) in ::std::mem::take(&mut fill.back.pages) {
-          write(&mut journal, fill.connection, Body::History { cursor, page });
-        }
-        hub.publish(&slug, filled_in(fill, &mut state.seen));
-        continue;
-      }
-      _ = sync.tick() => {
-        if let Some(writer) = &mut journal
-          && let Err(e) = writer.sync()
-        {
-          eprintln!("{slug}: no longer journaled: {e}");
-          journal = None;
-        }
-        continue;
-      }
-    };
-    let Some(item) = item else { break };
-    let now = now_ms();
-    if let Some((connection, body)) = journaled(&item, &mut state.open) {
-      write(&mut journal, connection, body);
-    }
-    match &item {
-      Item::Connected { connection, .. } => {
-        state.connection = Some(*connection)
-      }
-      Item::Frame(_) => state.heard = Some(now),
-      Item::Disconnected { .. }
-      | Item::Unsubscribed {
-        resubscribing: true,
-        ..
-      } => state.gap = state.gap.or(state.heard.take()),
-      Item::Subscribed { .. } => {
-        if let Some(heard) = state.gap.take()
-          && let Some((web, channel_id)) = &filler
-          && let Some(connection) = state.connection
-        {
-          let (web, channel_id) = (web.clone(), *channel_id);
-          let filled = filled.clone();
-          ::tokio::spawn(async move {
-            let fill = fill(web, channel_id, connection, heard - MARGIN).await;
-            // None waiting is fine: the channel's gone.
-            let _ = filled.send(fill);
-          });
-        }
-        state.heard = Some(now);
-      }
-      _ => {}
-    }
-    match &item {
-      Item::Frame(frame) => {
-        for what in frame.events().filter_map(What::from_event) {
-          if let What::Message { id, .. } = &what {
-            state.seen.insert(id);
-          }
-          hub.publish(&slug, what);
-        }
-      }
-      item => {
-        if let Some(status) = What::from_item(item) {
-          hub.publish(&slug, status);
-        }
-      }
-    }
-  }
-}
-
-/// What the page is told of `fill`: its messages from the gap, oldest
-/// first, but those already `seen`.
-fn filled_in(fill: Fill, seen: &mut Seen) -> What {
-  let mut messages: Vec<_> = fill
-    .back
-    .messages
-    .into_iter()
-    .filter(|m| m.created_at.is_none_or(|at| at > fill.since))
-    .filter(|m| seen.insert(&m.id))
-    .collect();
-  messages.reverse();
-  messages.sort_by_key(|m| m.created_at);
-  What::Filled {
-    messages: messages
-      .into_iter()
-      .map(|m| What::message(m.id, m.created_at, m.sender, m.content))
-      .collect(),
-    partial: !fill.back.complete,
-    error: fill.back.error,
   }
 }
