@@ -12,7 +12,7 @@ use {
   ::kick_mod::{
     account::{self, Account},
     channels::{self, Channels},
-    chat::{self, Chat, Journal},
+    chat::{self, Chat, Journal, logger::Feed},
     config::{self, Config},
     modlog,
     serve::{self, Served},
@@ -144,13 +144,20 @@ async fn run(config: Source<'_>, files: Files) -> Result<(), String> {
     known.len(),
     listen.port()
   );
-  let served = Served {
-    chat: Chat::start(
+  let chat = match &config.logger {
+    Some(logger) => {
+      println!("live chat from the logger at {}", logger.url);
+      Chat::from_logger(&known, &Feed::new(logger)?)
+    }
+    None => Chat::start(
       &known,
       &Options::default(),
       &Journal::new(&journal, ::common::time::now_ms()),
       Some(Arc::new(Web::new(http.clone(), USER_AGENT))),
     ),
+  };
+  let served = Served {
+    chat,
     channels,
     journal,
     modlog,

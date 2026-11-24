@@ -17,8 +17,15 @@
 //! channel's in a journal root of its own, as
 //! `<slug>/live/<day>/<instance>.journal`. The history pages a gap was
 //! filled from are journaled too, raw, on the connection that came back.
+//!
+//! Or, with the logger's `serve` in the config, each channel's chat comes
+//! from the logger instead (see [`logger`]), which captures and journals
+//! it: then kick-mod connects to Kick for none and journals nothing.
+
+pub mod logger;
 
 use {
+  self::logger::Feed,
   crate::channels::Channels,
   ::common::time::now_ms,
   ::kick_api::{
@@ -310,6 +317,17 @@ struct Hub {
 }
 
 impl Hub {
+  fn new() -> Arc<Self> {
+    Arc::new(Self {
+      updates: broadcast::channel(BACKLOG).0,
+      statuses: Mutex::default(),
+    })
+  }
+
+  fn status(&self, slug: &str, state: State, detail: Option<String>) {
+    self.publish(slug, What::Status { state, detail });
+  }
+
   fn publish(&self, slug: &str, what: What) {
     let update = Arc::new(Update {
       slug: slug.into(),
@@ -340,26 +358,15 @@ impl Chat {
     journal: &Journal,
     web: Option<Arc<Web>>,
   ) -> Self {
-    let hub = Arc::new(Hub {
-      updates: broadcast::channel(BACKLOG).0,
-      statuses: Mutex::default(),
-    });
+    let hub = Hub::new();
     let mut tasks = Vec::new();
     for (slug, channel) in channels {
       let Some(chatroom) = channel.chatroom_id else {
         let detail = "no chatroom id: enter it in channels.json".into();
-        let off = What::Status {
-          state: State::Off,
-          detail: Some(detail),
-        };
-        hub.publish(slug, off);
+        hub.status(slug, State::Off, Some(detail));
         continue;
       };
-      let connecting = What::Status {
-        state: State::Connecting,
-        detail: None,
-      };
-      hub.publish(slug, connecting);
+      hub.status(slug, State::Connecting, None);
       let client = Client::spawn(Options {
         channels: vec![format!("chatrooms.{chatroom}.v2")],
         ..options.clone()
@@ -380,6 +387,24 @@ impl Chat {
       let filler = web.clone().zip(channel.channel_id);
       let listen = listen(slug.clone(), client, hub.clone(), writer, filler);
       tasks.push(::tokio::spawn(listen));
+    }
+    Self { hub, tasks }
+  }
+
+  /// Follows each of `channels` through the logger's `feed`, instead of
+  /// connecting to Kick.
+  pub fn from_logger(channels: &Channels, feed: &Feed) -> Self {
+    let hub = Hub::new();
+    let mut tasks = Vec::new();
+    for slug in channels.keys() {
+      if !journalable(slug) {
+        let detail = "not a slug the logger serves".into();
+        hub.status(slug, State::Off, Some(detail));
+        continue;
+      }
+      hub.status(slug, State::Connecting, None);
+      let follow = logger::follow(slug.clone(), feed.clone(), hub.clone());
+      tasks.push(::tokio::spawn(follow));
     }
     Self { hub, tasks }
   }
