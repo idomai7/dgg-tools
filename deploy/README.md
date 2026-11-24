@@ -280,11 +280,14 @@ target\release\dgg-logger serve --listen 0.0.0.0:8788
   against their SHA-256, and doesn't follow redirects.
 - `serve` handles 8 requests at once and turns away the rest.
 - A third token, `--query-token` (`LOGGER_QUERY_TOKEN`), reads only Kick's
-  history and live chat (`/kick/channels/...`), for kick-mod. It must
+  history and live chat (`/kick/v0/channels/...`), for kick-mod. It must
   differ from the other two.
-- Each service's routes start with its name: `/dgg/manifest` and
-  `/dgg/files/...` for sync, `/dgg/control/...` for capture handoff, and
-  likewise `/kick/manifest` and `/kick/files/...`. A host without a
+- Each service's routes start with its name and its API's version:
+  `/dgg/v0/manifest` and `/dgg/v0/files/...` for sync,
+  `/dgg/v0/control/...` for capture handoff, and likewise
+  `/kick/v0/manifest` and `/kick/v0/files/...`. `v0` may change
+  incompatibly from one build to the next, so hosts that sync from each
+  other should run the same build, until a stable `v1`. A host without a
   service answers 404, which sync takes as nothing to pull.
 
 ## Keeping the PC awake
