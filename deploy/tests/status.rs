@@ -159,10 +159,13 @@ fn draws_the_watch_screen() {
     "data/journal/dgg/control/a-1.status",
     status("a-1", now - 60_000, now, Some(now - 50_000)),
   );
-  let report = Watcher::new()
+  let mut report = Watcher::new()
     .unwrap()
     .gather(&Paths::under(dir.to_path_buf()))
     .unwrap();
+  // The programs running here aren't the test's: an install on this
+  // machine would push the log off the screen.
+  report.programs.clear();
   let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
   let pane = ::deploy::status::watch::Pane {
     title: "dgg-capture.log".into(),
