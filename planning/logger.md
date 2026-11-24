@@ -143,10 +143,11 @@ The logger, codenamed ledgerline: `logger-journal` and `logger`, run as
     - `--keep-running` opts out, for deliberate redundancy.
     - Tested live: 34 s of overlap, with 13 MSGs in both journals and none
       missing from their union.
-  - **Across hosts:** the old host runs `serve --control-token …`, and the new
-    instance runs
-    `capture --peer http://old-host:8788 --peer-token <that control token>`.
-    - `serve`'s plain `--token` only reads (enough for `sync`); pushing a status
+  - **Across hosts:** the old host's `serve` has a control token
+    (`tokens.control` in its config), and the new instance runs
+    `capture --peer http://old-host:8788 --config-file <file>`, the file
+    holding `{"token": "<that control token>"}`.
+    - `serve`'s read token only reads (enough for `sync`); pushing a status
       needs the control token, since a pushed status makes the host's captures
       retire.
     - The new instance pushes its status there every second
@@ -243,7 +244,7 @@ The logger, codenamed ledgerline: `logger-journal` and `logger`, run as
       message records which archive it really came from. Any other `source`
       becomes `linkers-<source>`.
     - **Rate limit:** 60 requests per minute per IP (`X-RateLimit-Remaining`). A
-      logged-in `lk_session` cookie (`--linkers-session` / `LINKERS_SESSION`,
+      logged-in `lk_session` cookie (`linkers_session` in backfill's config,
       valid 7 days) removes the limit.
     - Also logs `BAN`, `MUTE`, `SUBSCRIPTION`, `GIFTSUB`, `MASSGIFT` and
       `DONATION`, which could feed the archive tools. Every kind has the same
@@ -397,7 +398,7 @@ undocumented endpoints anonymously: no token, no login, no app. Planned
     - An event Kick gave an id (a message, deletion, ban or unban) is passed
       on once, however many captures' files have it.
     - Streams don't count against the 8 requests at once; at most 16 run.
-  - A third token, a query token (`--query-token`, `LOGGER_QUERY_TOKEN`),
+  - A third token, a query token (`tokens.query` in `serve`'s config),
     reads only Kick's history and live chat. The read and control tokens
     read them too. kick-mod holds only the query token, and the mesh CA's
     certificate for TLS.

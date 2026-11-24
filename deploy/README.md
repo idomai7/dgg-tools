@@ -202,7 +202,9 @@ Short gaps are often already covered by the chat history dgg sends on every
 reconnect; `gaps` says which ones were. Backfilled messages go in
 `journal\dgg\backfill\`, separate from what was captured, and never replace a
 captured message. `--source rustlesearch` is millisecond-accurate but
-limited to 200 requests a day.
+limited to 200 requests a day. linkers.ooo allows 60 requests a minute,
+unlimited with a logged-in session's `lk_session` cookie, given as
+`--config-file <file>` holding `{"linkers_session": "<the cookie>"}`.
 
 Don't start a history import (`backfill --from`) by hand yet: it's
 meant to run for weeks and comes later.
@@ -263,31 +265,36 @@ arrives.
 
 ### Running serve safely
 
-On each host synced from, make a token and serve with it:
+On each host synced from, make a token and serve with it. Tokens, like
+every secret, are given as JSON, in a file (`--config-file`) or on stdin
+(`--config-stdin`), never as a flag or in the environment:
 
 ```powershell
-$env:LOGGER_TOKEN = [Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
-target\release\dgg-logger serve --listen 0.0.0.0:8788
+$token = [Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
+@{ tokens = @{ read = $token } } | ConvertTo-Json | Set-Content serve.json
+target\release\dgg-logger serve --listen 0.0.0.0:8788 --config-file serve.json
 ```
+
+Keep `serve.json` where only you can read it. `sync` takes the peer's read
+token the same way, as `{"token": "..."}`.
 
 - `serve` speaks plain HTTP, so the token crosses the network readable.
   Reach it only over something private: a VPN such as Tailscale or
   WireGuard, or an SSH tunnel. Don't open the port to the internet.
 - That token only reads, which is all sync needs. A second one,
-  `--control-token` (`LOGGER_CONTROL_TOKEN`), lets a capture on another
-  host push its status there, which makes that host's captures retire.
-  Set it only while moving capture to a new host (`capture --peer`), and
-  give it only to that host. Tokens must be 32 characters or more, and
-  the two must differ.
+  `tokens.control`, lets a capture on another host push its status there,
+  which makes that host's captures retire. Set it only while moving
+  capture to a new host (`capture --peer`, given `{"token": "<it>"}`), and
+  give it only to that host. Tokens must be 32 characters or more, and no
+  two may be the same.
 - Sync trusts the peer for what its journal says: whatever it serves is
   added here. Sync from your own hosts only. It doesn't trust the peer
   for size, though: it refuses a manifest over 16 MB and a file over 4 GB,
   takes no more of a file than the manifest lists, checks archives
   against their SHA-256, and doesn't follow redirects.
 - `serve` handles 8 requests at once and turns away the rest.
-- A third token, `--query-token` (`LOGGER_QUERY_TOKEN`), reads only Kick's
-  history and live chat (`/kick/v0/channels/...`), for kick-mod. It must
-  differ from the other two.
+- A third token, `tokens.query`, reads only Kick's history and live chat
+  (`/kick/v0/channels/...`), for kick-mod.
 - Each service's routes start with its name and its API's version:
   `/dgg/v0/manifest` and `/dgg/v0/files/...` for sync,
   `/dgg/v0/control/...` for capture handoff, and likewise

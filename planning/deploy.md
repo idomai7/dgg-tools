@@ -67,10 +67,10 @@ and `ca.pem`. Planned 2026-11-25.
   1. Config JSON in the logger: `Secret` and the loader in `common`, and
      `sync`, `serve`, `capture` and `backfill` reading their tokens with
      `--config-file` or `--config-stdin`, their token flags and
-     environment variables gone. The supervisor passes `sync` its peer on
+     environment variables gone. The supervisor passes `sync` its token on
      stdin, still from the old files. `deploy`'s own `--mesh-token` and
      `--peer-token` move with step 2; `cert`'s `DGG_CA_KEY` and
-     `DGG_CA_CERT` go, its flags' defaults staying.
+     `DGG_CA_CERT` go, its flags' defaults staying. Done 2026-11-25.
   2. `install.env.json`, `dgg-logger config`, and the migration.
   3. `serve` under the supervisor, from the file's `serve` section, its
      certificate and key passed on stdin, restarted like capture, and
