@@ -5,7 +5,10 @@ use {
   ::logger_journal::{
     DecodeError, Entry, Header, ReadError, Reader, Record, Variant, Version,
     Writer,
-    layout::{backfill_files, live_dir, live_file, live_files, live_lock_file},
+    layout::{
+      backfill_files, live_dir, live_file, live_file_instance, live_files,
+      live_lock_file,
+    },
     record::v0::{self, Body},
     writer::{capturing, writing},
   },
@@ -113,8 +116,55 @@ fn live_headers_name_the_endpoint() {
     headers,
     [
       named("2024-02-29/a.journal", "wss://one"),
-      named("2024-03-01/a.2.journal", "wss://two"),
       named("2024-03-01/a.journal", "wss://one"),
+      named("2024-03-01/a.2.journal", "wss://two"),
+    ]
+  );
+}
+
+#[test]
+fn live_files_in_the_order_written() {
+  let root = TempDir::new("logger-journal-order");
+  let day = live_dir(root.path()).join("2024-03-01");
+  fs::create_dir_all(&day).unwrap();
+  for name in [
+    "a.journal",
+    "a.2.journal",
+    "a.10.journal",
+    "b.journal",
+    // An instance with a dot, and no file it would be the next of.
+    "host.x-5.journal",
+  ] {
+    fs::write(day.join(name), "").unwrap();
+  }
+  let files = live_files(root.path()).unwrap();
+  let names: Vec<_> = files
+    .iter()
+    .map(|file| file.file_name().unwrap().to_string_lossy().into_owned())
+    .collect();
+  assert_eq!(
+    names,
+    [
+      "a.journal",
+      "a.2.journal",
+      "a.10.journal",
+      "b.journal",
+      "host.x-5.journal",
+    ]
+  );
+  let instances: Vec<_> = files
+    .iter()
+    .map(|file| live_file_instance(file).unwrap())
+    .collect();
+  let instance = |name: &str, n| (name.to_owned(), n);
+  assert_eq!(
+    instances,
+    [
+      instance("a", 1),
+      instance("a", 2),
+      instance("a", 10),
+      instance("b", 1),
+      instance("host.x-5", 1),
     ]
   );
 }
@@ -335,9 +385,9 @@ fn older_files_are_never_appended_to() {
     .iter()
     .map(|f| f.file_name().unwrap().to_owned())
     .collect();
-  assert_eq!(names, ["a.2.journal", "a.journal"]);
+  assert_eq!(names, ["a.journal", "a.2.journal"]);
   assert_eq!(
-    fs::read_to_string(&files[0]).unwrap(),
+    fs::read_to_string(&files[1]).unwrap(),
     "journal dgg.0.3\u{1e}\n0 a 1 frame MSG 1\u{1e}\n"
   );
   assert_eq!(

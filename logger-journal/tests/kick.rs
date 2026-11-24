@@ -185,14 +185,6 @@ fn a_new_endpoint_starts_the_next_file() {
     read(&root),
     [
       (
-        format!("i.2.journal: {}", header(B)),
-        vec![Body::Open(B.into()), frame()],
-      ),
-      (
-        format!("i.3.journal: {}", header(A)),
-        vec![Body::Open(A.into())],
-      ),
-      (
         format!("i.journal: {}", header(A)),
         vec![
           Body::Open(A.into()),
@@ -201,6 +193,14 @@ fn a_new_endpoint_starts_the_next_file() {
           Body::Open(A.into()),
           Body::Close("again".into()),
         ],
+      ),
+      (
+        format!("i.2.journal: {}", header(B)),
+        vec![Body::Open(B.into()), frame()],
+      ),
+      (
+        format!("i.3.journal: {}", header(A)),
+        vec![Body::Open(A.into())],
       ),
     ]
   );
@@ -306,8 +306,8 @@ fn reads_0_0_and_starts_the_next_file() {
   assert_eq!(
     names,
     [
-      format!("i.2.journal: journal kick.0.1 ; endpoint={A} channel=one"),
       format!("i.journal: journal kick.0.0 ; endpoint={A} channel=one"),
+      format!("i.2.journal: journal kick.0.1 ; endpoint={A} channel=one"),
     ]
   );
 }

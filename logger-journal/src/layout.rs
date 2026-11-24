@@ -54,7 +54,29 @@ pub fn channel_root(kick_root: &Path, slug: &str) -> PathBuf {
   kick_root.join(slug)
 }
 
-/// Every live journal file, sorted by day then instance.
+/// The instance that wrote the live file at `path`, and which of its day's
+/// files it is (see [`numbered_live_file`]). `<instance>.<n>.journal` is
+/// the `n`th when `<instance>.journal` is beside it, as a writer always
+/// starts there; otherwise its whole stem is the instance, which may hold
+/// dots.
+pub fn live_file_instance(path: &Path) -> Option<(String, u32)> {
+  let stem = path.file_stem()?.to_str()?;
+  if let Some((instance, n)) = stem.rsplit_once('.')
+    && !n.is_empty()
+    && n.bytes().all(|b| b.is_ascii_digit())
+    && let Ok(n) = n.parse::<u32>()
+    && n >= 2
+    && path
+      .with_file_name(format!("{instance}.{EXTENSION}"))
+      .exists()
+  {
+    return Some((instance.into(), n));
+  }
+  Some((stem.into(), 1))
+}
+
+/// Every live journal file, sorted by day, then instance, then its number
+/// among the instance's files that day (see [`live_file_instance`]).
 pub fn live_files(root: &Path) -> io::Result<Vec<PathBuf>> {
   let dir = live_dir(root);
   let mut files = Vec::new();
@@ -76,7 +98,9 @@ pub fn live_files(root: &Path) -> io::Result<Vec<PathBuf>> {
       }
     }
   }
-  files.sort();
+  files.sort_by_cached_key(|path| {
+    (path.parent().map(Path::to_owned), live_file_instance(path))
+  });
   Ok(files)
 }
 
