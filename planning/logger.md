@@ -565,8 +565,130 @@ Planned 2026-11-25. Each step a pause for review.
    channel (`journal/dgg/<name>/`), a `dgg-capture` per channel, and an
    index per channel (`index-dgg-<name>.sqlite`). Today's journal and
    index move into the first channel's, as the move by service did.
-   Planned in detail before it's built: sync's and serve's routes,
-   backfill and gaps, and the move.
+   Planned in detail in [dgg channels](#dgg-channels).
+
+## dgg channels
+Planned 2026-11-25, to be reviewed before any of it is built. dgg captured
+per channel, as Kick is, each channel a chat speaking dgg's protocol at a
+WebSocket URL of its own. Each step a pause for review.
+- **The list:** `dgg-channels` in the install's root, beside
+  `kick-channels`, a line per channel, edited by hand:
+
+  ```text
+  # <name> <WebSocket URL> [<Origin header>, or - for none]
+  destiny wss://chat.destiny.gg/ws https://www.destiny.gg
+  ```
+
+  A name is a slug, as Kick's are (lowercase letters, digits, `-`, `_`),
+  but not one of the directories of the old layout (`live`, `archive`,
+  `backfill`, `control`), so a name is never mistaken for one while the
+  move is under way. With no list, it's this one line: a host that never
+  writes one keeps capturing destiny.gg as now. `install` moves the list
+  with the root, as `kick-channels`.
+- **Layout:** each channel's journals in `journal/dgg/<name>/`, laid out
+  as dgg's directory is now: `live/`, `archive/`, `control/` (statuses
+  and `synced-archives`), and its backfill journal in `backfill/`. Paths
+  inside a channel's directory are as they are now in `dgg/`, so every
+  format's version stays as it is.
+- **Index:** one per channel, `index-dgg-<name>.sqlite`. Its paths are
+  relative to the channel's directory, so today's index becomes
+  destiny's by a rename, with no rebuild and no schema change. Its
+  deduplication (timestamp and nick), connections, gaps and fetched
+  ranges stay those of one chat, as they are now. (Kick's stays one index
+  for every channel: its rows are keyed by Kick's own ids, unique across
+  channels.) `index --follow` keeps each channel's on its own, picking up
+  a channel added to the list at its next look. `--rebuild-dgg` rebuilds
+  every channel's.
+- **Routes,** both services alike, every channel's under `channels/` as
+  Kick's queries are now:
+  - `GET /<service>/v0/channels`: the channels with journals here, a
+    line each.
+  - `GET /<service>/v0/channels/<name>/manifest` and
+    `.../files/<path>`: a channel's manifest and files, paths relative to
+    its directory (dgg's as now; Kick's lose the `<slug>/` they start with
+    now).
+  - `PUT` and `DELETE /dgg/v0/channels/<name>/control/<instance>`, and
+    `GET /dgg/v0/channels/<name>/control`: a channel's handoff between
+    hosts.
+  - `/<service>/v0/manifest`, `/files` and `/dgg/v0/control` go. A peer on
+    the old build answers the new routes `404` (nothing there), and the
+    new build answers the old ones `404`, so hosts on different builds
+    don't sync until both are upgraded, and then catch up: no path is
+    ever read the wrong way round.
+- **Sync:** for each service, the peer's channels, then each channel's
+  manifest and files, pulled into the channel's directory here. A channel
+  the peer has and this host doesn't list is pulled too, as Kick's are
+  now (a journal kept is never wasted; nothing captures it here).
+- **Compact:** each channel's root and its backfill root, as dgg's are
+  now. Nothing else changes.
+- **Capture:** `dgg-capture --channels <list> --channel <name>`, as
+  `kick-capture`: it reads the list every minute; a changed URL or Origin
+  reconnects it, its connections numbered on; removed, it exits as such.
+  `--url` and `--no-origin` go (one code path); a channel's Origin is in
+  the list. Its status says what it listens to, as now.
+- **Supervisor:** a `dgg-capture` per listed channel, as for Kick, each
+  logging to `dgg-capture.<name>.log` (names hold no dots), restarted on
+  its own, the list read every minute to start the added. A dgg capture
+  that hands off still stops the supervisor (an upgrade is under way); the
+  other dgg channels' captures get the handoff wait Kick's get, then
+  everything stops. A channel removed from the list ends its capture
+  alone: `dgg-capture` exits with a code of its own for that (not 0), so
+  the supervisor can tell the two apart. The old `dgg-capture.log` is kept
+  and shown as a legacy log, as `kick-capture.log` is.
+- **Install:** a bridge per dgg channel, as for Kick, each logging to its
+  channel's log, all waited on together. Unlike Kick's, any dgg channel
+  not healthy in time fails the install, as dgg's capture does now.
+- **Gaps and backfill:** `dgg-gaps --channel <name>` and `dgg-backfill
+  --channel <name>`, each reading its channel's index and writing its
+  backfill journal; `--channel` defaults to the list's first. The sources,
+  rustlesearch (`Destinygg`) and linkers.ooo, hold destiny.gg's chat only:
+  backfill refuses a channel whose URL isn't destiny.gg's, saying no
+  source has it.
+- **Status:** a dgg capture names its channel, as a Kick one does
+  (`Which` becomes service, channel and instance); `f` cycles dgg's
+  channels' logs too; `r` goes round every channel's captures; the gaps
+  page (`6`) shows the first channel's, and pressing again goes round the
+  channels; the journal box's lines and the index's size are per channel.
+- **The move,** by `migrate` at the supervisor's start, under the index,
+  compact and sync locks, as the move by service did: everything in
+  `dgg/` that's of the old layout (`live/`, `archive/`, `backfill/`,
+  `control/`) into the list's first channel's directory, `dgg/destiny/`,
+  each a rename within the volume, a file already at its destination
+  refused; and `index-dgg.sqlite` renamed to `index-dgg-destiny.sqlite`.
+  Safe to repeat.
+  - An old capture's live files are left while it may still write them
+    (its status fresh), moved by a later `migrate`; the old `control/` is
+    removed once nothing in it is fresh. In an install nothing's left:
+    the bridge starts before the old capture hands off, and `migrate`
+    runs once the old supervisor has stopped, as last time. So nothing
+    reads both places, unlike last time; a live file left behind waits
+    for the next `migrate` to be indexed and compacted.
+  - For the old capture to hand off, the first channel's capture (a
+    bridge too) also heartbeats into the old `dgg/control/` while it's
+    there, as last time.
+  - Tested locally with both builds: the current one capturing, the new
+    one installed over it; the handoff, what moved, the index against
+    one rebuilt from scratch, and sync between two data directories on
+    different builds (neither takes the other's files).
+- **Steps,** each a pause for review:
+  1. The list: parsing, the default, and `install` moving it. Nothing
+     reads it yet.
+  2. Routes by channel, and sync by channel, for both services. dgg has
+     one channel, `dgg/` itself, until step 3. Rolled out to both hosts
+     together, since builds on either side don't sync.
+  3. dgg's layout by channel, its index per channel, gaps and backfill
+     `--channel`, and the move. One capture still, the first channel's,
+     with its old-control heartbeat.
+  4. A `dgg-capture` per channel: `--channels` and `--channel`, the
+     supervisor, the install's bridges, the logs.
+  5. Status.
+  6. Docs.
+  7. Removing the old-control heartbeat and the move, once both hosts
+     have moved.
+- **To decide:**
+  - The first channel's name: `destiny`.
+  - Which other channels are meant, and whether any needs more than a URL
+    and an Origin (a cookie, or a backfill source).
 
 ## Status
 - **`logger-journal`:** live files, plus a writer and a reader. The `.zst`
