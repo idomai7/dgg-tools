@@ -509,6 +509,7 @@ Planned 2026-11-25. Each step a pause for review.
    `gaps` `dgg-gaps`, with no aliases. `capture.log` becomes
    `dgg-capture.log` (`install` renames an old one). `install` still
    finds an older build's `dgg-logger capture` to wait on its handoff.
+   Done 2026-11-25 (`b9651ea`).
 2. **A process per Kick channel:** `kick-capture --channels <list>
    --channel <slug>` captures one channel, so one failing leaves the
    others. It reads the list again every minute: changed ids reconnect it,
