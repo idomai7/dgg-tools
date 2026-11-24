@@ -94,14 +94,16 @@ The logger, codenamed ledgerline: `logger-journal` and `logger`, run as
       fills it in. Its log is `migrate.log`, key `2` in `status --watch`.
 
 ## Design
-- **Journal layout:**
-  - `data/journal/live/YYYY-MM-DD/<instance>.journal`: one file per capture
-    instance per day. These are the hot files.
-  - `data/journal/archive/YYYY/MM/YYYY-MM-DD.journal.zst` plus a `manifest`
-    per month (`journal-archive dgg.0.2`). These are cold.
-  - `data/journal/control/<instance>.status`: heartbeats (`capture-status
-    dgg.0.2`; see `logger/src/control.rs`).
-  - `data/journal/backfill/YYYY-MM-DD/<instance>.journal`: what was fetched from
+- **Journal layout:** each service's journals in a directory of their own,
+  `data/journal/dgg/` and `data/journal/kick/` (see [By service](#by-service)).
+  dgg's:
+  - `dgg/live/YYYY-MM-DD/<instance>.journal`: one file per capture instance
+    per day. These are the hot files.
+  - `dgg/archive/YYYY/MM/YYYY-MM-DD.journal.zst` plus a `manifest` per month
+    (`journal-archive dgg.0.2`). These are cold.
+  - `dgg/control/<instance>.status`: heartbeats (`capture-status dgg.0.2`;
+    see `logger/src/control.rs`).
+  - `dgg/backfill/live/YYYY-MM-DD/<instance>.journal`: what was fetched from
     other archives, one file per backfill run per day. It's filed by the day of
     the messages inside, not when they were fetched. Nothing here is canonical,
     so it never mixes with `live/` or `archive/`.
@@ -148,13 +150,13 @@ The logger, codenamed ledgerline: `logger-journal` and `logger`, run as
       needs the control token, since a pushed status makes the host's captures
       retire.
     - The new instance pushes its status there every second
-      (`PUT /control/<instance>`), shifted onto the old host's clock, and
+      (`PUT /dgg/control/<instance>`), shifted onto the old host's clock, and
       withdraws it on exit.
     - The old instance retires by the same rule as a local handoff, and needs no
       flags or restart.
     - Use a VPN or SSH tunnel between hosts: the bearer token isn't encrypted
       over plain HTTP.
-- **index:** journal into `data/index.sqlite` (schema in
+- **index:** journal into `data/index-dgg.sqlite` (schema in
   `logger/schemas/index/v<major>.<minor>.sql`, currently 0.6, every past version
   kept there; stored in `user_version` as `major << 16 | minor`).
   - The dedupe key is `(timestamp, nick, data)`. It was verified with
@@ -169,9 +171,10 @@ The logger, codenamed ledgerline: `logger-journal` and `logger`, run as
     interrupted run resumes exactly where it stopped.
   - `--rebuild-dgg` replays dgg's whole journal (`--rebuild` rebuilds both
     indexes). An index from another schema version must be rebuilt.
-- **serve / sync:** `serve` also lists live files (`GET /manifest`, format
-  `journal-manifest dgg.0.2`) and serves their bytes
-  (`GET /files/live/<day>/<instance>.journal`, honouring `Range: bytes=N-`).
+- **serve / sync:** `serve` also lists live files (`GET /dgg/manifest`,
+  format `journal-manifest dgg.0.2`) and serves their bytes
+  (`GET /dgg/files/live/<day>/<instance>.journal`, honouring
+  `Range: bytes=N-`).
   - `sync --peer <url>` appends whatever remote bytes are missing locally, then
     fsyncs. Journal files are append-only, so a local copy is always a prefix of
     the remote file and an interrupted sync just resumes.
@@ -338,10 +341,10 @@ undocumented endpoints anonymously: no token, no login, no app. Planned
     and `endpoint` if the day had only one). Its manifest is `journal-archive
     kick.0.0`.
   - `serve` lists Kick's journals in a manifest of their own, `GET
-    /manifest/kick` (`journal-manifest kick.0.0`), with paths
-    `kick/<slug>/live/...` and `kick/<slug>/archive/...`, and serves those
-    files. dgg's manifest is unchanged, so hosts on different builds keep
-    syncing dgg's journals; a peer without Kick's manifest (`404`) has none.
+    /kick/manifest` (`journal-manifest kick.0.0`), with paths relative to
+    `kick/`, `<slug>/live/...` and `<slug>/archive/...`, and serves those
+    files at `/kick/files/...`. A peer without Kick's manifest (`404`) has
+    none.
   - Each channel's root has its own `control/synced-archives`, as
     `synced-archives kick.0.0`.
 - **Index:** `index-kick.sqlite`, separate from dgg's, with schema versions of
@@ -357,22 +360,26 @@ undocumented endpoints anonymously: no token, no login, no app. Planned
     often as it's seen.
   - `dgg-logger index` keeps both: Kick's follows on a thread of its own, at
     the same pace, so either failing for good leaves the other. `--rebuild`
-    rebuilds both, `--rebuild-dgg` and `--rebuild-kick` only one. Its log lines start `kick: `.
+    rebuilds both, `--rebuild-dgg` and `--rebuild-kick` only one. Its log
+    lines start `kick: `.
+  - Files are named by their paths in `kick/`, `<slug>/live/...`.
   - Frames are read into events by `kick-api`'s `Frame::events`, shared
     with kick-mod.
   - `migrate` checks its schema too, and `status` shows its size and last
     write.
 - **Serving kick-mod:**
-  - `GET /kick/<slug>/users/<id>`: a user's history in the channel, as JSON:
-    their messages (the newest 500, each with its deletion), and the bans,
-    timeouts and unbans on them, with the newest name seen.
+  - `GET /kick/channels/<slug>/users/<id>`: a user's history in the
+    channel, as JSON: their messages (the newest 500, each with its
+    deletion), and the bans, timeouts and unbans on them, with the newest
+    name seen.
     - From the Kick index, and from what it hasn't reached yet: the
       channel's live files past its checkpoints, indexed in memory for the
       query (the same code, into an in-memory database). Both are read in
       one snapshot of the index, so a round finishing meanwhile can't count
       anything twice, and the index's lag never shows.
-  - `GET /kick/<slug>/events`: live chat as server-sent events, by tailing the
-    channel's live files every 250 ms, apart from the capture process.
+  - `GET /kick/channels/<slug>/events`: live chat as server-sent events, by
+    tailing the channel's live files every 250 ms, apart from the capture
+    process.
     - From now on: nothing written before is replayed. A new file (another
       instance's, or the next day's) is read from its start.
     - Events are `open`, `close`, `event` (Kick's event name and data, as
@@ -444,18 +451,38 @@ yet, so old peers need no compatibility. Planned 2026-11-24.
     compaction draining the old files.
 - **Removing the old code:** once every host has migrated and compacted
   the day its old capture last wrote (the day after the rollout), a later
-  release drops reading the old places, the second heartbeat and the
-  `/control` fallback. `migrate` then only checks that the old layout is
-  gone, and logs anything left.
+  release drops reading the old places (`Service::legacy`, `Root::legacy`,
+  `service::locate`), the second heartbeat (`Config::legacy_control`, and
+  serve's `legacy_control`), the `/control` fallback, and `dgg::migrate`.
+  `migrate` then only checks that the old layout is gone, and logs anything
+  left.
 - **Steps,** each a pause for review:
   1. The index flags.
   2. The `Service` trait and `dgg/`, moving code without changing
      behaviour.
-  3. Manifests, sync, compaction and index pacing generic over it.
+  3. Manifests, sync, compaction and index pacing generic over it, and the
+     routes (the manifests' paths and the file routes change together).
   4. The layout and its migration.
-  5. The routes.
-  6. Docs.
-  7. Removing the old code, after the rollout.
+  5. Docs.
+  6. Removing the old code, after the rollout.
+- **Status:** steps 1 to 5 done (2026-11-24), not yet run on a host, nor
+  tested with both builds.
+  - `Service` (`logger/src/service.rs`): its name, variant, index file and
+    stats, its directory, its journal roots, how a path splits into a root's
+    prefix and the rest, and a root's legacy directory. dgg's is in `dgg/`
+    (capture, index, gaps, backfill, and the move), Kick's in `kick/`.
+    Capture's handoff machinery (`capture.rs`) and the index's opening and
+    pacing (`index.rs`) are shared.
+  - Not as planned: Kick has no `/kick/control` (`kick-capture` has no
+    `--peer` yet), so only dgg's control routes moved.
+  - The move is `dgg::migrate`, called by `migrate`. Each step is safe to
+    repeat; a file at both paths, or an index at both names, fails the
+    migration for a person to sort out, which keeps index, compact and sync
+    from starting until the next start.
+  - In an install, the bridge starts before the old capture hands off, and
+    `migrate` runs only once the old supervisor has stopped, so normally
+    nothing is left being written: reading the old places is for a capture
+    run by hand, or a host where the handoff didn't happen.
 
 ## Status
 - **`logger-journal`:** live files, plus a writer and a reader. The `.zst`
@@ -505,6 +532,9 @@ yet, so old peers need no compatibility. Planned 2026-11-24.
     `kick-capture --bridge`, and waits for the old one to hand off to it.
     A Kick bridge that isn't healthy in time is only warned of: dgg's
     capture comes first. `kick-channels` moves with the root.
+- **By service:** dgg and Kick each a service, with dgg's journals moved
+  into `journal/dgg/` by `migrate` while capture runs (see
+  [By service](#by-service)). Not yet run on a host.
 - **Cross-host handoff:** done. Tested live: the old instance retired about 38 s
   after the new one started.
 - **`serve` / `sync`:** done. The supervisor's side is in [deploy](deploy.md).
