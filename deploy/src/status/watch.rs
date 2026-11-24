@@ -1,18 +1,19 @@
 //! `status --watch`: the report redrawn every second, with a page filling
 //! the rest of the screen.
 //!
-//! The pages, by key, are grouped: what's live (`1` the supervisor's log,
-//! `2` the newest records a capture wrote, again for the next capture, and
-//! `3` migrate's log), then periodic maintenance (`4` capture's log, `5`
-//! compact's, `6` index's, `7` the gaps in capture, looked at again every 30
-//! seconds, and `8` sync's log), then `9` kick-capture's log. `r` redraws
-//! now, `e` opens the data folder, `q` (or Esc, or Ctrl-C) quits. On a
-//! narrow screen the keys take more than one line.
+//! The keys are grouped. First, with letters: `l` every log at once, in
+//! time order, the page it starts on; `r` the newest records a capture
+//! wrote, again for the next capture; Space redraws now, `e` opens the data
+//! folder, and `q` (or Esc, or Ctrl-C) quits. Then each program's log, with
+//! numbers: `1` the supervisor's, `2` migrate's, `3` capture's, `4`
+//! compact's, `5` index's, `6` the gaps in capture, looked at again every
+//! 30 seconds, and `7` sync's. Last, `8` kick-capture's log. On a narrow
+//! screen the keys take more than one line.
 
 use {
   super::{
-    Report, Watcher, capture_tail, gaps, health, journal_lines, kick_lines,
-    tail,
+    Report, Watcher, all_logs, capture_tail, gaps, health, journal_lines,
+    kick_lines, tail,
   },
   crate::paths::Paths,
   ::common::{
@@ -37,35 +38,48 @@ use {
   },
 };
 
+/// What a key does.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Action {
+  Show(Page),
+  Redraw,
+  OpenData,
+  Quit,
+}
+
 /// A page for the bottom of the screen, as a key offers it.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Page {
+  /// Every log at once.
+  Logs,
   /// One of [`LOGS`](super::LOGS).
   Log(&'static str),
   Records,
   Gaps,
 }
 
-/// The pages, by key and name, in groups: what's live, then periodic
-/// maintenance, then Kick.
-const PAGES: [&[(char, &str, Page)]; 3] = [
+/// The keys, with their names and what they do, in groups: the views
+/// across everything and the controls, then each program's log, then
+/// Kick's.
+const KEYS: [&[(char, &str, Action)]; 3] = [
   &[
-    ('1', "supervisor", Page::Log("supervisor")),
-    ('2', "records", Page::Records),
-    ('3', "migrate", Page::Log("migrate")),
+    ('l', "logs", Action::Show(Page::Logs)),
+    ('r', "records", Action::Show(Page::Records)),
+    (' ', "redraw", Action::Redraw),
+    ('e', "open data", Action::OpenData),
+    ('q', "quit", Action::Quit),
   ],
   &[
-    ('4', "capture", Page::Log("capture")),
-    ('5', "compact", Page::Log("compact")),
-    ('6', "index", Page::Log("index")),
-    ('7', "gaps", Page::Gaps),
-    ('8', "sync", Page::Log("sync")),
+    ('1', "supervisor", Action::Show(Page::Log("supervisor"))),
+    ('2', "migrate", Action::Show(Page::Log("migrate"))),
+    ('3', "capture", Action::Show(Page::Log("capture"))),
+    ('4', "compact", Action::Show(Page::Log("compact"))),
+    ('5', "index", Action::Show(Page::Log("index"))),
+    ('6', "gaps", Action::Show(Page::Gaps)),
+    ('7', "sync", Action::Show(Page::Log("sync"))),
   ],
-  &[('9', "kick", Page::Log("kick-capture"))],
+  &[('8', "kick", Action::Show(Page::Log("kick-capture")))],
 ];
-
-/// The keys that aren't pages.
-const CONTROLS: &str = "r redraw  e open data  q quit";
 
 /// How often the gaps are looked at again while they're shown: looking
 /// takes a moment, so it isn't redone every redraw.
@@ -73,6 +87,8 @@ const GAPS_EVERY: Duration = Duration::from_secs(30);
 
 /// What fills the bottom of the screen.
 enum View {
+  /// Every log at once.
+  Logs,
   /// One of [`LOGS`](super::LOGS).
   Log(&'static str),
   /// The newest records of a capture instance, if one is running.
@@ -153,6 +169,7 @@ impl View {
   /// again shows the next capture's records.
   fn show(self, page: Page, report: &Report) -> Self {
     match (page, self) {
+      (Page::Logs, _) => Self::Logs,
       (Page::Log(name), _) => Self::Log(name),
       (Page::Records, current) => current.next_records(report),
       (Page::Gaps, gaps @ Self::Gaps(_)) => gaps,
@@ -162,6 +179,12 @@ impl View {
 
   fn pane(&self, paths: &Paths) -> Pane<'static> {
     match self {
+      Self::Logs => Pane {
+        title: "every log, in time order".into(),
+        header: None,
+        lines: all_logs(&paths.logs, 500),
+        empty: "(empty: shell runs print to their own windows)",
+      },
       Self::Log(log) => Pane {
         title: format!("{log}.log"),
         header: None,
@@ -170,7 +193,7 @@ impl View {
         empty: "(empty: shell runs print to their own windows)",
       },
       Self::Records(Some(instance)) => Pane {
-        title: format!("records: {instance} (2 again for the next capture)"),
+        title: format!("records: {instance} (r again for the next capture)"),
         header: None,
         lines: capture_tail(&paths.data.join("journal"), instance, 500)
           .unwrap_or_else(|e| vec![format!("(can't read: {e})")]),
@@ -208,7 +231,7 @@ impl View {
         .iter()
         .position(|instance| instance == current)
         .map_or(0, |at| (at + 1) % instances.len()),
-      Self::Records(None) | Self::Log(_) | Self::Gaps(_) => 0,
+      Self::Records(None) | Self::Logs | Self::Log(_) | Self::Gaps(_) => 0,
     };
     Self::Records(instances.get(next).map(|instance| (*instance).to_owned()))
   }
@@ -229,7 +252,7 @@ fn event_loop(
   paths: &Paths,
   interval: Duration,
 ) -> io::Result<()> {
-  let mut view = View::Log("supervisor");
+  let mut view = View::Logs;
   loop {
     let report = watcher.gather(paths)?;
     if let View::Gaps(gaps) = &mut view {
@@ -252,41 +275,47 @@ fn event_loop(
         continue;
       }
       match key.code {
-        KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
+        KeyCode::Esc => return Ok(()),
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
           return Ok(());
         }
-        KeyCode::Char(key) if let Some(page) = page(key) => {
-          view = view.show(page, &report);
-          break;
-        }
-        KeyCode::Char('r') => break,
-        KeyCode::Char('e') => open(&paths.data),
+        KeyCode::Char(key) => match action(key) {
+          Some(Action::Show(page)) => {
+            view = view.show(page, &report);
+            break;
+          }
+          Some(Action::Redraw) => break,
+          Some(Action::OpenData) => open(&paths.data),
+          Some(Action::Quit) => return Ok(()),
+          None => {}
+        },
         _ => {}
       }
     }
   }
 }
 
-/// The page `key` offers, if any.
-fn page(key: char) -> Option<Page> {
-  PAGES
+/// What `key` does, if anything.
+fn action(key: char) -> Option<Action> {
+  KEYS
     .iter()
     .flat_map(|group| group.iter())
     .find(|(offered, _, _)| *offered == key)
-    .map(|(_, _, page)| *page)
+    .map(|(_, _, action)| *action)
 }
 
 /// The keys, in their groups, on as many lines `width` wide as they need. A
-/// group isn't split across lines, and the controls go on the first line
-/// with room.
+/// group isn't split across lines, and goes on the first line with room.
 pub fn keys(width: u16) -> Vec<String> {
-  let groups: Vec<String> = PAGES
+  let groups: Vec<String> = KEYS
     .iter()
     .map(|group| {
       group
         .iter()
-        .map(|(key, name, _)| format!("{key} {name}"))
+        .map(|(key, name, _)| match key {
+          ' ' => format!("space {name}"),
+          key => format!("{key} {name}"),
+        })
         .collect::<Vec<_>>()
         .join("  ")
     })
@@ -295,20 +324,13 @@ pub fn keys(width: u16) -> Vec<String> {
     |line: &String, group: &str| line.len() + 3 + group.len() <= width as usize;
   let mut lines: Vec<String> = Vec::new();
   for group in groups {
-    match lines.last_mut() {
-      Some(line) if fits(line, &group) => {
+    match lines.iter_mut().find(|line| fits(line, &group)) {
+      Some(line) => {
         line.push_str(" | ");
         line.push_str(&group);
       }
-      _ => lines.push(format!(" {group}")),
+      None => lines.push(format!(" {group}")),
     }
-  }
-  match lines.iter_mut().find(|line| fits(line, CONTROLS)) {
-    Some(line) => {
-      line.push_str(" | ");
-      line.push_str(CONTROLS);
-    }
-    None => lines.push(format!(" {CONTROLS}")),
   }
   lines
 }

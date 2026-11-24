@@ -516,6 +516,52 @@ pub fn tail(path: &Path, lines: usize) -> io::Result<Vec<String>> {
   Ok(all[skip..].iter().map(|line| (*line).to_owned()).collect())
 }
 
+/// The last `lines` lines of all the [`LOGS`] in `logs`, merged in time
+/// order, each after its time and its log's name. A line without a time of
+/// its own keeps its place after the line before it.
+pub fn all_logs(logs: &Path, lines: usize) -> Vec<String> {
+  // Time, log, line in the log, and the line as shown.
+  let mut all: Vec<(String, usize, usize, String)> = Vec::new();
+  for (log, name) in LOGS.iter().enumerate() {
+    let Ok(tail) = tail(&logs.join(format!("{name}.log")), lines) else {
+      continue;
+    };
+    let mut time = String::new();
+    for (at, line) in tail.into_iter().enumerate() {
+      let shown = match logged_at(&line) {
+        Some(own) => {
+          time = own.to_owned();
+          format!("{own} {name:<12} {}", line[own.len()..].trim_start())
+        }
+        None => format!("{:24} {name:<12} {line}", ""),
+      };
+      all.push((time.clone(), log, at, shown));
+    }
+  }
+  all.sort();
+  let skip = all.len().saturating_sub(lines);
+  all
+    .into_iter()
+    .skip(skip)
+    .map(|(.., shown)| shown)
+    .collect()
+}
+
+/// The time a log line starts with, as [`utc_timestamp`] writes it
+/// (`YYYY-MM-DD HH:MM:SS.mmmZ`), if it starts with one.
+fn logged_at(line: &str) -> Option<&str> {
+  let time = line.get(..24)?;
+  let shape = time.bytes().enumerate().all(|(at, byte)| match at {
+    4 | 7 => byte == b'-',
+    10 => byte == b' ',
+    13 | 16 => byte == b':',
+    19 => byte == b'.',
+    23 => byte == b'Z',
+    _ => byte.is_ascii_digit(),
+  });
+  shape.then_some(time)
+}
+
 /// The last `lines` records `instance` wrote to its newest live file, one
 /// line each: receive time (`HH:MM:SS.mmmZ`, UTC), connection, and the frame as received
 /// (or what happened to the connection). Reads at most the last 64 KB.

@@ -5,7 +5,9 @@ use {
   ::common::time::{now_ms, utc_day},
   ::deploy::{
     paths::Paths,
-    status::{Health, Watcher, capture_tail, gaps, journal_lines, tail, text},
+    status::{
+      Health, Watcher, all_logs, capture_tail, gaps, journal_lines, tail, text,
+    },
   },
 };
 
@@ -178,7 +180,8 @@ fn draws_the_watch_screen() {
     " journal ",
     " capture.log ",
     "capturing as a-1",
-    "1 supervisor  2 records  3 migrate | 4 capture  5 compact",
+    "l logs  r records  space redraw  e open data  q quit | 8 kick",
+    " 1 supervisor  2 migrate  3 capture",
   ] {
     assert!(screen.contains(expected), "{expected:?} not in\n{screen}");
   }
@@ -190,14 +193,15 @@ fn the_watch_keys_take_more_lines_when_narrow() {
 
   let wide = keys(200);
   assert_eq!(wide.len(), 1, "{wide:?}");
-  assert!(wide[0].contains("3 migrate | 4 capture"), "{wide:?}");
-  assert!(wide[0].contains("9 kick | r redraw"), "{wide:?}");
+  assert!(wide[0].contains("q quit | 1 supervisor"), "{wide:?}");
+  assert!(wide[0].ends_with("7 sync | 8 kick"), "{wide:?}");
   let narrow = keys(80);
   assert_eq!(narrow.len(), 2, "{narrow:?}");
   assert!(narrow.iter().all(|line| line.len() <= 80), "{narrow:?}");
-  assert!(narrow[0].ends_with("3 migrate | r redraw  e open data  q quit"));
-  assert!(narrow[1].starts_with(" 4 capture"), "{narrow:?}");
-  assert!(narrow[1].ends_with("8 sync | 9 kick"), "{narrow:?}");
+  // Kick's group goes on the first line with room.
+  assert!(narrow[0].ends_with("q quit | 8 kick"), "{narrow:?}");
+  assert!(narrow[1].starts_with(" 1 supervisor"), "{narrow:?}");
+  assert!(narrow[1].ends_with("7 sync"), "{narrow:?}");
 }
 
 #[test]
@@ -401,4 +405,32 @@ fn reports_kicks_captures_and_channels() {
   let report = Watcher::new().unwrap().gather(&paths).unwrap();
   let problem = report.kick.problem.as_deref().unwrap();
   assert!(problem.contains("line 1"), "{problem}");
+}
+
+#[test]
+fn merges_the_logs_in_time_order() {
+  let dir = TempDir::new("deploy-status-all-logs");
+  dir.write(
+    "capture.log",
+    "2026-11-24 10:00:01.000Z a-1: capturing\n\
+     2026-11-24 10:00:03.000Z a-1: handed off to a-2\n",
+  );
+  dir.write(
+    "supervisor.log",
+    "2026-11-24 10:00:00.000Z started\n\
+     2026-11-24 10:00:02.000Z capture: started, pid 1\n\
+     a line without a time\n",
+  );
+  let all = all_logs(dir.path(), 500);
+  assert_eq!(
+    all,
+    [
+      "2026-11-24 10:00:00.000Z supervisor   started",
+      "2026-11-24 10:00:01.000Z capture      a-1: capturing",
+      "2026-11-24 10:00:02.000Z supervisor   capture: started, pid 1",
+      "                         supervisor   a line without a time",
+      "2026-11-24 10:00:03.000Z capture      a-1: handed off to a-2",
+    ]
+  );
+  assert_eq!(all_logs(dir.path(), 2).len(), 2);
 }
