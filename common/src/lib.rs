@@ -4,6 +4,7 @@
 //! - [`atomic_file`]: replacing a file whole.
 //! - [`format`](mod@format): durations, sizes and counts, for people.
 //! - [`fs`]: files and directories, beyond `std::fs`.
+//! - [`log`]: log levels, and printing lines at them.
 //! - [`powershell`]: running a PowerShell command, on Windows.
 //! - [`random`]: from the OS, and fast.
 //! - [`temp_dir`]: a directory of a test's own.
@@ -12,6 +13,7 @@
 pub mod atomic_file;
 pub mod format;
 pub mod fs;
+pub mod log;
 pub mod powershell;
 pub mod random;
 pub mod temp_dir;
