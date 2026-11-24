@@ -551,7 +551,9 @@ Planned 2026-11-25. Each step a pause for review.
 3. **Log pages:** `3` capture shows every capture's log, dgg's and
    Kick's, in time order, each line naming its channel; a key narrows it
    to one channel, cycling. `8` goes. The rest (index, migrate, compact,
-   sync) already hold both services' lines.
+   sync) already hold both services' lines. Done: each Kick channel's
+   capture logs to `kick-capture.<slug>.log`, so a channel's lines are
+   shown apart exactly; `f` is the key, and `serve` moved to `8`.
 4. **Boxes:** Tab and Shift-Tab move focus between the boxes (the log
    page too), its border highlighted. Up, Down, Page Up and Page Down
    scroll the focused one when it's over-tall; `m` minimizes it to its

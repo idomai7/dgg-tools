@@ -5,7 +5,7 @@ use {
   ::deploy::{
     install,
     paths::{Paths, user_root},
-    status::{self, LOGS, Watcher},
+    status::{self, Watcher},
     supervise::{self, Config, Exit, Stop},
   },
   ::logger::cli,
@@ -566,8 +566,8 @@ fn print_status(paths: &Paths, lines: usize) -> ::std::io::Result<()> {
   for line in status::text(&report) {
     println!("{line}");
   }
-  for log in LOGS {
-    let path = paths.logs.join(format!("{log}.log"));
+  for log in status::logs(&report) {
+    let path = paths.logs.join(format!("{}.log", log.name));
     if let Ok(tail) = status::tail(&path, lines) {
       println!();
       println!("LOG {}", path.display());

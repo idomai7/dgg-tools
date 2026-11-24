@@ -3,18 +3,19 @@
 //!
 //! The keys are grouped. First, with letters: `l` every log at once, in
 //! time order, the page it starts on; `r` the newest records a capture
-//! wrote, again for the next capture; Space redraws now, `e` opens the data
-//! folder, and `q` (or Esc, or Ctrl-C) quits. Then each program's log, with
-//! numbers: `1` the supervisor's, `2` migrate's, `3` capture's, `4`
-//! compact's, `5` index's, `6` the gaps in capture, looked at again every
-//! 30 seconds, and `7` sync's. Last, `8` kick-capture's log and `9`
-//! serve's. On a narrow screen the keys take more than one line.
+//! wrote, again for the next capture; `f` one capture's log, again for the
+//! next; Space redraws now, `e` opens the data folder, and `q` (or Esc, or
+//! Ctrl-C) quits. Then each program's log, with numbers: `1` the
+//! supervisor's, `2` migrate's, `3` every capture's, dgg's and Kick's, in
+//! time order, `4` compact's, `5` index's, `6` the gaps in capture, looked
+//! at again every 30 seconds, `7` sync's and `8` serve's. On a narrow
+//! screen the keys take more than one line.
 
 use {
   super::{
-    Report, Watcher, Which, all_logs, capture_tail, gaps, health,
-    journal_lines, listening, listening_width, logged_at, per_minute,
-    program_width, service, tail,
+    Log, Report, Watcher, Which, capture_logs, capture_tail, gaps, health,
+    journal_lines, listening, listening_width, logged_at, logs, merge_logs,
+    per_minute, program_width, service, tail,
   },
   crate::paths::Paths,
   ::common::{
@@ -57,17 +58,21 @@ enum Page {
   Logs,
   /// One of [`LOGS`](super::LOGS).
   Log(&'static str),
+  /// Every capture's log.
+  Captures,
+  /// One capture's log, the next.
+  Capture,
   Records,
   Gaps,
 }
 
 /// The keys, with their names and what they do, in groups: the views
-/// across everything and the controls, then each program's log, then
-/// Kick's and serve's.
-const KEYS: [&[(char, &str, Action)]; 3] = [
+/// across everything and the controls, then each program's log.
+const KEYS: [&[(char, &str, Action)]; 2] = [
   &[
     ('l', "logs", Action::Show(Page::Logs)),
     ('r', "records", Action::Show(Page::Records)),
+    ('f', "channel", Action::Show(Page::Capture)),
     (' ', "redraw", Action::Redraw),
     ('e', "open data", Action::OpenData),
     ('q', "quit", Action::Quit),
@@ -75,15 +80,12 @@ const KEYS: [&[(char, &str, Action)]; 3] = [
   &[
     ('1', "supervisor", Action::Show(Page::Log("supervisor"))),
     ('2', "migrate", Action::Show(Page::Log("migrate"))),
-    ('3', "dgg-capture", Action::Show(Page::Log("dgg-capture"))),
+    ('3', "capture", Action::Show(Page::Captures)),
     ('4', "compact", Action::Show(Page::Log("compact"))),
     ('5', "index", Action::Show(Page::Log("index"))),
     ('6', "gaps", Action::Show(Page::Gaps)),
     ('7', "sync", Action::Show(Page::Log("sync"))),
-  ],
-  &[
-    ('8', "kick", Action::Show(Page::Log("kick-capture"))),
-    ('9', "serve", Action::Show(Page::Log("serve"))),
+    ('8', "serve", Action::Show(Page::Log("serve"))),
   ],
 ];
 
@@ -97,6 +99,8 @@ enum View {
   Logs,
   /// One of [`LOGS`](super::LOGS).
   Log(&'static str),
+  /// The captures' logs, or just one's, by the name it's shown as.
+  Captures(Option<String>),
   /// The newest records of a capture, if one is running.
   Records(Option<Which>),
   Gaps(Gaps),
@@ -177,6 +181,8 @@ impl View {
     match (page, self) {
       (Page::Logs, _) => Self::Logs,
       (Page::Log(name), _) => Self::Log(name),
+      (Page::Captures, _) => Self::Captures(None),
+      (Page::Capture, current) => current.next_capture(report),
       (Page::Records, current) => current.next_records(report),
       (Page::Gaps, gaps @ Self::Gaps(_)) => gaps,
       (Page::Gaps, _) => Self::Gaps(Gaps::new()),
@@ -188,7 +194,25 @@ impl View {
       Self::Logs => Pane {
         title: "every log, in time order".into(),
         header: None,
-        lines: all_logs(&paths.logs, 500),
+        lines: merge_logs(&paths.logs, &logs(report), 500),
+        empty: "(empty: shell runs print to their own windows)",
+      },
+      Self::Captures(None) => Pane {
+        title: "every capture's log, in time order (f for one)".into(),
+        header: None,
+        lines: merge_logs(&paths.logs, &capture_logs(report), 500),
+        empty: "(empty: shell runs print to their own windows)",
+      },
+      Self::Captures(Some(shown)) => Pane {
+        title: format!("{shown}'s log (f again for the next)"),
+        header: None,
+        lines: match capture_logs(report)
+          .into_iter()
+          .find(|l| l.shown == *shown)
+        {
+          Some(log) => merge_logs(&paths.logs, &[log], 500),
+          None => Vec::new(),
+        },
         empty: "(empty: shell runs print to their own windows)",
       },
       Self::Log(log) => Pane {
@@ -221,6 +245,22 @@ impl View {
         empty: "(looking...)",
       },
     }
+  }
+
+  /// The first capture's log, or if one's is shown, the next one's; after
+  /// the last, every capture's again. The log Kick's captures shared before
+  /// each channel had its own is only among every capture's.
+  fn next_capture(&self, report: &Report) -> Self {
+    let mut logs: Vec<Log> = capture_logs(report);
+    logs.pop();
+    let next = match self {
+      Self::Captures(Some(current)) => logs
+        .iter()
+        .position(|log| log.shown == *current)
+        .map_or(0, |at| at + 1),
+      _ => 0,
+    };
+    Self::Captures(logs.into_iter().nth(next).map(|log| log.shown))
   }
 
   /// The records of the capture at the top of the captures box, or if a

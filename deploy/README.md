@@ -165,14 +165,20 @@ with how fast today's journal is growing and a page filling the rest of the
 window. The keys are grouped:
 
 - `l` every log at once, in time order, each line naming its log (the page
-  it starts on); `r` the latest records of the newest capture (`r` again
-  for the next capture); Space redraws, `e` opens the data folder, `q`
-  quits;
-- each program's log: `1` the supervisor's, `2` migrate's, `3` dgg-capture's,
-  `4` compact's, `5` index's, `6` the gaps in capture as `dgg-gaps` reports
-  them (looked at again every 30 seconds; it reads the index as `index`
-  has brought it, without updating it), `7` sync's;
-- `8` kick-capture's log.
+  it starts on); `r` the latest records of the capture at the top of the
+  captures box (`r` again for the next capture), titled with what it
+  listens to; `f` one capture's log, dgg's or a Kick channel's (`f` again
+  for the next, and after the last, every capture's); Space redraws, `e`
+  opens the data folder, `q` quits;
+- each program's log: `1` the supervisor's, `2` migrate's, `3` every
+  capture's, dgg's and Kick's, in time order, `4` compact's, `5` index's,
+  `6` the gaps in capture as `dgg-gaps` reports them (looked at again every
+  30 seconds; it reads the index as `index` has brought it, without
+  updating it), `7` sync's, `8` serve's.
+
+The captures box lists dgg's and Kick's captures together, each after its
+service, the unhealthy first (stale, then connecting), then the busiest,
+by frames a minute over about the last minute.
 
 In a narrow window the keys take two lines.
 

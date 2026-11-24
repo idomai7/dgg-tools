@@ -9,7 +9,7 @@
 pub mod watch;
 
 use {
-  crate::{paths::Paths, peer, processes},
+  crate::{paths::Paths, peer, processes, supervise::kick_capture_log},
   ::common::{
     format,
     time::{now_ms, utc_day, utc_timestamp},
@@ -46,7 +46,9 @@ pub const STALE_MS: i64 = 5000;
 /// ms: from the last snapshot at least this old.
 pub const RATE_OVER: i64 = 60_000;
 
-/// The logs a supervisor writes, in the order they're offered.
+/// The logs a supervisor writes, in the order they're offered, but for
+/// each Kick channel's capture's (see [`logs`]). `kick-capture` is the
+/// one Kick's captures shared before each channel had its own.
 pub const LOGS: [&str; 8] = [
   "dgg-capture",
   "index",
@@ -656,13 +658,59 @@ pub fn tail(path: &Path, lines: usize) -> io::Result<Vec<String>> {
   Ok(all[skip..].iter().map(|line| (*line).to_owned()).collect())
 }
 
-/// The last `lines` lines of all the [`LOGS`] in `logs`, merged in time
-/// order, each after its time, its level and its log's name. A line without
-/// a time of its own keeps its place after the line before it.
-pub fn all_logs(logs: &Path, lines: usize) -> Vec<String> {
+/// A log in the logs directory: its name (`<name>.log`), and what it's
+/// shown as.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Log {
+  pub name: String,
+  pub shown: String,
+}
+
+impl Log {
+  fn named(name: &str) -> Self {
+    Self {
+      name: name.into(),
+      shown: name.into(),
+    }
+  }
+
+  /// Kick channel `slug`'s capture's, shown as `kick-capture <slug>`, as
+  /// the programs box names its capture.
+  fn kick(slug: &str) -> Self {
+    Self {
+      name: kick_capture_log(slug),
+      shown: format!("kick-capture {slug}"),
+    }
+  }
+}
+
+/// Every log: the [`LOGS`], then each Kick channel's capture's.
+pub fn logs(report: &Report) -> Vec<Log> {
+  let mut logs: Vec<Log> = LOGS.iter().map(|name| Log::named(name)).collect();
+  let channels = report.kick.channels.iter();
+  logs.extend(channels.map(|channel| Log::kick(&channel.slug)));
+  logs
+}
+
+/// The captures' logs: dgg's, each Kick channel's, then the one Kick's
+/// shared before.
+pub fn capture_logs(report: &Report) -> Vec<Log> {
+  let mut logs = vec![Log::named("dgg-capture")];
+  let channels = report.kick.channels.iter();
+  logs.extend(channels.map(|channel| Log::kick(&channel.slug)));
+  logs.push(Log::named("kick-capture"));
+  logs
+}
+
+/// The last `lines` lines of `these` logs in `logs`, merged in time order,
+/// each after its time, its level and what its log is shown as. A line
+/// without a time of its own keeps its place after the line before it.
+pub fn merge_logs(logs: &Path, these: &[Log], lines: usize) -> Vec<String> {
+  let width = these.iter().map(|log| log.shown.chars().count()).max();
+  let width = width.unwrap_or(0).max(12);
   // Time, log, line in the log, and the line as shown.
   let mut all: Vec<(String, usize, usize, String)> = Vec::new();
-  for (log, name) in LOGS.iter().enumerate() {
+  for (log, Log { name, shown }) in these.iter().enumerate() {
     let Ok(tail) = tail(&logs.join(format!("{name}.log")), lines) else {
       continue;
     };
@@ -676,8 +724,10 @@ pub fn all_logs(logs: &Path, lines: usize) -> Vec<String> {
         None => ("", line.as_str()),
       };
       let shown = match Level::split(rest) {
-        Some((level, rest)) => format!("{own:24} {level} {name:<12} {rest}"),
-        None => format!("{own:24} {:5} {name:<12} {rest}", ""),
+        Some((level, rest)) => {
+          format!("{own:24} {level} {shown:<width$} {rest}")
+        }
+        None => format!("{own:24} {:5} {shown:<width$} {rest}", ""),
       };
       all.push((time.clone(), log, at, shown));
     }

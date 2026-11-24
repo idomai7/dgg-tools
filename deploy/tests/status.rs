@@ -6,8 +6,8 @@ use {
   ::deploy::{
     paths::Paths,
     status::{
-      Health, Watcher, Which, all_logs, capture_tail, gaps, journal_lines,
-      tail, text,
+      Health, LOGS, Log, Watcher, Which, capture_logs, capture_tail, gaps,
+      journal_lines, merge_logs, tail, text,
     },
   },
 };
@@ -196,8 +196,9 @@ fn draws_the_watch_screen() {
     " journal ",
     " dgg-capture.log ",
     "capturing as a-1",
-    "l logs  r records  space redraw  e open data  q quit | 8 kick  9 serve",
-    " 1 supervisor  2 migrate  3 dgg-capture",
+    " l logs  r records  f channel  space redraw  e open data  q quit ",
+    " 1 supervisor  2 migrate  3 capture  4 compact  5 index  6 gaps  7 sync  \
+     8 serve",
   ] {
     assert!(screen.contains(expected), "{expected:?} not in\n{screen}");
   }
@@ -218,17 +219,13 @@ fn the_watch_keys_take_more_lines_when_narrow() {
   let wide = keys(200);
   assert_eq!(wide.len(), 1, "{wide:?}");
   assert!(wide[0].contains("q quit | 1 supervisor"), "{wide:?}");
-  assert!(wide[0].ends_with("7 sync | 8 kick  9 serve"), "{wide:?}");
+  assert!(wide[0].ends_with("7 sync  8 serve"), "{wide:?}");
   let narrow = keys(80);
   assert_eq!(narrow.len(), 2, "{narrow:?}");
   assert!(narrow.iter().all(|line| line.len() <= 80), "{narrow:?}");
-  // The last group goes on the first line with room.
-  assert!(
-    narrow[0].ends_with("q quit | 8 kick  9 serve"),
-    "{narrow:?}"
-  );
+  assert!(narrow[0].ends_with("q quit"), "{narrow:?}");
   assert!(narrow[1].starts_with(" 1 supervisor"), "{narrow:?}");
-  assert!(narrow[1].ends_with("7 sync"), "{narrow:?}");
+  assert!(narrow[1].ends_with("8 serve"), "{narrow:?}");
 }
 
 #[test]
@@ -578,7 +575,14 @@ fn merges_the_logs_in_time_order() {
      2026-11-24 10:00:02.000Z dgg-capture: started, pid 1\n\
      a line without a time\n",
   );
-  let all = all_logs(dir.path(), 500);
+  let every: Vec<Log> = LOGS
+    .iter()
+    .map(|name| Log {
+      name: (*name).into(),
+      shown: (*name).into(),
+    })
+    .collect();
+  let all = merge_logs(dir.path(), &every, 500);
   assert_eq!(
     all,
     [
@@ -589,5 +593,52 @@ fn merges_the_logs_in_time_order() {
       "2026-11-24 10:00:03.000Z WARN  dgg-capture  a-1: control: busy",
     ]
   );
-  assert_eq!(all_logs(dir.path(), 2).len(), 2);
+  assert_eq!(merge_logs(dir.path(), &every, 2).len(), 2);
+}
+
+#[test]
+fn merges_the_captures_logs() {
+  let dir = TempDir::new("deploy-status-capture-logs");
+  dir.write(
+    "kick-channels",
+    "one 2 1
+",
+  );
+  dir.write(
+    "logs/dgg-capture.log",
+    "2026-11-24 10:00:01.000Z INFO  a-1: capturing
+",
+  );
+  dir.write(
+    "logs/kick-capture.one.log",
+    "2026-11-24 10:00:02.000Z WARN  a-1: one: dropped
+",
+  );
+  // Shared by every channel, before each had its own.
+  dir.write(
+    "logs/kick-capture.log",
+    "2026-11-24 10:00:00.000Z INFO  a-0: one: capturing
+",
+  );
+  dir.write(
+    "logs/index.log",
+    "2026-11-24 10:00:01.500Z INFO  indexed
+",
+  );
+  let paths = Paths::under(dir.to_path_buf());
+  let report = Watcher::new().unwrap().gather(&paths).unwrap();
+  let logs = capture_logs(&report);
+  let shown: Vec<_> = logs.iter().map(|log| log.shown.as_str()).collect();
+  assert_eq!(shown, ["dgg-capture", "kick-capture one", "kick-capture"]);
+  assert_eq!(
+    merge_logs(&paths.logs, &logs, 500),
+    [
+      "2026-11-24 10:00:00.000Z INFO  kick-capture     a-0: one: capturing",
+      "2026-11-24 10:00:01.000Z INFO  dgg-capture      a-1: capturing",
+      "2026-11-24 10:00:02.000Z WARN  kick-capture one a-1: one: dropped",
+    ]
+  );
+  // Every log has the channel's too.
+  let every = ::deploy::status::logs(&report);
+  assert!(every.iter().any(|log| log.name == "kick-capture.one"));
 }
