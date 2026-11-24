@@ -3,6 +3,7 @@
 use {
   crate::index::{Error, Stats, follow, index, open, rebuild},
   ::clap::Args,
+  ::common::{error, info, warn},
   ::std::{
     collections::HashSet,
     path::Path,
@@ -58,7 +59,7 @@ impl Index {
     match result {
       Ok(()) => ExitCode::SUCCESS,
       Err(e) => {
-        eprintln!("index failed: {e}");
+        error!("index failed: {e}");
         ExitCode::FAILURE
       }
     }
@@ -93,18 +94,18 @@ impl Reporter {
       Err(e) => {
         let message = e.to_string();
         if self.failing.as_ref() != Some(&message) {
-          eprintln!("index round failed, retrying: {message}");
+          warn!("index round failed, retrying: {message}");
           self.failing = Some(message);
         }
         return;
       }
     };
     if self.failing.take().is_some() {
-      eprintln!("index rounds succeeding again");
+      info!("index rounds succeeding again");
     }
     for (file, why) in &stats.skipped {
       if self.skipped.insert(file.clone()) {
-        eprintln!("skipped {file}: {why}");
+        warn!("skipped {file}: {why}");
       }
     }
     self.totals.records += stats.records;
@@ -120,7 +121,7 @@ impl Reporter {
 }
 
 fn print_counts(stats: &Stats) {
-  eprintln!(
+  info!(
     "{} records, {} new messages ({} backfilled), {} unparsed",
     stats.records, stats.messages, stats.backfilled, stats.unparsed
   );
@@ -129,6 +130,6 @@ fn print_counts(stats: &Stats) {
 fn print_stats(stats: &Stats) {
   print_counts(stats);
   for (file, why) in &stats.skipped {
-    eprintln!("skipped {file}: {why}");
+    warn!("skipped {file}: {why}");
   }
 }

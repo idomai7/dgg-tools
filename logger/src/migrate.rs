@@ -29,7 +29,7 @@ use {
     index::{SCHEMA_VERSION, schema_version},
     taken,
   },
-  ::common::fs::MissingOk,
+  ::common::{fs::MissingOk, log::Level},
   ::logger_journal::{
     Format, Header, Variant, Version, archive,
     layout::{archive_dir, backfill_root, channel_root, kick_root, live_files},
@@ -65,14 +65,17 @@ pub struct Report {
 pub fn migrate(
   data: &Path,
   dry_run: bool,
-  say: &mut dyn FnMut(&str),
+  say: &mut dyn FnMut(Level, &str),
 ) -> io::Result<Report> {
-  say(&format!(
-    "build {BUILD}: writes journal dgg.{}, journal kick.{}, index schema {}",
-    dotted(v0::VERSION),
-    dotted(kick::v0::VERSION),
-    dotted(SCHEMA_VERSION)
-  ));
+  say(
+    Level::Info,
+    &format!(
+      "build {BUILD}: writes journal dgg.{}, journal kick.{}, index schema {}",
+      dotted(v0::VERSION),
+      dotted(kick::v0::VERSION),
+      dotted(SCHEMA_VERSION)
+    ),
+  );
   let _locks = if dry_run {
     Vec::new()
   } else {
@@ -93,21 +96,21 @@ pub fn migrate(
   }
 
   match index_schema(&data.join("index.sqlite"))? {
-    None => say("index: none yet"),
+    None => say(Level::Info, "index: none yet"),
     Some(version) => {
       report.index = Some(version);
       if version == SCHEMA_VERSION {
-        say(&format!(
-          "index: schema {}, as it should be",
-          dotted(version)
-        ));
+        say(
+          Level::Info,
+          &format!("index: schema {}, as it should be", dotted(version)),
+        );
       } else {
         let why = format!(
           "schema {}, not {}; rebuild it",
           dotted(version),
           dotted(SCHEMA_VERSION)
         );
-        say(&format!("index: {why}"));
+        say(Level::Error, &format!("index: {why}"));
         report.failed.push(format!("index: {why}"));
       }
     }
@@ -122,7 +125,7 @@ fn check_root(
   root: &Path,
   variant: Variant,
   report: &mut Report,
-  say: &mut dyn FnMut(&str),
+  say: &mut dyn FnMut(Level, &str),
 ) -> io::Result<()> {
   let journal = match variant {
     Variant::Dgg => v0::VERSION,
@@ -193,15 +196,18 @@ fn check_root(
       1 => format!("1 {one}"),
       n => format!("{n} {many}"),
     };
-    say(&format!(
-      "{name}: {count}, {}{}",
-      current.line_as(format),
-      match unreadable.len() {
-        0 => String::new(),
-        1 => "; 1 at another version, left as it was".to_owned(),
-        n => format!("; {n} at another version, left as they were"),
-      }
-    ));
+    say(
+      Level::Info,
+      &format!(
+        "{name}: {count}, {}{}",
+        current.line_as(format),
+        match unreadable.len() {
+          0 => String::new(),
+          1 => "; 1 at another version, left as it was".to_owned(),
+          n => format!("; {n} at another version, left as they were"),
+        }
+      ),
+    );
     for (file, found) in unreadable {
       let relative = file.strip_prefix(root).unwrap_or(file);
       let relative: Vec<_> = relative
@@ -210,10 +216,13 @@ fn check_root(
         .collect();
       let found =
         found.map_or("no header".to_owned(), |header| header.line_as(format));
-      say(&format!(
-        "{name}: {} is {found}, which this build can't read",
-        relative.join("/")
-      ));
+      say(
+        Level::Warn,
+        &format!(
+          "{name}: {} is {found}, which this build can't read",
+          relative.join("/")
+        ),
+      );
       report.unreadable.push(file.clone());
     }
   }
@@ -272,7 +281,10 @@ fn dotted(version: Version) -> String {
 }
 
 /// Waits for each of [`LOCKS`] in `data`, and holds them.
-fn hold(data: &Path, say: &mut dyn FnMut(&str)) -> io::Result<Vec<File>> {
+fn hold(
+  data: &Path,
+  say: &mut dyn FnMut(Level, &str),
+) -> io::Result<Vec<File>> {
   let mut held = Vec::new();
   for name in LOCKS {
     let path = data.join(name);
@@ -286,7 +298,10 @@ fn hold(data: &Path, say: &mut dyn FnMut(&str)) -> io::Result<Vec<File>> {
         }
         Err(TryLockError::WouldBlock) => {
           if !said {
-            say(&format!("waiting for {name}: another supervisor has it"));
+            say(
+              Level::Warn,
+              &format!("waiting for {name}: another supervisor has it"),
+            );
             said = true;
           }
           thread::sleep(Duration::from_secs(1));

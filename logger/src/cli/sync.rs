@@ -3,6 +3,7 @@
 use {
   crate::{capture::Peer, sync::sync},
   ::clap::Args,
+  ::common::{error, info, warn},
   ::std::{
     path::{Path, PathBuf},
     process::ExitCode,
@@ -43,7 +44,7 @@ impl Sync {
     let ca = match super::read_peer_ca(self.peer_ca.as_deref(), &self.peer) {
       Ok(ca) => ca,
       Err(e) => {
-        eprintln!("{e}");
+        error!("{e}");
         return ExitCode::FAILURE;
       }
     };
@@ -59,32 +60,32 @@ impl Sync {
       match sync(&peer, &journal_root).await {
         Ok(stats) => {
           if failing.take().is_some() {
-            eprintln!("syncing again");
+            info!("syncing again");
           }
           if stats.updated > 0 || !self.follow {
-            eprintln!(
+            info!(
               "{} files listed, {} updated, {} bytes pulled",
               stats.files, stats.updated, stats.bytes
             );
           }
           if stats.installed + stats.merging > 0 {
-            eprintln!(
+            info!(
               "{} archives installed, {} written out for compaction to merge",
               stats.installed, stats.merging
             );
           }
           for path in &stats.mismatched {
-            eprintln!("{path}: shorter on the peer than here; left alone");
+            warn!("{path}: shorter on the peer than here; left alone");
           }
         }
         Err(e) if self.follow => {
           if failing.as_ref() != Some(&e) {
-            eprintln!("sync round failed, retrying: {e}");
+            warn!("sync round failed, retrying: {e}");
             failing = Some(e);
           }
         }
         Err(e) => {
-          eprintln!("sync failed: {e}");
+          error!("sync failed: {e}");
           return ExitCode::FAILURE;
         }
       }

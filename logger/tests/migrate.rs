@@ -22,7 +22,7 @@ use {
 };
 
 fn run(data: &Path, dry_run: bool) -> Report {
-  migrate(data, dry_run, &mut |line| eprintln!("{line}")).unwrap()
+  migrate(data, dry_run, &mut |_, line| eprintln!("{line}")).unwrap()
 }
 
 #[test]
@@ -101,7 +101,8 @@ fn says_each_kind_of_file() {
 
   let mut said = Vec::new();
   let report =
-    migrate(dir.path(), false, &mut |line| said.push(line.to_owned())).unwrap();
+    migrate(dir.path(), false, &mut |_, line| said.push(line.to_owned()))
+      .unwrap();
   let said = said.join(
     "
 ",

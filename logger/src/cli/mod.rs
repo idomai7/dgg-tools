@@ -14,9 +14,9 @@ pub mod serve;
 pub mod sync;
 
 pub use {
-  backfill::Backfill, capture::Capture, cert::Cert, compact::Compact,
-  gaps::Gaps, index::Index, kick_capture::KickCapture, kick_ids::KickIds,
-  migrate::Migrate, serve::Serve, sync::Sync,
+  ::common::error, backfill::Backfill, capture::Capture, cert::Cert,
+  compact::Compact, gaps::Gaps, index::Index, kick_capture::KickCapture,
+  kick_ids::KickIds, migrate::Migrate, serve::Serve, sync::Sync,
 };
 
 /// The CA certificate at `peer_ca`, if given, checked, for reaching `url`,
@@ -46,7 +46,7 @@ fn block_on(
   match ::tokio::runtime::Runtime::new() {
     Ok(runtime) => runtime.block_on(future),
     Err(e) => {
-      eprintln!("can't start the async runtime: {e}");
+      error!("can't start the async runtime: {e}");
       ::std::process::ExitCode::FAILURE
     }
   }

@@ -6,6 +6,7 @@ use {
     serve::{self, MIN_TOKEN, Tokens, router},
   },
   ::clap::Args,
+  ::common::{error, info, warn},
   ::std::{
     fs,
     net::SocketAddr,
@@ -52,7 +53,7 @@ impl Serve {
       control: self.control_token.filter(|token| !token.is_empty()),
     };
     if let Err(why) = tokens.check() {
-      eprintln!(
+      error!(
         "{why} (--token or LOGGER_TOKEN, --control-token or \
          LOGGER_CONTROL_TOKEN; a random {MIN_TOKEN}+ character string will \
          do)"
@@ -63,7 +64,7 @@ impl Serve {
       (Some(cert), Some(key)) => match tls(cert, key) {
         Ok(tls) => Some(tls),
         Err(e) => {
-          eprintln!("{e}");
+          error!("{e}");
           return ExitCode::FAILURE;
         }
       },
@@ -73,17 +74,17 @@ impl Serve {
     let listener = match ::tokio::net::TcpListener::bind(self.listen).await {
       Ok(listener) => listener,
       Err(e) => {
-        eprintln!("can't listen on {}: {e}", self.listen);
+        error!("can't listen on {}: {e}", self.listen);
         return ExitCode::FAILURE;
       }
     };
     if tls.is_none() && !self.listen.ip().is_loopback() {
-      eprintln!(
-        "warning: serving plain HTTP to other hosts, so tokens travel in \
+      warn!(
+        "serving plain HTTP to other hosts, so tokens travel in \
          the clear; give --tls-cert and --tls-key"
       );
     }
-    eprintln!(
+    info!(
       "serving {} on {} over {}{}",
       data.display(),
       self.listen,
@@ -100,7 +101,7 @@ impl Serve {
     match serve::run(listener, app, tls).await {
       Ok(()) => ExitCode::SUCCESS,
       Err(e) => {
-        eprintln!("serve failed: {e}");
+        error!("serve failed: {e}");
         ExitCode::FAILURE
       }
     }

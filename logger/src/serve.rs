@@ -43,6 +43,7 @@ use {
     routing::{get, put},
   },
   ::common::time::now_ms,
+  ::common::warn,
   ::futures_util::stream::unfold,
   ::logger_journal::record::v0::valid_instance,
   ::rustls::ServerConfig,
@@ -227,7 +228,7 @@ async fn push(
   match control::write(&shared.control, &status) {
     Ok(()) => StatusCode::NO_CONTENT,
     Err(e) => {
-      eprintln!("control: {e}");
+      warn!("control: {e}");
       StatusCode::SERVICE_UNAVAILABLE
     }
   }
@@ -248,7 +249,7 @@ async fn remove(
   match control::remove(&shared.control, &instance) {
     Ok(()) => StatusCode::NO_CONTENT,
     Err(e) => {
-      eprintln!("control: {e}");
+      warn!("control: {e}");
       StatusCode::SERVICE_UNAVAILABLE
     }
   }

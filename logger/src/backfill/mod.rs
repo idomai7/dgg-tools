@@ -17,6 +17,7 @@ pub mod rustlesearch;
 
 use {
   ::common::time::{now_ms, utc_timestamp},
+  ::common::{info, warn},
   ::logger_journal::{
     Writer,
     record::v0::{Body, valid_token},
@@ -124,7 +125,7 @@ pub async fn run(
         && last_report.elapsed() >= every
       {
         last_report = ::std::time::Instant::now();
-        eprintln!(
+        info!(
           "{} requests, {} messages, back to {}",
           stats.requests,
           stats.messages,
@@ -145,7 +146,7 @@ pub async fn run(
             .max(Duration::from_secs(1))
             .saturating_mul(1 << (failures - 1).min(20))
             .min(MAX_BACKOFF);
-          eprintln!(
+          warn!(
             "{}: {e}; retry {failures} of {} in {}s",
             source.name(),
             options.retries,

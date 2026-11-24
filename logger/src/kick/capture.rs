@@ -26,6 +26,7 @@ use {
     capture::{Exit, HANDOFF, Handoff, SHUTDOWN, Say},
     control::{self, Status},
   },
+  ::common::log::Level,
   ::common::time::now_ms,
   ::kick_api::{
     realtime::{Client, Item, Options},
@@ -149,13 +150,13 @@ pub async fn run(
         match check_handoff(&controls, &me, &handoff, &mut older) {
           Ok((successor, gone)) => {
             for line in gone {
-              say.line(line);
+              say.info(line);
             }
             if let Some(successor) = successor {
               break Ok(Exit::HandedOff(successor));
             }
           }
-          Err(e) => say.line(format_args!("control: {e}")),
+          Err(e) => say.warn(format_args!("control: {e}")),
         }
       }
       Some(ended) = tasks.join_next() => {
@@ -187,7 +188,7 @@ pub async fn run(
   }
   for dir in &controls {
     if let Err(e) = control::remove(dir, &instance) {
-      say.line(format_args!("control: {e}"));
+      say.warn(format_args!("control: {e}"));
     }
   }
   result
@@ -337,7 +338,10 @@ impl Listening {
         state.open = None;
         let code = code.map(|code| format!("{code} ")).unwrap_or_default();
         let reason = format!("{code}{reason}");
-        self.say(format_args!("disconnected (#{connection}): {reason}"));
+        self.say(
+          Level::Warn,
+          format_args!("disconnected (#{connection}): {reason}"),
+        );
         (connection + offset, Body::Close(reason))
       }
       // Ends the open connection, with no disconnect of its own.
@@ -346,7 +350,10 @@ impl Listening {
         let reason = format!("{code} {reason}");
         let again =
           ::common::format::duration(self.restart_after.as_millis() as i64);
-        self.say(format_args!("stopped: {reason}; again in {again}"));
+        self.say(
+          Level::Warn,
+          format_args!("stopped: {reason}; again in {again}"),
+        );
         let Some(connection) = state.open.take() else {
           return Ok(());
         };
@@ -357,9 +364,12 @@ impl Listening {
         error,
         retry_in,
       } => {
-        self.say(format_args!(
-          "connect failed: {stage}: {error}; retrying in {retry_in:?}"
-        ));
+        self.say(
+          Level::Warn,
+          format_args!(
+            "connect failed: {stage}: {error}; retrying in {retry_in:?}"
+          ),
+        );
         return Ok(());
       }
       Item::Unsubscribed {
@@ -374,7 +384,10 @@ impl Listening {
         } else {
           "not again"
         };
-        self.say(format_args!("unsubscribed: {code} {reason}; {again}"));
+        self.say(
+          Level::Warn,
+          format_args!("unsubscribed: {code} {reason}; {again}"),
+        );
         return Ok(());
       }
       Item::Subscribed { .. } => {
@@ -416,16 +429,23 @@ impl Listening {
     let Fill { connection, back } = fill;
     let (pages, messages) = (back.pages.len(), back.messages.len());
     match &back.error {
-      None if back.complete => self.say(format_args!(
-        "filled a gap: {messages} messages from {pages} pages"
-      )),
-      None => self.say(format_args!(
-        "filled a gap in part: {messages} messages from {pages} pages, \
+      None if back.complete => self.say(
+        Level::Info,
+        format_args!("filled a gap: {messages} messages from {pages} pages"),
+      ),
+      None => self.say(
+        Level::Warn,
+        format_args!(
+          "filled a gap in part: {messages} messages from {pages} pages, \
          the most fetched"
-      )),
-      Some(e) => self.say(format_args!(
-        "filled a gap in part: {messages} messages from {pages} pages; {e}"
-      )),
+        ),
+      ),
+      Some(e) => self.say(
+        Level::Warn,
+        format_args!(
+          "filled a gap in part: {messages} messages from {pages} pages; {e}"
+        ),
+      ),
     }
     let now = now_ms();
     for (cursor, page) in back.pages {
@@ -436,8 +456,8 @@ impl Listening {
     Ok(())
   }
 
-  fn say(&self, message: impl ::std::fmt::Display) {
-    self.say.line(format_args!("{}: {message}", self.slug));
+  fn say(&self, level: Level, message: impl ::std::fmt::Display) {
+    self.say.at(level, format_args!("{}: {message}", self.slug));
   }
 }
 

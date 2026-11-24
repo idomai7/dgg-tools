@@ -12,6 +12,7 @@ use {
     index::{index, open},
   },
   ::clap::{Args, ValueEnum},
+  ::common::{error, info, warn},
   ::common::{
     format,
     time::{now_ms, unix_ms, utc_timestamp},
@@ -124,7 +125,7 @@ impl Backfill {
     let journal_root = data.join("journal");
     let margin = (self.margin * 1000.0) as i64;
     if let Err(e) = ::std::fs::create_dir_all(data) {
-      eprintln!("backfill failed: {}: {e}", data.display());
+      error!("backfill failed: {}: {e}", data.display());
       return ExitCode::FAILURE;
     }
     let found = open(&data.join("index.sqlite")).and_then(|mut db| {
@@ -147,14 +148,14 @@ impl Backfill {
     let ranges = match found {
       Ok(ranges) => ranges,
       Err(e) => {
-        eprintln!("backfill failed: {e}");
+        error!("backfill failed: {e}");
         return ExitCode::FAILURE;
       }
     };
     let what = if history { "ranges" } else { "gaps" };
-    eprintln!("{} {what} not yet fetched", ranges.len());
+    info!("{} {what} not yet fetched", ranges.len());
     for &(from, to) in &ranges {
-      eprintln!("  {} +{}", utc_timestamp(from), format::duration(to - from));
+      info!("  {} +{}", utc_timestamp(from), format::duration(to - from));
     }
     if self.dry_run || ranges.is_empty() {
       return ExitCode::SUCCESS;
@@ -204,7 +205,7 @@ async fn fetch(
 ) -> ExitCode {
   match run(source, ranges, options).await {
     Ok(stats) => {
-      eprintln!(
+      info!(
         "{} requests ({} retried), {} messages fetched, {} of {} {what} \
          filled{}",
         stats.requests,
@@ -219,12 +220,12 @@ async fn fetch(
         }
       );
       if let Some(why) = stats.stopped {
-        eprintln!("stopped early: {why}");
+        warn!("stopped early: {why}");
       }
       ExitCode::SUCCESS
     }
     Err(e) => {
-      eprintln!("backfill failed: {e}");
+      error!("backfill failed: {e}");
       ExitCode::FAILURE
     }
   }

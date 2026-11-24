@@ -3,6 +3,7 @@
 use {
   crate::migrate::migrate,
   ::clap::Args,
+  ::common::{error, info, warn},
   ::std::{path::Path, process::ExitCode},
 };
 
@@ -20,28 +21,29 @@ pub struct Migrate {
 impl Migrate {
   /// Migrates `<data>/journal` and `<data>/index.sqlite`.
   pub fn run(self, data: &Path) -> ExitCode {
-    let report = match migrate(data, self.dry_run, &mut |line| {
-      eprintln!("{line}");
+    let report = match migrate(data, self.dry_run, &mut |level, line| {
+      eprintln!("{level} {line}");
     }) {
       Ok(report) => report,
       Err(e) => {
-        eprintln!("migrate failed: {e}");
+        error!("migrate failed: {e}");
         return ExitCode::FAILURE;
       }
     };
     if report.failed.is_empty() {
-      let unreadable = match report.unreadable.len() {
-        0 => String::new(),
-        n => format!("; {n} files this build can't read, left as they were"),
+      let done = match self.dry_run {
+        true => "nothing would be migrated",
+        false => "nothing to migrate",
       };
-      if self.dry_run {
-        eprintln!("nothing would be migrated{unreadable}");
-      } else {
-        eprintln!("nothing to migrate{unreadable}");
+      match report.unreadable.len() {
+        0 => info!("{done}"),
+        n => {
+          warn!("{done}; {n} files this build can't read, left as they were")
+        }
       }
       ExitCode::SUCCESS
     } else {
-      eprintln!("{} left as they were", report.failed.len());
+      error!("{} left as they were", report.failed.len());
       ExitCode::FAILURE
     }
   }

@@ -9,7 +9,10 @@
 
 use {
   crate::control::{self, Status},
-  ::common::time::{now_ms, utc_timestamp},
+  ::common::{
+    log::Level,
+    time::{now_ms, utc_timestamp},
+  },
   ::dgg_api::chat::{Client, Item, Options},
   ::logger_journal::{Writer, record::v0::Body, writer::SYNC_INTERVAL},
   ::std::{
@@ -41,9 +44,9 @@ pub fn instance_id(host: &str, start_ms: i64) -> String {
   format!("{host}-{start_ms}")
 }
 
-/// Writes a capture's own lines to stderr, each naming the instance. A
-/// bridge's (a capture an install starts, with no supervisor to timestamp
-/// its lines) are timestamped and marked too.
+/// Writes a capture's own lines to stderr, each at its [`Level`] and naming
+/// the instance. A bridge's (a capture an install starts, with no supervisor
+/// to timestamp its lines) are timestamped and marked too.
 #[derive(Clone, Debug)]
 pub struct Say {
   pub instance: String,
@@ -51,15 +54,27 @@ pub struct Say {
 }
 
 impl Say {
-  pub fn line(&self, message: impl Display) {
+  pub fn info(&self, message: impl Display) {
+    self.at(Level::Info, message);
+  }
+
+  pub fn warn(&self, message: impl Display) {
+    self.at(Level::Warn, message);
+  }
+
+  pub fn error(&self, message: impl Display) {
+    self.at(Level::Error, message);
+  }
+
+  pub fn at(&self, level: Level, message: impl Display) {
     if self.bridge {
       eprintln!(
-        "{} {} (bridge): {message}",
+        "{} {level} {} (bridge): {message}",
         utc_timestamp(now_ms()),
         self.instance
       );
     } else {
-      eprintln!("{}: {message}", self.instance);
+      eprintln!("{level} {}: {message}", self.instance);
     }
   }
 }
@@ -222,11 +237,11 @@ pub async fn run(
           Item::Disconnected { connection, reason } => {
             connected = None;
             health = Health::default();
-            say.line(format_args!("disconnected (#{connection}): {reason}"));
+            say.warn(format_args!("disconnected (#{connection}): {reason}"));
             writer.write(now, connection, Body::Close(reason))?;
           }
           Item::ConnectFailed { error, retry_in } => {
-            say.line(format_args!(
+            say.warn(format_args!(
               "connect failed: {error}; retrying in {retry_in:?}"
             ));
           }
@@ -247,13 +262,13 @@ pub async fn run(
         match check_handoff(&control, &me, &handoff, &mut older) {
           Ok((successor, gone)) => {
             for line in gone {
-              say.line(line);
+              say.info(line);
             }
             if let Some(successor) = successor {
               break Exit::HandedOff(successor);
             }
           }
-          Err(e) => say.line(format_args!("control: {e}")),
+          Err(e) => say.warn(format_args!("control: {e}")),
         }
       }
       () = &mut shutdown => break Exit::Shutdown,
@@ -268,7 +283,7 @@ pub async fn run(
   }
   writer.sync()?;
   if let Err(e) = control::remove(&control, &instance) {
-    say.line(format_args!("control: {e}"));
+    say.warn(format_args!("control: {e}"));
   }
   if let (Some(pusher), Some(peer)) = (pusher, peer) {
     pusher.abort();
@@ -297,7 +312,7 @@ async fn push_status(
   let client = match peer_client(&peer) {
     Ok(client) => client,
     Err(e) => {
-      say.line(format_args!("peer {}: {e}", peer.url));
+      say.error(format_args!("peer {}: {e}", peer.url));
       return;
     }
   };
@@ -324,11 +339,11 @@ async fn push_status(
     };
     match (&failing, error) {
       (None, Some(error)) => {
-        say.line(format_args!("peer {}: {error}", peer.url));
+        say.warn(format_args!("peer {}: {error}", peer.url));
         failing = Some(error);
       }
       (Some(_), None) => {
-        say.line(format_args!("peer {}: pushing again", peer.url));
+        say.info(format_args!("peer {}: pushing again", peer.url));
         failing = None;
       }
       _ => {}
@@ -349,7 +364,7 @@ async fn withdraw_status(peer: &Peer, say: &Say) {
     Err(e) => Err(e),
   };
   if let Err(e) = sent {
-    say.line(format_args!("peer {}: {e}", peer.url));
+    say.warn(format_args!("peer {}: {e}", peer.url));
   }
 }
 

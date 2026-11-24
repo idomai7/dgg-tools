@@ -71,7 +71,7 @@ impl Capture {
       instance: instance.clone(),
       bridge: self.bridge,
     };
-    say.line(format_args!(
+    say.info(format_args!(
       "capturing into {} (build {})",
       journal_root.display(),
       crate::BUILD
@@ -81,13 +81,13 @@ impl Capture {
         match super::read_peer_ca(self.peer_ca.as_deref(), &url) {
           Ok(ca) => Some(Peer { url, token, ca }),
           Err(e) => {
-            say.line(e);
+            say.error(e);
             return ExitCode::FAILURE;
           }
         }
       }
       (Some(_), _) => {
-        say.line("--peer needs --peer-token (or LOGGER_PEER_TOKEN)");
+        say.error("--peer needs --peer-token (or LOGGER_PEER_TOKEN)");
         return ExitCode::FAILURE;
       }
       (None, _) => None,
@@ -107,15 +107,15 @@ impl Capture {
     };
     match run(config, shutdown()).await {
       Ok(Exit::Shutdown) => {
-        say.line("stopped");
+        say.info("stopped");
         ExitCode::SUCCESS
       }
       Ok(Exit::HandedOff(successor)) => {
-        say.line(format_args!("handed off to {successor}"));
+        say.info(format_args!("handed off to {successor}"));
         ExitCode::SUCCESS
       }
       Err(e) => {
-        say.line(format_args!("capture failed: {e}"));
+        say.error(format_args!("capture failed: {e}"));
         ExitCode::FAILURE
       }
     }

@@ -5,6 +5,7 @@ use {
   crate::compact::{DEFAULT_LEVEL, closed_days, compact_day},
   ::clap::Args,
   ::common::time::now_ms,
+  ::common::{error, info},
   ::logger_journal::layout::backfill_root,
   ::std::{path::Path, process::ExitCode, time::Duration},
 };
@@ -50,14 +51,14 @@ impl Compact {
     let days = match closed_days(journal_root, now, grace) {
       Ok(days) => days,
       Err(e) => {
-        eprintln!("compact {kind}failed: {e}");
+        error!("compact {kind}failed: {e}");
         return false;
       }
     };
-    eprintln!("{} closed {kind}days with live files", days.len());
+    info!("{} closed {kind}days with live files", days.len());
     if self.dry_run {
       for day in &days {
-        eprintln!("  {day}");
+        info!("  {day}");
       }
       return true;
     }
@@ -67,7 +68,7 @@ impl Compact {
         Ok(Some(done)) => {
           let archive = &done.archive;
           let ratio = archive.bytes as f64 / archive.compressed.max(1) as f64;
-          eprintln!(
+          info!(
             "  {day}: {} files, {} records, {} -> {} bytes \
              ({ratio:.1}x){}{}{}{}{}",
             done.files,
@@ -87,7 +88,7 @@ impl Compact {
         }
         Ok(None) => {}
         Err(e) => {
-          eprintln!("  {day}: failed, live files left in place: {e}");
+          error!("  {day}: failed, live files left in place: {e}");
           ok = false;
         }
       }

@@ -65,12 +65,12 @@ impl KickCapture {
     };
     let channels = match channels::load(&self.channels) {
       Ok(channels) if channels.is_empty() => {
-        say.line(format_args!("no channels in {}", self.channels.display()));
+        say.error(format_args!("no channels in {}", self.channels.display()));
         return ExitCode::FAILURE;
       }
       Ok(channels) => channels,
       Err(e) => {
-        say.line(e);
+        say.error(e);
         return ExitCode::FAILURE;
       }
     };
@@ -84,14 +84,14 @@ impl KickCapture {
       match http {
         Ok(http) => Some(Arc::new(Web::new(http, crate::USER_AGENT))),
         Err(e) => {
-          say.line(format_args!("can't make a client: {e}"));
+          say.error(format_args!("can't make a client: {e}"));
           return ExitCode::FAILURE;
         }
       }
     };
     let kick_root = kick_root(&data.join("journal"));
     let slugs: Vec<&str> = channels.iter().map(|c| c.slug.as_str()).collect();
-    say.line(format_args!(
+    say.info(format_args!(
       "capturing {} into {} (build {})",
       slugs.join(", "),
       kick_root.display(),
@@ -114,15 +114,15 @@ impl KickCapture {
     };
     match run(config, shutdown()).await {
       Ok(Exit::Shutdown) => {
-        say.line("stopped");
+        say.info("stopped");
         ExitCode::SUCCESS
       }
       Ok(Exit::HandedOff(successor)) => {
-        say.line(format_args!("handed off to {successor}"));
+        say.info(format_args!("handed off to {successor}"));
         ExitCode::SUCCESS
       }
       Err(e) => {
-        say.line(format_args!("capture failed: {e}"));
+        say.error(format_args!("capture failed: {e}"));
         ExitCode::FAILURE
       }
     }
