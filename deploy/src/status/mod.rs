@@ -416,25 +416,13 @@ fn dgg_roots(journal: &Path) -> io::Result<[Root; 2]> {
     .map_err(|_| io::Error::other("dgg has two journal roots"))
 }
 
-/// dgg's captures, from their statuses in dgg's control directory, and in
-/// the one from before dgg's journals had a directory of their own (a
-/// capture from this build writes in both, a capture from before only
-/// there).
+/// dgg's captures, from their statuses in dgg's control directory.
 fn captures(journal: &Path, now: i64) -> io::Result<Vec<Capture>> {
-  let mut statuses: Vec<control::Status> = Vec::new();
-  for dir in [control::dir(&Dgg::dir(journal)), control::dir(journal)] {
-    for status in control::read_all(&dir)? {
-      match statuses.iter_mut().find(|s| s.instance == status.instance) {
-        Some(known) if known.heartbeat >= status.heartbeat => {}
-        Some(known) => *known = status,
-        None => statuses.push(status),
-      }
-    }
-  }
-  let mut captures: Vec<Capture> = statuses
-    .into_iter()
-    .map(|status| capture(status, now))
-    .collect();
+  let mut captures: Vec<Capture> =
+    control::read_all(&control::dir(&Dgg::dir(journal)))?
+      .into_iter()
+      .map(|status| capture(status, now))
+      .collect();
   captures.sort_by_key(|capture| capture.started);
   Ok(captures)
 }

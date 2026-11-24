@@ -37,10 +37,8 @@ fn reports_captures_and_the_journal() {
     format!("{control}/a-1.status"),
     status("a-1", now - 3_600_000, now - 500, Some(now - 3_500_000)),
   );
-  // A capture from before dgg's journals moved into dgg/, writing where
-  // they were.
   dir.write(
-    "data/journal/control/a-2.status",
+    format!("{control}/a-2.status"),
     status("a-2", now - 120_000, now - 60_000, None),
   );
   dir.write(
@@ -54,7 +52,7 @@ fn reports_captures_and_the_journal() {
      3 a-3 1 frame NAMES {}\u{1e}\n4 a-3 1 frame JO",
   );
   dir.write(
-    format!("data/journal/live/{today}/a-1.journal"),
+    format!("data/journal/dgg/live/{today}/a-1.journal"),
     "0123456789",
   );
   dir.write("data/journal/dgg/live/2026-01-02/a-1.journal", "01234");
@@ -113,7 +111,7 @@ fn reports_captures_and_the_journal() {
 
   // A second look sees today's growth.
   dir.write(
-    format!("data/journal/live/{today}/a-1.journal"),
+    format!("data/journal/dgg/live/{today}/a-1.journal"),
     "0".repeat(5000),
   );
   // The frame being written was finished, and the connection closed.
