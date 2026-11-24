@@ -179,7 +179,10 @@ fn draws_the_watch_screen() {
     empty: "(empty)",
   };
   terminal
-    .draw(|frame| ::deploy::status::watch::draw(frame, &report, &pane))
+    .draw(|frame| {
+      let mut boxes = ::deploy::status::watch::Boxes::default();
+      ::deploy::status::watch::draw(frame, &report, &pane, &mut boxes)
+    })
     .unwrap();
   let screen: String = terminal
     .backend()
@@ -213,19 +216,110 @@ fn draws_the_watch_screen() {
 }
 
 #[test]
+fn scrolls_and_minimizes_the_watch_boxes() {
+  use {
+    ::deploy::status::watch::{Boxes, Pane, draw},
+    ::ratatui::{Terminal, backend::TestBackend, style::Color},
+  };
+
+  let dir = TempDir::new("deploy-status-boxes");
+  let now = now_ms();
+  for n in 0..10 {
+    dir.write(
+      format!("data/journal/dgg/control/c-{n}.status"),
+      status(&format!("c-{n}"), now - 10_000 + n, now, Some(now - 5000)),
+    );
+  }
+  let mut report = Watcher::new()
+    .unwrap()
+    .gather(&Paths::under(dir.to_path_buf()))
+    .unwrap();
+  report.programs.clear();
+  let pane = Pane {
+    title: "the page".into(),
+    header: None,
+    lines: (0..50).map(|n| format!("line {n}")).collect(),
+    empty: "(empty)",
+  };
+  let mut terminal = Terminal::new(TestBackend::new(100, 24)).unwrap();
+  let mut boxes = Boxes::default();
+  let mut screen = |boxes: &mut Boxes| {
+    terminal
+      .draw(|frame| draw(frame, &report, &pane, boxes))
+      .unwrap();
+    let buffer = terminal.backend().buffer().clone();
+    let rows: Vec<String> = buffer
+      .content()
+      .chunks(100)
+      .map(|row| row.iter().map(|cell| cell.symbol()).collect())
+      .collect();
+    (rows, buffer)
+  };
+  let shown =
+    |rows: &[String]| rows.iter().filter(|row| row.contains(" c-")).count();
+
+  // Too many captures for the room: the box says which it shows.
+  let (rows, _) = screen(&mut boxes);
+  let all = rows.join("\n");
+  assert!(all.contains(" captures (1-"), "{all}");
+  assert!(all.contains(" of 10) "), "{all}");
+  let fit = shown(&rows);
+  assert!(fit < 10, "{all}");
+  // The page shows its end.
+  assert!(all.contains("line 49"), "{all}");
+
+  // Scrolled, and focused: its border highlighted.
+  boxes.focus = 1;
+  boxes.scroll[1] = 2;
+  let (rows, buffer) = screen(&mut boxes);
+  let all = rows.join("\n");
+  assert!(all.contains(" captures (3-"), "{all}");
+  assert!(
+    !all.contains("dgg  c-0 ") && all.contains("dgg  c-2 "),
+    "{all}"
+  );
+  let row = rows
+    .iter()
+    .position(|row| row.contains(" captures ("))
+    .unwrap();
+  assert_eq!(buffer[(0, row as u16)].fg, Color::Cyan);
+
+  // The page scrolled back, then minimized: the captures take its room.
+  boxes.scroll[3] = 5;
+  let (rows, _) = screen(&mut boxes);
+  let all = rows.join("\n");
+  assert!(all.contains("(5 lines back from the end)"), "{all}");
+  assert!(all.contains("line 44") && !all.contains("line 45"), "{all}");
+  boxes.minimized[3] = true;
+  let (rows, _) = screen(&mut boxes);
+  let all = rows.join("\n");
+  assert!(all.contains(" the page (minimized) "), "{all}");
+  assert!(shown(&rows) > fit, "{all}");
+
+  // Minimized captures: just their title line.
+  boxes.minimized[1] = true;
+  let (rows, _) = screen(&mut boxes);
+  let all = rows.join("\n");
+  assert!(all.contains(" captures (minimized, 10 lines) "), "{all}");
+  assert_eq!(shown(&rows), 0, "{all}");
+}
+
+#[test]
 fn the_watch_keys_take_more_lines_when_narrow() {
   use ::deploy::status::watch::keys;
 
   let wide = keys(200);
   assert_eq!(wide.len(), 1, "{wide:?}");
   assert!(wide[0].contains("q quit | 1 supervisor"), "{wide:?}");
-  assert!(wide[0].ends_with("7 sync  8 serve"), "{wide:?}");
+  assert!(wide[0].contains("8 serve | tab focus"), "{wide:?}");
+  assert!(wide[0].ends_with("m minimize"), "{wide:?}");
   let narrow = keys(80);
-  assert_eq!(narrow.len(), 2, "{narrow:?}");
+  assert_eq!(narrow.len(), 3, "{narrow:?}");
   assert!(narrow.iter().all(|line| line.len() <= 80), "{narrow:?}");
   assert!(narrow[0].ends_with("q quit"), "{narrow:?}");
   assert!(narrow[1].starts_with(" 1 supervisor"), "{narrow:?}");
   assert!(narrow[1].ends_with("8 serve"), "{narrow:?}");
+  assert!(narrow[2].ends_with("m minimize"), "{narrow:?}");
 }
 
 #[test]

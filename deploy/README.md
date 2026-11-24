@@ -174,7 +174,12 @@ window. The keys are grouped:
   capture's, dgg's and Kick's, in time order, `4` compact's, `5` index's,
   `6` the gaps in capture as `dgg-gaps` reports them (looked at again every
   30 seconds; it reads the index as `index` has brought it, without
-  updating it), `7` sync's, `8` serve's.
+  updating it), `7` sync's, `8` serve's;
+- the boxes: Tab and Shift-Tab move the focus between them, the page at
+  the bottom too (its border turns cyan); Up, Down, Page Up and Page Down
+  scroll the focused one when it's over-tall (its title says which lines
+  it shows); `m` minimizes it to its title line, or restores it, the
+  others taking the room.
 
 The captures box lists dgg's and Kick's captures together, each after its
 service, the unhealthy first (stale, then connecting), then the busiest,

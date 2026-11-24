@@ -8,8 +8,11 @@
 //! Ctrl-C) quits. Then each program's log, with numbers: `1` the
 //! supervisor's, `2` migrate's, `3` every capture's, dgg's and Kick's, in
 //! time order, `4` compact's, `5` index's, `6` the gaps in capture, looked
-//! at again every 30 seconds, `7` sync's and `8` serve's. On a narrow
-//! screen the keys take more than one line.
+//! at again every 30 seconds, `7` sync's and `8` serve's. Last, the
+//! boxes: Tab and Shift-Tab move the focus between them (the page at the
+//! bottom too), Up, Down, Page Up and Page Down scroll the focused one when
+//! it's over-tall, and `m` minimizes it to its title line, or restores it.
+//! On a narrow screen the keys take more than one line.
 
 use {
   super::{
@@ -49,6 +52,7 @@ enum Action {
   Redraw,
   OpenData,
   Quit,
+  Minimize,
 }
 
 /// A page for the bottom of the screen, as a key offers it.
@@ -67,8 +71,9 @@ enum Page {
 }
 
 /// The keys, with their names and what they do, in groups: the views
-/// across everything and the controls, then each program's log.
-const KEYS: [&[(char, &str, Action)]; 2] = [
+/// across everything and the controls, then each program's log, then the
+/// boxes' (after [`MOVING`]).
+const KEYS: [&[(char, &str, Action)]; 3] = [
   &[
     ('l', "logs", Action::Show(Page::Logs)),
     ('r', "records", Action::Show(Page::Records)),
@@ -87,7 +92,75 @@ const KEYS: [&[(char, &str, Action)]; 2] = [
     ('7', "sync", Action::Show(Page::Log("sync"))),
     ('8', "serve", Action::Show(Page::Log("serve"))),
   ],
+  &[('m', "minimize", Action::Minimize)],
 ];
+
+/// The keys that aren't characters, before the boxes' group of [`KEYS`].
+const MOVING: &str = "tab focus  arrows/pgup/pgdn scroll";
+
+/// The boxes, in the order Tab moves through them: the page last.
+const PROGRAMS: usize = 0;
+const CAPTURES: usize = 1;
+const JOURNAL: usize = 2;
+const PAGE: usize = 3;
+
+/// The fewest rows the page is given, unless it's minimized.
+const PAGE_LEAST: u16 = 6;
+
+/// The boxes' state: which has the focus, how far each is scrolled, and
+/// which are minimized.
+pub struct Boxes {
+  pub focus: usize,
+  /// The boxes above the page, from their first line; the page, back from
+  /// its last.
+  pub scroll: [usize; 4],
+  pub minimized: [bool; 4],
+  /// How far each could scroll, and how many lines it showed, as last
+  /// drawn.
+  most: [usize; 4],
+  rows: [usize; 4],
+}
+
+impl Default for Boxes {
+  /// The page focused, nothing scrolled or minimized.
+  fn default() -> Self {
+    Self {
+      focus: PAGE,
+      scroll: [0; 4],
+      minimized: [false; 4],
+      most: [0; 4],
+      rows: [0; 4],
+    }
+  }
+}
+
+impl Boxes {
+  fn next(&mut self) {
+    self.focus = (self.focus + 1) % 4;
+  }
+
+  fn previous(&mut self) {
+    self.focus = (self.focus + 3) % 4;
+  }
+
+  /// Scrolls the focused box `rows` lines (a page's worth, if none) up or
+  /// down, as far as it goes.
+  fn scroll(&mut self, up: bool, rows: Option<usize>) {
+    let at = self.focus;
+    let rows = rows.unwrap_or(self.rows[at].max(1));
+    // The page counts back from its end.
+    let toward_zero = up != (at == PAGE);
+    let scroll = &mut self.scroll[at];
+    *scroll = match toward_zero {
+      true => scroll.saturating_sub(rows),
+      false => (*scroll + rows).min(self.most[at]),
+    };
+  }
+
+  fn minimize(&mut self) {
+    self.minimized[self.focus] ^= true;
+  }
+}
 
 /// How often the gaps are looked at again while they're shown: looking
 /// takes a moment, so it isn't redone every redraw.
@@ -309,16 +382,19 @@ fn event_loop(
   interval: Duration,
 ) -> io::Result<()> {
   let mut view = View::Logs;
+  let mut boxes = Boxes::default();
   loop {
     let report = watcher.gather(paths)?;
     if let View::Gaps(gaps) = &mut view {
       gaps.refresh(paths.data.join(Dgg::INDEX));
     }
     let pane = view.pane(paths, &report);
-    terminal.draw(|frame| draw(frame, &report, &pane))?;
 
     let until = Instant::now() + interval;
+    // Drawn again after each key that moves the boxes, without looking
+    // again.
     loop {
+      terminal.draw(|frame| draw(frame, &report, &pane, &mut boxes))?;
       let left = until.saturating_duration_since(Instant::now());
       if left.is_zero() || !event::poll(left)? {
         break;
@@ -338,13 +414,22 @@ fn event_loop(
         KeyCode::Char(key) => match action(key) {
           Some(Action::Show(page)) => {
             view = view.show(page, &report);
+            // A new page starts at its end.
+            boxes.scroll[PAGE] = 0;
             break;
           }
           Some(Action::Redraw) => break,
           Some(Action::OpenData) => open(&paths.data),
           Some(Action::Quit) => return Ok(()),
+          Some(Action::Minimize) => boxes.minimize(),
           None => {}
         },
+        KeyCode::Tab => boxes.next(),
+        KeyCode::BackTab => boxes.previous(),
+        KeyCode::Up => boxes.scroll(true, Some(1)),
+        KeyCode::Down => boxes.scroll(false, Some(1)),
+        KeyCode::PageUp => boxes.scroll(true, None),
+        KeyCode::PageDown => boxes.scroll(false, None),
         _ => {}
       }
     }
@@ -363,7 +448,7 @@ fn action(key: char) -> Option<Action> {
 /// The keys, in their groups, on as many lines `width` wide as they need. A
 /// group isn't split across lines, and goes on the first line with room.
 pub fn keys(width: u16) -> Vec<String> {
-  let groups: Vec<String> = KEYS
+  let mut groups: Vec<String> = KEYS
     .iter()
     .map(|group| {
       group
@@ -376,6 +461,9 @@ pub fn keys(width: u16) -> Vec<String> {
         .join("  ")
     })
     .collect();
+  if let Some(boxes) = groups.last_mut() {
+    *boxes = format!("{MOVING}  {boxes}");
+  }
   let fits =
     |line: &String, group: &str| line.len() + 3 + group.len() <= width as usize;
   let mut lines: Vec<String> = Vec::new();
@@ -432,15 +520,95 @@ fn log_line(line: &str) -> Line<'_> {
   ])
 }
 
-fn heading(title: &str) -> Block<'_> {
-  Block::bordered().title(Span::styled(
+/// A box's border and title, highlighted if it has the focus.
+fn heading(title: &str, focused: bool) -> Block<'_> {
+  let border = match focused {
+    true => Style::new().fg(Color::Cyan),
+    false => Style::new(),
+  };
+  Block::bordered().border_style(border).title(Span::styled(
     format!(" {title} "),
-    Style::new().add_modifier(Modifier::BOLD),
+    border.add_modifier(Modifier::BOLD),
   ))
 }
 
-/// Draws `report`, with `pane` below.
-pub fn draw(frame: &mut Frame, report: &Report, pane: &Pane) {
+/// How many rows each box is given of `room`, the boxes wanting `lines`
+/// lines each (the page, all that's left): each its lines and borders, or
+/// minimized, its title line alone. The page gets at least [`PAGE_LEAST`];
+/// if the rest don't fit, the tallest give up rows first, down to one
+/// line.
+fn heights(lines: [usize; 3], minimized: [bool; 4], room: u16) -> [u16; 4] {
+  let mut heights = [0; 4];
+  for (at, lines) in lines.into_iter().enumerate() {
+    heights[at] = match minimized[at] {
+      true => 1,
+      false => u16::try_from(lines).unwrap_or(u16::MAX).saturating_add(2),
+    };
+  }
+  let page = match minimized[PAGE] {
+    true => 1,
+    false => PAGE_LEAST,
+  };
+  let top = |heights: &[u16; 4]| heights[..PAGE].iter().sum::<u16>();
+  while top(&heights) + page > room {
+    let tallest = (0..PAGE)
+      .filter(|&at| !minimized[at] && heights[at] > 3)
+      .max_by_key(|&at| heights[at]);
+    let Some(tallest) = tallest else { break };
+    heights[tallest] -= 1;
+  }
+  heights[PAGE] = match minimized[PAGE] {
+    true => 1,
+    false => room.saturating_sub(top(&heights)).max(page),
+  };
+  heights
+}
+
+/// Draws a box above the page: `lines` under `title`, scrolled as `boxes`
+/// has it, saying where it's scrolled to when they don't all fit.
+fn draw_box(
+  frame: &mut Frame,
+  area: ::ratatui::layout::Rect,
+  at: usize,
+  title: &str,
+  lines: Vec<Line>,
+  boxes: &mut Boxes,
+) {
+  let rows = area.height.saturating_sub(2) as usize;
+  let most = lines.len().saturating_sub(rows);
+  boxes.most[at] = most;
+  boxes.rows[at] = rows;
+  let scroll = boxes.scroll[at].min(most);
+  boxes.scroll[at] = scroll;
+  let title = if boxes.minimized[at] {
+    format!("{title} (minimized, {} lines)", lines.len())
+  } else if most > 0 {
+    format!(
+      "{title} ({}-{} of {})",
+      scroll + 1,
+      scroll + rows.min(lines.len()),
+      lines.len()
+    )
+  } else {
+    title.to_owned()
+  };
+  let focused = boxes.focus == at;
+  let scroll = u16::try_from(scroll).unwrap_or(u16::MAX);
+  frame.render_widget(
+    Paragraph::new(lines)
+      .scroll((scroll, 0))
+      .block(heading(&title, focused)),
+    area,
+  );
+}
+
+/// Draws `report`, with `pane` below, the boxes as `boxes` has them.
+pub fn draw(
+  frame: &mut Frame,
+  report: &Report,
+  pane: &Pane,
+  boxes: &mut Boxes,
+) {
   let now = report.now;
   let name = program_width(report);
   let programs: Vec<Line> = if report.programs.is_empty() {
@@ -538,48 +706,71 @@ pub fn draw(frame: &mut Frame, report: &Report, pane: &Pane) {
     .into_iter()
     .map(|line| Line::from(line.dark_gray()))
     .collect();
+  let room = frame.area().height.saturating_sub(1 + keys.len() as u16);
+  let wanted = [programs.len(), captures.len(), journal.len()];
+  let [programs_h, captures_h, journal_h, page_h] =
+    heights(wanted, boxes.minimized, room);
   let [
     top,
     programs_area,
     captures_area,
     journal_area,
-    log_area,
+    page_area,
+    _,
     keys_area,
   ] = Layout::vertical([
     Constraint::Length(1),
-    Constraint::Length(programs.len() as u16 + 2),
-    Constraint::Length(captures.len() as u16 + 2),
-    Constraint::Length(journal.len() as u16 + 2),
-    Constraint::Min(3),
+    Constraint::Length(programs_h),
+    Constraint::Length(captures_h),
+    Constraint::Length(journal_h),
+    Constraint::Length(page_h),
+    // What's left with the page minimized.
+    Constraint::Min(0),
     Constraint::Length(keys.len() as u16),
   ])
   .areas(frame.area());
   frame.render_widget(header, top);
-  frame.render_widget(
-    Paragraph::new(programs).block(heading("programs")),
-    programs_area,
-  );
-  frame.render_widget(
-    Paragraph::new(captures).block(heading("captures")),
-    captures_area,
-  );
-  frame.render_widget(
-    Paragraph::new(journal).block(heading("journal")),
-    journal_area,
-  );
+  draw_box(frame, programs_area, PROGRAMS, "programs", programs, boxes);
+  draw_box(frame, captures_area, CAPTURES, "captures", captures, boxes);
+  draw_box(frame, journal_area, JOURNAL, "journal", journal, boxes);
+  draw_page(frame, page_area, pane, boxes);
+  frame.render_widget(Paragraph::new(keys), keys_area);
+}
+
+/// Draws `pane` in `area`: its header, then as many of its lines as fit,
+/// back from its last as far as `boxes` has it scrolled.
+fn draw_page(
+  frame: &mut Frame,
+  area: ::ratatui::layout::Rect,
+  pane: &Pane,
+  boxes: &mut Boxes,
+) {
   let mut body: Vec<Line> = Vec::new();
   if let Some(header) = &pane.header {
     body.push(Line::from(header.as_str()).bold());
   }
-  let room =
-    (log_area.height.saturating_sub(2) as usize).saturating_sub(body.len());
-  let shown = &pane.lines[pane.lines.len().saturating_sub(room)..];
+  let rows =
+    (area.height.saturating_sub(2) as usize).saturating_sub(body.len());
+  let all = pane.lines.len();
+  let most = all.saturating_sub(rows);
+  boxes.most[PAGE] = most;
+  boxes.rows[PAGE] = rows;
+  let back = boxes.scroll[PAGE].min(most);
+  boxes.scroll[PAGE] = back;
+  let shown = &pane.lines[all - rows.min(all) - back..all - back];
   if shown.is_empty() {
     body.push(Line::from(pane.empty.dark_gray()));
   } else {
     body.extend(shown.iter().map(|line| log_line(line)));
   }
+  let title = if boxes.minimized[PAGE] {
+    format!("{} (minimized)", pane.title)
+  } else if back > 0 {
+    format!("{} ({back} lines back from the end)", pane.title)
+  } else {
+    pane.title.clone()
+  };
+  let focused = boxes.focus == PAGE;
   frame
-    .render_widget(Paragraph::new(body).block(heading(&pane.title)), log_area);
-  frame.render_widget(Paragraph::new(keys), keys_area);
+    .render_widget(Paragraph::new(body).block(heading(&title, focused)), area);
 }

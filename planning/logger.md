@@ -557,7 +557,9 @@ Planned 2026-11-25. Each step a pause for review.
 4. **Boxes:** Tab and Shift-Tab move focus between the boxes (the log
    page too), its border highlighted. Up, Down, Page Up and Page Down
    scroll the focused one when it's over-tall; `m` minimizes it to its
-   title line, or restores it, and the others take the room.
+   title line, or restores it, and the others take the room. Done: the
+   page has the focus to start with, and keeps at least six rows unless
+   it's minimized; boxes that don't fit give up rows, the tallest first.
 5. **dgg channels:** dgg captured per channel, as Kick is: a
    `dgg-channels` list (name and WebSocket URL), a journal root per
    channel (`journal/dgg/<name>/`), a `dgg-capture` per channel, and an
