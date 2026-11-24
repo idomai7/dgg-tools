@@ -12,12 +12,9 @@ fn file(dir: &TempDir) -> PathBuf {
   dir.path().join("kick-mod").join("channels.json")
 }
 
-fn channel(broadcaster_user_id: u64, chatroom_id: Option<u64>) -> Channel {
+fn channel(broadcaster_user_id: u64) -> Channel {
   Channel {
     broadcaster_user_id,
-    // The lookup finds both, or neither.
-    channel_id: chatroom_id.map(|id| id + 1),
-    chatroom_id,
     rest: Map::new(),
   }
 }
@@ -29,20 +26,18 @@ fn none_before_the_first_write() {
 }
 
 #[test]
-fn records_lookups() {
+fn records_channels() {
   let mut known = Channels::new();
-  channels::record(&mut known, "one", 1, Some(11), Some(10));
-  channels::record(&mut known, "two", 2, None, None);
-  assert_eq!(known["one"], channel(1, Some(10)));
-  assert_eq!(known["two"], channel(2, None));
-  // Ids that weren't found leave the ones entered by hand.
+  channels::record(&mut known, "one", 1);
+  channels::record(&mut known, "two", 2);
+  assert_eq!(known["one"], channel(1));
+  assert_eq!(known["two"], channel(2));
+  // Added again, the id's replaced, and the rest kept.
   let two = known.get_mut("two").unwrap();
-  (two.channel_id, two.chatroom_id) = (Some(21), Some(20));
-  channels::record(&mut known, "two", 2, None, None);
-  assert_eq!(known["two"], channel(2, Some(20)));
-  // Ones that were found replace them.
-  channels::record(&mut known, "two", 3, Some(31), Some(30));
-  assert_eq!(known["two"], channel(3, Some(30)));
+  two.rest.insert("note".into(), "mine".into());
+  channels::record(&mut known, "two", 3);
+  assert_eq!(known["two"].broadcaster_user_id, 3);
+  assert_eq!(known["two"].rest["note"], "mine");
 }
 
 #[test]
@@ -50,17 +45,15 @@ fn writes_sorted_and_pretty() {
   let dir = TempDir::new("kick-mod-channels");
   let path = file(&dir);
   channels::update(&path, |known| {
-    channels::record(known, "zed", 2, None, None);
-    channels::record(known, "abe", 1, Some(11), Some(10));
+    channels::record(known, "zed", 2);
+    channels::record(known, "abe", 1);
   })
   .unwrap();
   let written = fs::read_to_string(&path).unwrap();
   assert_eq!(
     written,
-    "{\n  \"abe\": {\n    \"broadcaster_user_id\": 1,\n    \
-     \"channel_id\": 11,\n    \"chatroom_id\": 10\n  },\n  \"zed\": {\n    \
-     \"broadcaster_user_id\": 2,\n    \"channel_id\": null,\n    \
-     \"chatroom_id\": null\n  }\n}\n"
+    "{\n  \"abe\": {\n    \"broadcaster_user_id\": 1\n  },\n  \"zed\": {\n    \
+     \"broadcaster_user_id\": 2\n  }\n}\n"
   );
   // Nothing is left beside it.
   let beside: Vec<_> = fs::read_dir(path.parent().unwrap())
@@ -74,28 +67,22 @@ fn writes_sorted_and_pretty() {
 fn keeps_hand_edits() {
   let dir = TempDir::new("kick-mod-channels");
   let path = file(&dir);
-  channels::update(&path, |known| {
-    channels::record(known, "one", 1, None, None)
-  })
-  .unwrap();
-  // By hand, while kick-mod runs: a chatroom id, a field kick-mod doesn't
-  // know, and a channel.
+  channels::update(&path, |known| channels::record(known, "one", 1)).unwrap();
+  // By hand, while kick-mod runs: a field kick-mod doesn't know, and a
+  // channel with the ids it once recorded.
   let edited = json!({
-    "one": { "broadcaster_user_id": 1, "chatroom_id": 10, "note": "mine" },
-    "two": { "broadcaster_user_id": 2, "chatroom_id": 20 },
+    "one": { "broadcaster_user_id": 1, "note": "mine" },
+    "two": { "broadcaster_user_id": 2, "chatroom_id": 20, "channel_id": 21 },
   });
   fs::write(&path, edited.to_string()).unwrap();
-  let known = channels::update(&path, |known| {
-    channels::record(known, "three", 3, Some(31), Some(30))
-  })
-  .unwrap();
+  let known =
+    channels::update(&path, |known| channels::record(known, "three", 3))
+      .unwrap();
   assert_eq!(channels::load(&path).unwrap(), known);
   assert_eq!(known.len(), 3);
-  assert_eq!(known["one"].chatroom_id, Some(10));
   assert_eq!(known["one"].rest["note"], "mine");
-  assert_eq!(known["two"].chatroom_id, Some(20));
-  // Written before channel ids were kept: none yet.
-  assert_eq!(known["two"].channel_id, None);
+  assert_eq!(known["two"].rest["chatroom_id"], 20);
+  assert_eq!(known["two"].rest["channel_id"], 21);
 }
 
 #[test]
@@ -108,6 +95,6 @@ fn reports_a_broken_file() {
   // And doesn't write over it.
   assert!(channels::update(&path, |_| ()).is_err());
   assert_eq!(fs::read_to_string(&path).unwrap(), "{ not json");
-  let missing_id = r#"{"one": {"chatroom_id": 10}}"#;
+  let missing_id = r#"{"one": {"note": "mine"}}"#;
   assert!(channels::parse(missing_id).is_err());
 }

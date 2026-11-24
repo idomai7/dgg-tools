@@ -190,9 +190,7 @@
     const dot = element("span", "dot");
     const state = element("span", "state", "not listening: restart kick-mod");
     const title = element("h2");
-    title.title =
-      `broadcaster ${channel.broadcaster_user_id}, ` +
-      `chatroom ${channel.chatroom_id ?? "unknown"}`;
+    title.title = `broadcaster ${channel.broadcaster_user_id}`;
     title.append(dot, element("span", "", slug), state);
     const lines = element("div", "lines");
     const box = element("section", "column");
@@ -408,7 +406,7 @@
     }
     const channels = Object.entries(await answer.json());
     if (channels.length === 0) {
-      shown.textContent = "No channels yet: add one with kick-mod ids <slug>.";
+      shown.textContent = "No channels yet: add one with kick-mod add <slug>.";
       return;
     }
     shown.className = "";

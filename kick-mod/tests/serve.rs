@@ -194,18 +194,14 @@ async fn lists_the_channels_as_they_are_now() {
   assert_eq!(server.get("/api/channels", &[]).await, (200, "{}".into()));
   fs::write(
     server.channels(),
-    r#"{"one": {"broadcaster_user_id": 1, "chatroom_id": null}}"#,
+    r#"{"one": {"broadcaster_user_id": 1, "note": "mine"}}"#,
   )
   .unwrap();
   let (status, body) = server.get("/api/channels", &[]).await;
   assert_eq!(status, 200);
   assert_eq!(
     ::serde_json::from_str::<::serde_json::Value>(&body).unwrap(),
-    ::serde_json::json!({"one": {
-      "broadcaster_user_id": 1,
-      "channel_id": null,
-      "chatroom_id": null,
-    }})
+    ::serde_json::json!({"one": {"broadcaster_user_id": 1, "note": "mine"}})
   );
   fs::write(server.channels(), "{ not json").unwrap();
   assert_eq!(server.get("/api/channels", &[]).await.0, 500);

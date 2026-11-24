@@ -3,10 +3,7 @@
 use {
   ::clap::{Parser, Subcommand},
   ::common::config::Source,
-  ::kick_api::{
-    channel,
-    official::{Api, api},
-  },
+  ::kick_api::official::{Api, api},
   ::kick_mod::{
     account::{self, Account},
     channels::{self, Channels},
@@ -19,7 +16,7 @@ use {
     path::{Path, PathBuf},
     process::ExitCode,
   },
-  ::tokio::{net::TcpListener, task},
+  ::tokio::net::TcpListener,
 };
 
 #[derive(Parser)]
@@ -55,13 +52,9 @@ enum Command {
   /// http://localhost:<port>/oauth/callback, so the app has to have that
   /// redirect URI, with the port it's served on.
   Serve,
-  /// Look up channels' ids, the broadcaster's and the chatroom's, and
-  /// record them in the channels file. Kick's official API has no chatroom
-  /// ids, and Cloudflare refuses this program's own HTTP client on the
-  /// lookup that has them, so it's asked with curl. If that fails, the
-  /// broadcaster's id comes from the official API, and the chatroom id is
-  /// left to enter by hand.
-  Ids {
+  /// Add channels, by their broadcasters' ids from Kick's official API,
+  /// to the channels file. A channel added already is looked up again.
+  Add {
     /// Channel slugs, as in their URLs.
     #[arg(required = true)]
     slugs: Vec<String>,
@@ -87,7 +80,7 @@ async fn main() -> ExitCode {
       };
       run(config, files).await
     }
-    Command::Ids { slugs } => ids(config, &args.channels, &slugs).await,
+    Command::Add { slugs } => add(config, &args.channels, &slugs).await,
     Command::Config => show(config),
   };
   match done {
@@ -146,54 +139,30 @@ async fn run(config: Source<'_>, files: Files) -> Result<(), String> {
     .map_err(|e| format!("serving: {e}"))
 }
 
-async fn ids(
+async fn add(
   config: Source<'_>,
   path: &Path,
   slugs: &[String],
 ) -> Result<(), String> {
-  let mut api = None;
+  let config = Config::read(config)?;
+  let api = Api::app(::reqwest::Client::new(), config.app());
   let mut failed = false;
   for slug in slugs.iter().map(|slug| slug.trim()) {
-    let owned = slug.to_owned();
-    let looked_up = task::spawn_blocking(move || channel::look_up(&owned))
-      .await
-      .map_err(|e| e.to_string())?;
-    let (broadcaster, ids) = match looked_up {
-      Ok(channel) => (channel.user_id, Some((channel.id, channel.chatroom.id))),
+    let broadcaster = match broadcaster(&api, slug).await {
+      Ok(id) => id,
       Err(e) => {
-        eprintln!("{slug}: the lookup failed: {e}");
-        if api.is_none() {
-          let config = Config::read(config)?;
-          api = Some(Api::app(::reqwest::Client::new(), config.app()));
-        }
-        match broadcaster(api.as_ref().unwrap(), slug).await {
-          Ok(id) => (id, None),
-          Err(e) => {
-            eprintln!("{slug}: {e}");
-            failed = true;
-            continue;
-          }
-        }
+        eprintln!("{slug}: {e}");
+        failed = true;
+        continue;
       }
     };
-    let recorded = channels::update(path, |channels: &mut Channels| {
-      let (channel, chatroom) = ids.unzip();
-      channels::record(channels, slug, broadcaster, channel, chatroom)
+    channels::update(path, |channels: &mut Channels| {
+      channels::record(channels, slug, broadcaster)
     })?;
-    let channel = &recorded[slug];
-    let id = |id: Option<u64>| id.map_or("unknown".into(), |id| id.to_string());
-    let (channel_id, chatroom) =
-      (id(channel.channel_id), id(channel.chatroom_id));
-    println!(
-      "{slug}: broadcaster={broadcaster} channel={channel_id} \
-       chatroom={chatroom}"
-    );
-    if channel.channel_id.is_none() || channel.chatroom_id.is_none() {
-      println!("{slug}: enter the unknown ids in {}", path.display());
-    }
+    println!("{slug}: broadcaster={broadcaster}");
   }
   if failed {
-    Err("some channels weren't recorded".into())
+    Err("some channels weren't added".into())
   } else {
     Ok(())
   }
