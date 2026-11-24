@@ -535,8 +535,8 @@ yet, so old peers need no compatibility. Planned 2026-11-24.
   the supervisor running it, `status` showing it, compact and sync covering
   Kick's journals, Kick's index, and `serve`'s Kick endpoints (4 to 6 not
   yet run on a host).
-  - `serve` is still started by hand: nothing passes it the query token
-    yet. The supervisor will run it (see [deploy](deploy.md#install-config)).
+  - The supervisor runs `serve`, given its section of the install's config,
+    query token included (see [deploy](deploy.md#install-config)).
   - The supervisor finds the list in the install's root (its `--peers`,
     which every install passes), and runs `kick-capture` once it has
     channels. A list's changes take effect at the supervisor's next start.

@@ -77,7 +77,12 @@ and `ca.pem`. Planned 2026-11-25.
      2026-11-25.
   3. `serve` under the supervisor, from the file's `serve` section, its
      certificate and key passed on stdin, restarted like capture, and
-     shown by `status`.
+     shown by `status`. Done 2026-11-25: `install --serve <address>
+     --serve-cert <file> --serve-key <file>`, the tokens as `{"serve":
+     {...}}` in install's config JSON. The section is read when the
+     supervisor starts, and only one supervisor serves at a time
+     (`serve.lock`), so during a handoff the new one waits for the old one's
+     port.
   4. kick-mod switches to the logger (see [kick-mod](kick-mod.md)), its
      query token in its own config JSON.
 

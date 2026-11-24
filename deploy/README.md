@@ -15,8 +15,9 @@ directory:
 | `kick-capture` | Connects to Kick chat, each channel in `kick-channels`, and writes everything to the journal | all the time, once `kick-channels` has channels |
 | `install`, `uninstall`, `status`, `config`, `supervise` | Run, install and inspect the rest | when you want |
 
-`dgg-supervisor` keeps capture and index running, restarts them after
-failures, and runs compact (and sync, given a peer); it's `dgg-logger
+`dgg-supervisor` keeps capture and index running (and serve, given its
+config), restarts them after failures, and runs compact (and sync, given a
+peer); it's `dgg-logger
 supervise` without a window, for the logon task and the service. It runs
 `kick-capture` too once `kick-channels` has channels (it looks every
 minute until then). A change to the list takes effect when the supervisor
@@ -276,9 +277,22 @@ arrives.
 
 ### Running serve safely
 
-On each host synced from, make a token and serve with it. Tokens, like
-every secret, are given as JSON, in a file (`--config-file`) or on stdin
-(`--config-stdin`), never as a flag or in the environment:
+On each host synced from, have the supervisor serve, with this node's
+certificate (from `cert node`) and any tokens beyond the mesh's. Tokens,
+like every secret, are given as JSON, in a file (`--config-file`) or on
+stdin (`--config-stdin`), never as a flag or in the environment:
+
+```powershell
+$query = [Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
+@{ serve = @{ query = $query } } | ConvertTo-Json | target\release\dgg-logger install --serve 0.0.0.0:8788 --serve-cert pi.pem --serve-key pi.key --config-stdin
+```
+
+That keeps the certificate, key and tokens in `install.env.json`; the
+supervisor serves with them from its next start (`serve.log`, and `9` in
+`status --watch`), its read token the mesh's unless `serve.read` is given.
+`install --serve` again replaces them; `install --no-serve` stops serving.
+
+To serve by hand instead, give `serve` its tokens the same way:
 
 ```powershell
 $token = [Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
@@ -289,9 +303,10 @@ target\release\dgg-logger serve --listen 0.0.0.0:8788 --config-file serve.json
 Keep `serve.json` where only you can read it. `sync` takes the peer's read
 token the same way, as `{"token": "..."}`.
 
-- `serve` speaks plain HTTP, so the token crosses the network readable.
-  Reach it only over something private: a VPN such as Tailscale or
-  WireGuard, or an SSH tunnel. Don't open the port to the internet.
+- Without a certificate, `serve` speaks plain HTTP, so the token crosses
+  the network readable. Reach it only over something private: a VPN such
+  as Tailscale or WireGuard, or an SSH tunnel. Don't open the port to the
+  internet.
 - That token only reads, which is all sync needs. A second one,
   `tokens.control`, lets a capture on another host push its status there,
   which makes that host's captures retire. Set it only while moving
