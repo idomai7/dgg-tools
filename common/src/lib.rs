@@ -1,7 +1,9 @@
 //! Small tools the workspace's crates share, one module each, depending on
-//! little beyond `std`: `random` on getrandom, base64 and fastrand.
+//! little beyond `std`: `random` on getrandom, base64 and fastrand, and
+//! `config` on serde, serde_json and zeroize.
 //!
 //! - [`atomic_file`]: replacing a file whole.
+//! - [`config`]: a command's configuration and secrets, as JSON.
 //! - [`format`](mod@format): durations, sizes and counts, for people.
 //! - [`fs`]: files and directories, beyond `std::fs`.
 //! - [`log`]: log levels, and printing lines at them.
@@ -11,6 +13,7 @@
 //! - [`time`]: unix milliseconds, days, and RFC 3339.
 
 pub mod atomic_file;
+pub mod config;
 pub mod format;
 pub mod fs;
 pub mod log;

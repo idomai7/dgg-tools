@@ -9,3 +9,6 @@ description = "Small tools the workspace's crates share"
 base64.workspace = true
 fastrand.workspace = true
 getrandom.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+zeroize.workspace = true
