@@ -1,12 +1,14 @@
 //! Serve this host's journal over HTTPS, for other hosts.
 
 use {
+  super::ConfigFrom,
   crate::{
     cert,
     serve::{self, MIN_TOKEN, Tokens, router},
   },
   ::clap::Args,
-  ::common::{error, info, warn},
+  ::common::{config::Secret, error, info, warn},
+  ::serde::Deserialize,
   ::std::{
     fs,
     net::SocketAddr,
@@ -16,7 +18,7 @@ use {
 };
 
 /// Serve this host's journal over HTTPS, for other hosts: for `sync` to
-/// pull from, (given `--control-token`) for a capture on another host
+/// pull from, (given a control token) for a capture on another host
 /// (`capture --peer`) to take over from the ones here, and Kick's history
 /// and live chat for kick-mod.
 #[derive(Args)]
@@ -31,19 +33,31 @@ pub struct Serve {
   /// The certificate's key.
   #[arg(long, requires = "tls_cert")]
   tls_key: Option<PathBuf>,
-  /// Bearer token for reading the journal (what `sync` needs), at least
-  /// 32 characters.
-  #[arg(long, env = "LOGGER_TOKEN", hide_env_values = true)]
-  token: String,
-  /// Bearer token that also lets another host's capture push its status
-  /// here, which makes the captures here retire; at least 32 characters,
-  /// and not `--token`. Without it, nothing can push.
-  #[arg(long, env = "LOGGER_CONTROL_TOKEN", hide_env_values = true)]
-  control_token: Option<String>,
-  /// Bearer token that reads only Kick's history and live chat, for
-  /// kick-mod; at least 32 characters, and none of the others.
-  #[arg(long, env = "LOGGER_QUERY_TOKEN", hide_env_values = true)]
-  query_token: Option<String>,
+  /// Its config: its bearer tokens, `{"tokens": {"read": "...",
+  /// "control": "...", "query": "..."}}`, `control` and `query` optional.
+  #[command(flatten)]
+  config: ConfigFrom,
+}
+
+/// What `serve` reads with `--config-file` or `--config-stdin`.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Config {
+  pub tokens: ConfigTokens,
+}
+
+/// `serve`'s bearer tokens, each at least [`MIN_TOKEN`] characters, and no
+/// two the same.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConfigTokens {
+  /// Reads the journal (what `sync` needs).
+  pub read: Secret,
+  /// Also lets another host's capture push its status here, which makes
+  /// the captures here retire. Without it, nothing can push.
+  pub control: Option<Secret>,
+  /// Reads only Kick's history and live chat, for kick-mod.
+  pub query: Option<Secret>,
 }
 
 impl Serve {
@@ -53,17 +67,24 @@ impl Serve {
   }
 
   async fn serve(self, data: &Path) -> ExitCode {
+    let shape =
+      r#"{"tokens": {"read": "...", "control": "...", "query": "..."}}"#;
+    let config: Config = match self.config.require(shape) {
+      Ok(config) => config,
+      Err(e) => {
+        error!("{e}");
+        return ExitCode::FAILURE;
+      }
+    };
+    let expose =
+      |token: Option<Secret>| token.map(|token| token.expose().to_owned());
     let tokens = Tokens {
-      read: self.token,
-      control: self.control_token.filter(|token| !token.is_empty()),
-      query: self.query_token.filter(|token| !token.is_empty()),
+      read: config.tokens.read.expose().to_owned(),
+      control: expose(config.tokens.control),
+      query: expose(config.tokens.query),
     };
     if let Err(why) = tokens.check() {
-      error!(
-        "{why} (--token or LOGGER_TOKEN, --control-token or \
-         LOGGER_CONTROL_TOKEN, --query-token or LOGGER_QUERY_TOKEN; a random \
-         {MIN_TOKEN}+ character string will do)"
-      );
+      error!("{why} (a random {MIN_TOKEN}+ character string will do)");
       return ExitCode::FAILURE;
     }
     let tls = match (&self.tls_cert, &self.tls_key) {

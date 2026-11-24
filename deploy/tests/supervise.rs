@@ -22,8 +22,8 @@ enum Step<'a> {
   Sleep(u32),
   /// Exits 0 if `marker` exists, else creates it and exits 1.
   FailOnce(&'a str),
-  /// Says its arguments, then the variable `name`.
-  SayArgsAnd(&'a str),
+  /// Says its arguments, then the first line of its stdin.
+  SayArgsAndStdin,
   Exit(u32),
 }
 
@@ -44,7 +44,7 @@ fn script(dir: &Path, name: &str, steps: &[Step]) -> Program {
           "if exist \"{0}\" exit /b 0\r\ntype nul > \"{0}\"\r\nexit /b 1\r\n",
           dir.join(marker).display()
         ),
-        Step::SayArgsAnd(name) => format!("echo %* %{name}%\r\n"),
+        Step::SayArgsAndStdin => "set /p LINE=\r\necho %* %LINE%\r\n".into(),
         Step::Exit(code) => format!("exit /b {code}\r\n"),
       };
     }
@@ -60,7 +60,7 @@ fn script(dir: &Path, name: &str, steps: &[Step]) -> Program {
           "[ -e '{0}' ] && exit 0\ntouch '{0}'\nexit 1\n",
           dir.join(marker).display()
         ),
-        Step::SayArgsAnd(name) => format!("echo \"$@\" \"${name}\"\n"),
+        Step::SayArgsAndStdin => "read -r line\necho \"$@\" \"$line\"\n".into(),
         Step::Exit(code) => format!("exit {code}\n"),
       };
     }
@@ -239,8 +239,7 @@ fn run_with_sync(dir: &TempDir, peers: Option<PathBuf>) {
   let capture = script(dir.path(), "capture", &[Step::Sleep(3), Step::Exit(0)]);
   let index = script(dir.path(), "index", &[Step::Sleep(20)]);
   let mut config = config(dir, capture, index);
-  let mut sync =
-    script(dir.path(), "sync", &[Step::SayArgsAnd("LOGGER_PEER_TOKEN")]);
+  let mut sync = script(dir.path(), "sync", &[Step::SayArgsAndStdin]);
   sync.args = vec!["sync".into()];
   config.sync = sync;
   config.peers = peers;
@@ -260,10 +259,12 @@ fn syncs_from_the_peer_file() {
   .unwrap();
   run_with_sync(&dir, Some(dir.to_path_buf()));
   let sync = log(&dir, "sync");
-  // The URL as an argument; the token only in its environment. Each line
-  // says which peer it's about.
+  // The URL as an argument; the token only in its config, on stdin. Each
+  // line says which peer it's about.
   assert!(
-    sync.contains(" peer: sync --peer http://peer:8788 secret"),
+    sync.contains(
+      r#" peer: sync --peer http://peer:8788 --config-stdin {"token":"secret"}"#
+    ),
     "{sync}"
   );
   let supervisor = log(&dir, "supervisor");
@@ -300,15 +301,15 @@ fn syncs_from_every_node_in_turn() {
   let at = |text: &str| sync.find(text).unwrap_or_else(|| panic!("{sync}"));
   let ca = dir.path().join("ca.pem");
   let a = at(&format!(
-    " a: sync --peer https://a:8788 --peer-ca {} mesh",
+    r#" a: sync --peer https://a:8788 --peer-ca {} --config-stdin {{"token":"mesh"}}"#,
     ca.display()
   ));
   let b = at(&format!(
-    " b: sync --peer https://b:8788 --peer-ca {} mesh",
+    r#" b: sync --peer https://b:8788 --peer-ca {} --config-stdin {{"token":"mesh"}}"#,
     ca.display()
   ));
   assert!(a < b, "{sync}");
-  at(" old: sync --peer http://old:8788 old");
+  at(r#" old: sync --peer http://old:8788 --config-stdin {"token":"old"}"#);
   // Not itself, and not a node that can't be reached.
   assert!(
     !sync.contains("me:8788") && !sync.contains(" pi: "),
@@ -402,7 +403,7 @@ fn captures_kick_given_channels() {
   let mut kick = script(
     dir.path(),
     "kick",
-    &[Step::SayArgsAnd("NOTHING"), Step::Sleep(20)],
+    &[Step::SayArgsAndStdin, Step::Sleep(20)],
   );
   kick.args = vec!["kick-capture".into()];
   let config = config(&dir, capture, index);

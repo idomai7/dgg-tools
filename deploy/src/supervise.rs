@@ -36,12 +36,12 @@
 
 use {
   crate::{lifeline::Lifeline, log::Log, peer},
-  ::common::log::Level,
+  ::common::{config::Secret, log::Level},
   ::logger::kick::channels,
   ::std::{
     ffi::OsString,
     fs::{self, File, TryLockError},
-    io::{self, BufRead, BufReader, Read},
+    io::{self, BufRead, BufReader, Read, Write},
     path::{Path, PathBuf},
     process::{Child, Command, ExitStatus, Stdio},
     sync::{
@@ -53,13 +53,13 @@ use {
   },
 };
 
-/// A program to run: its path and arguments, and variables to add to its
-/// environment.
+/// A program to run: its path and arguments, and its config (JSON, with
+/// any secrets), written to its stdin, which is then closed.
 #[derive(Clone, Debug, Default)]
 pub struct Program {
   pub path: PathBuf,
   pub args: Vec<OsString>,
-  pub env: Vec<(OsString, OsString)>,
+  pub config: Option<Secret>,
 }
 
 impl Program {
@@ -68,7 +68,7 @@ impl Program {
     Self {
       path: bin_dir.join(format!("{name}{}", ::std::env::consts::EXE_SUFFIX)),
       args: args.iter().map(|arg| arg.as_os_str().to_owned()).collect(),
-      env: Vec::new(),
+      config: None,
     }
   }
 }
@@ -467,7 +467,7 @@ fn capture_kick(
   }
 }
 
-/// `sync` pulling from `peer`, its token in the environment; if it's
+/// `sync` pulling from `peer`, its token in its config on stdin; if it's
 /// `https://`, trusting the CA certificate `ca` alone, if given.
 fn sync_from(sync: &Program, peer: &peer::Peer, ca: Option<&Path>) -> Program {
   let mut program = sync.clone();
@@ -479,9 +479,9 @@ fn sync_from(sync: &Program, peer: &peer::Peer, ca: Option<&Path>) -> Program {
       .args
       .extend(["--peer-ca".into(), ca.as_os_str().to_owned()]);
   }
-  program
-    .env
-    .push((peer::TOKEN.into(), peer.token.clone().into()));
+  program.args.push("--config-stdin".into());
+  let config = ::serde_json::json!({ "token": peer.token });
+  program.config = Some(Secret::new(config.to_string()));
   program
 }
 
@@ -636,8 +636,10 @@ fn run_once(
   let mut command = Command::new(&program.path);
   command
     .args(&program.args)
-    .envs(program.env.iter().map(|(key, value)| (key, value)))
-    .stdin(Stdio::null())
+    .stdin(match program.config {
+      Some(_) => Stdio::piped(),
+      None => Stdio::null(),
+    })
     .stdout(Stdio::piped())
     .stderr(Stdio::piped());
   #[cfg(windows)]
@@ -666,6 +668,19 @@ fn run_once(
   if let Err(e) = lifeline.tie(&child) {
     // It runs anyway; it just might outlive a killed supervisor.
     log_line(supervisor, Level::Warn, &format!("{name}: {e}"));
+  }
+  if let (Some(config), Some(mut stdin)) =
+    (program.config.clone(), child.stdin.take())
+  {
+    // Apart, so a program that doesn't read it can't hold this up; closed
+    // once written.
+    let (supervisor, name) = (Arc::clone(supervisor), name.to_owned());
+    thread::spawn(move || {
+      if let Err(e) = stdin.write_all(config.expose().as_bytes()) {
+        let said = format!("{name}: can't pass on its config: {e}");
+        log_line(&supervisor, Level::Warn, &said);
+      }
+    });
   }
   let readers: Vec<_> = [
     child

@@ -19,6 +19,42 @@ pub use {
   kick_ids::KickIds, migrate::Migrate, serve::Serve, sync::Sync,
 };
 
+/// Where a command's config and secrets are, as JSON (see
+/// [`common::config`]): never in a flag's value or the environment.
+#[derive(::clap::Args)]
+pub struct ConfigFrom {
+  /// Read this command's config and secrets from this JSON file.
+  #[arg(long, conflicts_with = "config_stdin")]
+  config_file: Option<::std::path::PathBuf>,
+  /// Read this command's config and secrets from stdin, as JSON.
+  #[arg(long)]
+  config_stdin: bool,
+}
+
+impl ConfigFrom {
+  /// The config, if one was given.
+  fn read<T: for<'de> ::serde::Deserialize<'de>>(
+    &self,
+  ) -> Result<Option<T>, String> {
+    use ::common::config::{Source, read};
+    match (&self.config_file, self.config_stdin) {
+      (Some(path), _) => read(Source::File(path)).map(Some),
+      (None, true) => read(Source::Stdin).map(Some),
+      (None, false) => Ok(None),
+    }
+  }
+
+  /// The config, which must be given: `shape` says what it holds.
+  fn require<T: for<'de> ::serde::Deserialize<'de>>(
+    &self,
+    shape: &str,
+  ) -> Result<T, String> {
+    self.read()?.ok_or_else(|| {
+      format!("needs --config-file or --config-stdin, with {shape}")
+    })
+  }
+}
+
 /// The CA certificate at `peer_ca`, if given, checked, for reaching `url`,
 /// which must then be HTTPS.
 fn read_peer_ca(

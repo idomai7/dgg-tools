@@ -57,10 +57,10 @@ enum Command {
 struct CaFiles {
   /// The CA's private key: PKCS#8 PEM, with a password or not (ECDSA P-256
   /// or P-384, Ed25519 or RSA).
-  #[arg(long, env = "DGG_CA_KEY", default_value = "infra/secrets/ca.key")]
+  #[arg(long, default_value = "infra/secrets/ca.key")]
   ca_key: PathBuf,
   /// The CA's certificate.
-  #[arg(long, env = "DGG_CA_CERT", default_value = "infra/secrets/ca.pem")]
+  #[arg(long, default_value = "infra/secrets/ca.pem")]
   ca_cert: PathBuf,
 }
 

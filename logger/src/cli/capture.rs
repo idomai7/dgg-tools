@@ -1,6 +1,7 @@
 //! Capture dgg chat into the journal.
 
 use {
+  super::ConfigFrom,
   crate::{
     capture::{Exit, Handoff, Peer, Say, instance_id},
     dgg::{
@@ -10,8 +11,9 @@ use {
     service::Service,
   },
   ::clap::Args,
-  ::common::time::now_ms,
+  ::common::{config::Secret, time::now_ms},
   ::dgg_api::chat::{DEFAULT_URL, Options},
+  ::serde::Deserialize,
   ::std::{
     path::{Path, PathBuf},
     process::ExitCode,
@@ -45,13 +47,21 @@ pub struct Capture {
   /// CA alone.
   #[arg(long, requires = "peer")]
   peer_ca: Option<PathBuf>,
-  /// The control token of `--peer`'s `serve` (its `--control-token`).
-  #[arg(long, env = "LOGGER_PEER_TOKEN", hide_env_values = true)]
-  peer_token: Option<String>,
+  /// Its config, with `--peer`: `{"token": "<--peer's control token>"}`.
+  #[command(flatten)]
+  config: ConfigFrom,
   /// Run as an install's bridge: lines are timestamped and marked, since
   /// no supervisor is there to timestamp them.
   #[arg(long)]
   bridge: bool,
+}
+
+/// What `capture --peer` reads with `--config-file` or `--config-stdin`.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PeerConfig {
+  /// The control token of `--peer`'s `serve`.
+  pub token: Secret,
 }
 
 impl Capture {
@@ -79,27 +89,39 @@ impl Capture {
       instance: instance.clone(),
       bridge: self.bridge,
     };
-    say.info(format_args!(
-      "capturing into {} (build {})",
-      journal_root.display(),
-      crate::BUILD
-    ));
-    let peer = match (self.peer, self.peer_token) {
-      (Some(url), Some(token)) if !token.is_empty() => {
-        match super::read_peer_ca(self.peer_ca.as_deref(), &url) {
-          Ok(ca) => Some(Peer { url, token, ca }),
-          Err(e) => {
+    let peer = match self.peer {
+      Some(url) => {
+        let config = self.config.require::<PeerConfig>(r#"{"token": "..."}"#);
+        let ca = super::read_peer_ca(self.peer_ca.as_deref(), &url);
+        match (config, ca) {
+          (Ok(config), Ok(ca)) => Some(Peer {
+            url,
+            token: config.token.expose().to_owned(),
+            ca,
+          }),
+          (Err(e), _) => {
+            say.error(format_args!("--peer {e}"));
+            return ExitCode::FAILURE;
+          }
+          (_, Err(e)) => {
             say.error(e);
             return ExitCode::FAILURE;
           }
         }
       }
-      (Some(_), _) => {
-        say.error("--peer needs --peer-token (or LOGGER_PEER_TOKEN)");
-        return ExitCode::FAILURE;
-      }
-      (None, _) => None,
+      None => match self.config.read::<PeerConfig>() {
+        Ok(None) => None,
+        Ok(Some(_)) | Err(_) => {
+          say.error("a config is only for --peer's token");
+          return ExitCode::FAILURE;
+        }
+      },
     };
+    say.info(format_args!(
+      "capturing into {} (build {})",
+      journal_root.display(),
+      crate::BUILD
+    ));
     let config = Config {
       chat,
       journal_root,

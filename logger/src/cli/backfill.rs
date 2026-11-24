@@ -3,6 +3,7 @@
 //! a stretch of history.
 
 use {
+  super::ConfigFrom,
   crate::{
     capture::instance_id,
     dgg::{
@@ -16,11 +17,12 @@ use {
     service::Service,
   },
   ::clap::{Args, ValueEnum},
-  ::common::{error, info, warn},
+  ::common::{config::Secret, error, info, warn},
   ::common::{
     format,
     time::{now_ms, unix_ms, utc_timestamp},
   },
+  ::serde::Deserialize,
   ::std::{path::Path, process::ExitCode, time::Duration},
 };
 
@@ -37,10 +39,10 @@ pub struct Backfill {
   /// Where to fetch from.
   #[arg(long, value_enum, default_value_t = SourceName::Rustlesearch)]
   source: SourceName,
-  /// An `lk_session` cookie from a logged-in linkers.ooo session, which
-  /// lifts its rate limit.
-  #[arg(long, env = "LINKERS_SESSION", hide_env_values = true)]
-  linkers_session: Option<String>,
+  /// Its config, if any: `{"linkers_session": "<lk_session cookie>"}`, a
+  /// logged-in linkers.ooo session's, which lifts its rate limit.
+  #[command(flatten)]
+  config: ConfigFrom,
   /// Import history from this UTC date or time (`2016-01-01` or
   /// `2016-01-01T12:00:00Z`) instead of filling gaps.
   #[arg(long, value_parser = parse_time)]
@@ -118,6 +120,14 @@ fn parse_time(text: &str) -> Result<i64, String> {
   unix_ms(&full).ok_or_else(|| format!("not a UTC date or time: {text:?}"))
 }
 
+/// What `backfill` reads with `--config-file` or `--config-stdin`.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Config {
+  /// An `lk_session` cookie from a logged-in linkers.ooo session.
+  pub linkers_session: Option<Secret>,
+}
+
 impl Backfill {
   /// Reads `<data>/index-dgg.sqlite` and writes dgg's backfill journal.
   pub fn run(self, data: &Path) -> ExitCode {
@@ -125,6 +135,16 @@ impl Backfill {
   }
 
   async fn backfill(self, data: &Path) -> ExitCode {
+    let config = match self.config.read::<Config>() {
+      Ok(config) => config,
+      Err(e) => {
+        error!("{e}");
+        return ExitCode::FAILURE;
+      }
+    };
+    let session = config
+      .and_then(|config| config.linkers_session)
+      .map(|session| session.expose().to_owned());
     let history = self.from.is_some();
     let journal = data.join("journal");
     let margin = (self.margin * 1000.0) as i64;
@@ -193,7 +213,7 @@ impl Backfill {
       }
       SourceName::Linkers => {
         let api = ::linkers_api::Api::new(http, crate::USER_AGENT)
-          .with_session(self.linkers_session);
+          .with_session(session);
         let source = Linkers::new(api);
         fetch(&source, &ranges, &options, what).await
       }

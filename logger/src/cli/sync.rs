@@ -1,9 +1,11 @@
 //! Pull another host's journal into this one's.
 
 use {
+  super::ConfigFrom,
   crate::{capture::Peer, sync::sync},
   ::clap::Args,
-  ::common::{error, info, warn},
+  ::common::{config::Secret, error, info, warn},
+  ::serde::Deserialize,
   ::std::{
     path::{Path, PathBuf},
     process::ExitCode,
@@ -23,15 +25,23 @@ pub struct Sync {
   /// CA alone.
   #[arg(long)]
   peer_ca: Option<PathBuf>,
-  /// Bearer token for `--peer`.
-  #[arg(long, env = "LOGGER_PEER_TOKEN", hide_env_values = true)]
-  peer_token: String,
+  /// Its config: `{"token": "<--peer's read token>"}`.
+  #[command(flatten)]
+  config: ConfigFrom,
   /// Keep syncing, every `--interval` seconds.
   #[arg(long)]
   follow: bool,
   /// Seconds between rounds with `--follow`.
   #[arg(long, default_value_t = 5.0)]
   interval: f64,
+}
+
+/// What `sync` reads with `--config-file` or `--config-stdin`.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Config {
+  /// The peer's read token.
+  pub token: Secret,
 }
 
 impl Sync {
@@ -41,6 +51,13 @@ impl Sync {
   }
 
   async fn sync(self, data: &Path) -> ExitCode {
+    let config: Config = match self.config.require(r#"{"token": "..."}"#) {
+      Ok(config) => config,
+      Err(e) => {
+        error!("{e}");
+        return ExitCode::FAILURE;
+      }
+    };
     let ca = match super::read_peer_ca(self.peer_ca.as_deref(), &self.peer) {
       Ok(ca) => ca,
       Err(e) => {
@@ -50,7 +67,7 @@ impl Sync {
     };
     let peer = Peer {
       url: self.peer,
-      token: self.peer_token,
+      token: config.token.expose().to_owned(),
       ca,
     };
     let journal_root = data.join("journal");
