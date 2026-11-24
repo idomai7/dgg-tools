@@ -37,7 +37,12 @@ use {
     params,
   },
   ::serde_json::Value,
-  ::std::{collections::HashMap, fs, io, path::Path, time::Duration},
+  ::std::{
+    collections::HashMap,
+    fs, io,
+    path::Path,
+    time::{Duration, Instant},
+  },
 };
 
 /// Bumped whenever the schema changes; an index at another version must be
@@ -198,8 +203,20 @@ pub fn rebuild(path: &Path) -> Result<Connection, Error> {
   open(path)
 }
 
-/// Keeps the index up to date: runs [`index`] every `interval` while
-/// `running()` is true, passing each run's stats to `report`.
+/// How often [`follow`] indexes: a round once `batch` records are waiting,
+/// but no sooner than `min_wait` after the last, and at the latest
+/// `max_wait` after it however few are waiting.
+#[derive(Clone, Copy, Debug)]
+pub struct Pace {
+  /// How often to look at what's waiting.
+  pub look: Duration,
+  pub batch: u64,
+  pub min_wait: Duration,
+  pub max_wait: Duration,
+}
+
+/// Keeps the index up to date while `running()` is true: runs [`index`] at
+/// once, then as often as `pace` says, passing each run's stats to `report`.
 ///
 /// Errors from a run are passed to `report` and retried next round (a file
 /// briefly locked by another process, say), except [`Error::Schema`], which
@@ -207,29 +224,76 @@ pub fn rebuild(path: &Path) -> Result<Connection, Error> {
 pub fn follow(
   db: &mut Connection,
   journal_root: &Path,
-  interval: Duration,
+  pace: Pace,
   running: impl Fn() -> bool,
   mut report: impl FnMut(Result<&Stats, &Error>),
 ) -> Result<(), Error> {
+  let mut last = None::<Instant>;
   while running() {
-    match index(db, journal_root) {
-      Ok(stats) => report(Ok(&stats)),
-      Err(e @ Error::Schema(_)) => return Err(e),
-      Err(e) => report(Err(&e)),
+    let since = last.map(|last| last.elapsed());
+    let due = match since {
+      None => true,
+      Some(since) if since >= pace.max_wait => true,
+      Some(since) if since >= pace.min_wait => {
+        // A failure to look is the round's to report.
+        waiting(db, journal_root, pace.batch).map_or(true, |n| n >= pace.batch)
+      }
+      Some(_) => false,
+    };
+    if due {
+      last = Some(Instant::now());
+      match index(db, journal_root) {
+        Ok(stats) => report(Ok(&stats)),
+        Err(e @ Error::Schema(_)) => return Err(e),
+        Err(e) => report(Err(&e)),
+      }
     }
-    ::std::thread::sleep(interval);
+    ::std::thread::sleep(pace.look);
   }
   Ok(())
+}
+
+/// How many records in the live and backfill files aren't indexed yet,
+/// counting up to `at_most`. Archives aren't counted: a newly archived day
+/// is mostly records already indexed from its live files.
+pub fn waiting(
+  db: &Connection,
+  journal_root: &Path,
+  at_most: u64,
+) -> Result<u64, Error> {
+  let mut count = 0;
+  let files = live_files(journal_root)?
+    .into_iter()
+    .chain(backfill_files(journal_root)?);
+  for file in files {
+    if count >= at_most {
+      break;
+    }
+    let (offset, _) = checkpoint(db, &relative(journal_root, &file))?;
+    // Only a file that's grown since is opened.
+    if fs::metadata(&file)
+      .missing_ok()?
+      .is_none_or(|m| m.len() <= offset)
+    {
+      continue;
+    }
+    count += match Reader::open(&file, offset) {
+      Ok(reader) => reader.count_records(at_most - count)?,
+      Err(ReadError::Io(e)) if e.kind() != io::ErrorKind::NotFound => {
+        return Err(e.into());
+      }
+      // Gone, or one a round would skip.
+      Err(_) => 0,
+    };
+  }
+  Ok(count)
 }
 
 /// Indexes everything in the journal at `journal_root` that isn't indexed
 /// yet.
 pub fn index(db: &mut Connection, journal_root: &Path) -> Result<Stats, Error> {
   let mut stats = Stats::default();
-  let relative = |file: &Path| {
-    let relative = file.strip_prefix(journal_root).unwrap_or(file);
-    relative.to_string_lossy().replace('\\', "/")
-  };
+  let relative = |file: &Path| relative(journal_root, file);
   let mut live = Vec::new();
   let files = live_files(journal_root)?
     .into_iter()
@@ -280,6 +344,12 @@ pub fn index(db: &mut Connection, journal_root: &Path) -> Result<Stats, Error> {
   }
   forget_gone(db, &live)?;
   Ok(stats)
+}
+
+/// `file`'s path under `journal_root`, as the index names it.
+fn relative(journal_root: &Path, file: &Path) -> String {
+  let relative = file.strip_prefix(journal_root).unwrap_or(file);
+  relative.to_string_lossy().replace('\\', "/")
 }
 
 /// A file's checkpoint: where to resume, and the digest it was read at.

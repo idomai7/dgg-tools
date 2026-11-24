@@ -1,11 +1,20 @@
 use {
   ::common::temp_dir::TempDir,
   ::logger::index::{
-    Error, SCHEMA_VERSION, follow, index, open, rebuild, user_version,
+    Error, Pace, SCHEMA_VERSION, follow, index, open, rebuild, user_version,
+    waiting,
   },
   ::logger_journal::{Version, Writer, record::v0::Body},
   ::rusqlite::Connection,
-  ::std::{path::PathBuf, sync::atomic::Ordering},
+  ::std::{
+    path::PathBuf,
+    sync::{
+      Arc,
+      atomic::{AtomicBool, Ordering},
+    },
+    thread::JoinHandle,
+    time::{Duration, Instant},
+  },
 };
 
 fn journal(dir: &TempDir) -> PathBuf {
@@ -189,47 +198,147 @@ fn refuses_other_schema_versions() {
   assert!(rebuild(&database(&root)).is_ok());
 }
 
+/// Runs [`follow`] on `root` at `pace` until the flag is cleared, when it
+/// returns the messages it indexed.
+fn follower(root: &TempDir, pace: Pace) -> (Arc<AtomicBool>, JoinHandle<u64>) {
+  let running = Arc::new(AtomicBool::new(true));
+  let (database, journal) = (database(root), journal(root));
+  let flag = running.clone();
+  let follower = ::std::thread::spawn(move || {
+    let mut db = open(&database).unwrap();
+    let mut messages = 0;
+    follow(
+      &mut db,
+      &journal,
+      pace,
+      || flag.load(Ordering::Relaxed),
+      |round| messages += round.unwrap().messages,
+    )
+    .unwrap();
+    messages
+  });
+  (running, follower)
+}
+
+/// Waits up to 5 seconds for the index to hold `expected` messages.
+fn wait_for(db: &Connection, expected: i64) {
+  let deadline = Instant::now() + Duration::from_secs(5);
+  while count(db, "SELECT count(*) FROM messages") != expected {
+    assert!(Instant::now() < deadline, "never reached {expected}");
+    ::std::thread::sleep(Duration::from_millis(10));
+  }
+}
+
+/// Writes a live message from instance `b`.
+fn write_message(root: &TempDir, timestamp: i64, data: &str) {
+  let mut b = Writer::new(journal(root), "b");
+  b.write(
+    93,
+    1,
+    frame(format!("MSG {}", message(timestamp, "z", data))),
+  )
+  .unwrap();
+  b.sync().unwrap();
+}
+
 #[test]
 fn follows_new_lines() {
-  use ::std::{
-    sync::{Arc, atomic::AtomicBool},
-    time::{Duration, Instant},
-  };
   let root = TempDir::new("logger-index");
   write_journal(&root);
-  let running = Arc::new(AtomicBool::new(true));
-  let follower = {
-    let (database, journal) = (database(&root), journal(&root));
-    let running = running.clone();
-    ::std::thread::spawn(move || {
-      let mut db = open(&database).unwrap();
-      let mut messages = 0;
-      follow(
-        &mut db,
-        &journal,
-        Duration::from_millis(10),
-        || running.load(Ordering::Relaxed),
-        |round| messages += round.unwrap().messages,
-      )
-      .unwrap();
-      messages
-    })
+  let pace = Pace {
+    look: Duration::from_millis(10),
+    batch: 1,
+    min_wait: Duration::ZERO,
+    max_wait: Duration::from_secs(3600),
   };
+  let (running, follower) = follower(&root, pace);
 
   let reader = open(&database(&root)).unwrap();
-  let wait_for = |expected| {
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while count(&reader, "SELECT count(*) FROM messages") != expected {
-      assert!(Instant::now() < deadline, "never reached {expected}");
-      ::std::thread::sleep(Duration::from_millis(10));
-    }
+  wait_for(&reader, 3);
+  write_message(&root, 40, "third");
+  wait_for(&reader, 4);
+  running.store(false, Ordering::Relaxed);
+  assert_eq!(follower.join().unwrap(), 4);
+}
+
+#[test]
+fn counts_the_records_waiting() {
+  let root = TempDir::new("logger-index");
+  write_journal(&root);
+  let mut db = open(&database(&root)).unwrap();
+  let all = waiting(&db, &journal(&root), 1000).unwrap();
+  assert!(all > 3, "{all}");
+  assert_eq!(waiting(&db, &journal(&root), 2).unwrap(), 2);
+  index(&mut db, &journal(&root)).unwrap();
+  assert_eq!(waiting(&db, &journal(&root), 1000).unwrap(), 0);
+  write_message(&root, 40, "third");
+  write_message(&root, 41, "fourth");
+  assert_eq!(waiting(&db, &journal(&root), 1000).unwrap(), 2);
+}
+
+#[test]
+fn waits_for_a_batch() {
+  let root = TempDir::new("logger-index");
+  write_journal(&root);
+  let pace = Pace {
+    look: Duration::from_millis(10),
+    batch: 2,
+    min_wait: Duration::ZERO,
+    max_wait: Duration::from_secs(3600),
   };
-  wait_for(3);
-  let mut b = Writer::new(journal(&root), "b");
-  b.write(93, 1, frame(format!("MSG {}", message(40, "z", "third"))))
-    .unwrap();
-  b.sync().unwrap();
-  wait_for(4);
+  let (running, follower) = follower(&root, pace);
+
+  let reader = open(&database(&root)).unwrap();
+  wait_for(&reader, 3);
+  write_message(&root, 40, "third");
+  ::std::thread::sleep(Duration::from_millis(200));
+  assert_eq!(count(&reader, "SELECT count(*) FROM messages"), 3);
+  write_message(&root, 41, "fourth");
+  wait_for(&reader, 5);
+  running.store(false, Ordering::Relaxed);
+  assert_eq!(follower.join().unwrap(), 5);
+}
+
+#[test]
+fn indexes_a_short_batch_after_the_longest_wait() {
+  let root = TempDir::new("logger-index");
+  write_journal(&root);
+  let pace = Pace {
+    look: Duration::from_millis(10),
+    batch: 1000,
+    min_wait: Duration::ZERO,
+    max_wait: Duration::from_millis(300),
+  };
+  let (running, follower) = follower(&root, pace);
+
+  let reader = open(&database(&root)).unwrap();
+  wait_for(&reader, 3);
+  write_message(&root, 40, "third");
+  wait_for(&reader, 4);
+  running.store(false, Ordering::Relaxed);
+  assert_eq!(follower.join().unwrap(), 4);
+}
+
+#[test]
+fn waits_between_rounds_however_many_are_waiting() {
+  let root = TempDir::new("logger-index");
+  write_journal(&root);
+  let pace = Pace {
+    look: Duration::from_millis(10),
+    batch: 1,
+    min_wait: Duration::from_millis(500),
+    max_wait: Duration::from_secs(3600),
+  };
+  let (running, follower) = follower(&root, pace);
+
+  let reader = open(&database(&root)).unwrap();
+  wait_for(&reader, 3);
+  let first = Instant::now();
+  write_message(&root, 40, "third");
+  wait_for(&reader, 4);
+  // The first round was before `first`, so this one came no sooner than
+  // `min_wait` after it.
+  assert!(first.elapsed() >= Duration::from_millis(400));
   running.store(false, Ordering::Relaxed);
   assert_eq!(follower.join().unwrap(), 4);
 }
