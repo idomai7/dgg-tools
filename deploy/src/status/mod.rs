@@ -3,7 +3,7 @@
 //! channels, free disk space and the ends of the logs.
 //!
 //! [`Watcher::gather`] takes a snapshot ([`Report`]); [`text`] prints one,
-//! and [`watch`] redraws one every few seconds.
+//! and [`watch`] redraws one every second.
 
 pub mod watch;
 

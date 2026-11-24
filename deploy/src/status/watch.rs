@@ -1,16 +1,18 @@
-//! `status --watch`: the report redrawn every few seconds, with a log
-//! filling the rest of the screen.
+//! `status --watch`: the report redrawn every second, with a page filling
+//! the rest of the screen.
 //!
-//! Keys: `1`-`7` show the capture, index, compact, supervisor, sync,
-//! migrate or kick-capture log, `f` the newest frames a capture wrote
-//! (again for the next capture), `g` the gaps in capture (again to look
-//! again), `r` redraws now, `e` opens the data folder, `q` (or Esc, or
-//! Ctrl-C) quits.
+//! The pages, by key, are grouped: what's live (`1` the supervisor's log,
+//! `2` capture's, `3` the newest frames a capture wrote, again for the next
+//! capture, and `4` migrate's log), then periodic maintenance (`5` compact's
+//! log, `6` index's, `7` the gaps in capture, looked at again every 30
+//! seconds, and `8` sync's log), then `9` kick-capture's log. `r` redraws
+//! now, `e` opens the data folder, `q` (or Esc, or Ctrl-C) quits. On a
+//! narrow screen the keys take more than one line.
 
 use {
   super::{
-    LOGS, Report, Watcher, capture_tail, gaps, health, journal_lines,
-    kick_lines, tail,
+    Report, Watcher, capture_tail, gaps, health, journal_lines, kick_lines,
+    tail,
   },
   crate::paths::Paths,
   ::common::{
@@ -27,22 +29,65 @@ use {
   },
   ::std::{
     io,
+    path::{Path, PathBuf},
     process::Command,
+    sync::mpsc::{self, Receiver},
+    thread,
     time::{Duration, Instant},
   },
 };
 
-const KEYS: &str = " 1 capture  2 index  3 compact  4 supervisor  5 sync  6 migrate  7 kick  f frames  g gaps   r redraw  e open data  q quit";
+/// A page for the bottom of the screen, as a key offers it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Page {
+  /// One of [`LOGS`](super::LOGS).
+  Log(&'static str),
+  Frames,
+  Gaps,
+}
+
+/// The pages, by key and name, in groups: what's live, then periodic
+/// maintenance, then Kick.
+const PAGES: [&[(char, &str, Page)]; 3] = [
+  &[
+    ('1', "supervisor", Page::Log("supervisor")),
+    ('2', "capture", Page::Log("capture")),
+    ('3', "frames", Page::Frames),
+    ('4', "migrate", Page::Log("migrate")),
+  ],
+  &[
+    ('5', "compact", Page::Log("compact")),
+    ('6', "index", Page::Log("index")),
+    ('7', "gaps", Page::Gaps),
+    ('8', "sync", Page::Log("sync")),
+  ],
+  &[('9', "kick", Page::Log("kick-capture"))],
+];
+
+/// The keys that aren't pages.
+const CONTROLS: &str = "r redraw  e open data  q quit";
+
+/// How often the gaps are looked at again while they're shown: looking
+/// takes a moment, so it isn't redone every redraw.
+const GAPS_EVERY: Duration = Duration::from_secs(30);
 
 /// What fills the bottom of the screen.
 enum View {
-  /// One of [`LOGS`].
-  Log(usize),
-  /// The newest frames of a capture instance.
-  Frames(String),
-  /// The gaps, as of when `g` was pressed: looking takes a moment, so it
-  /// isn't redone every redraw.
-  Gaps(Pane<'static>),
+  /// One of [`LOGS`](super::LOGS).
+  Log(&'static str),
+  /// The newest frames of a capture instance, if one is running.
+  Frames(Option<String>),
+  Gaps(Gaps),
+}
+
+/// The gaps page: what was found last, and the next look.
+struct Gaps {
+  /// What was found last, if anything yet.
+  pane: Option<Pane<'static>>,
+  /// The look under way, on a thread of its own.
+  looking: Option<Receiver<Pane<'static>>>,
+  /// When to look again.
+  next: Instant,
 }
 
 /// The bottom of the screen: a title, a line kept at the top, its lines
@@ -56,47 +101,101 @@ pub struct Pane<'a> {
   pub empty: &'a str,
 }
 
-impl View {
-  /// `g` pressed: the gaps, as the index has them now.
-  fn gaps(paths: &Paths) -> Self {
-    let now = now_ms();
-    let (header, lines, empty) = match gaps(&paths.data.join("index.sqlite")) {
-      Ok(Some((summary, lines))) => (Some(summary), lines, "(no gaps)"),
-      Ok(None) => (None, Vec::new(), "(nothing captured yet)"),
-      Err(e) => (None, vec![format!("(can't read the index: {e})")], ""),
-    };
-    let pane = Pane {
-      title: format!("gaps as of {} (g to look again)", utc_timestamp(now)),
-      header,
-      lines,
-      empty,
-    };
-    Self::Gaps(pane)
+impl Gaps {
+  fn new() -> Self {
+    Self {
+      pane: None,
+      looking: None,
+      next: Instant::now(),
+    }
+  }
+
+  /// Takes what the look under way found, if it's done, and starts the next
+  /// look at the index at `index` when it's due.
+  fn refresh(&mut self, index: PathBuf) {
+    if let Some(looking) = &self.looking
+      && let Ok(pane) = looking.try_recv()
+    {
+      self.pane = Some(pane);
+      self.looking = None;
+      self.next = Instant::now() + GAPS_EVERY;
+    }
+    if self.looking.is_none() && Instant::now() >= self.next {
+      let (found, looking) = mpsc::channel();
+      thread::spawn(move || found.send(look_for_gaps(&index)));
+      self.looking = Some(looking);
+    }
+  }
+}
+
+/// The gaps, as the index at `index` has them now.
+fn look_for_gaps(index: &Path) -> Pane<'static> {
+  let now = now_ms();
+  let (header, lines, empty) = match gaps(index) {
+    Ok(Some((summary, lines))) => (Some(summary), lines, "(no gaps)"),
+    Ok(None) => (None, Vec::new(), "(nothing captured yet)"),
+    Err(e) => (None, vec![format!("(can't read the index: {e})")], ""),
+  };
+  Pane {
+    title: format!(
+      "gaps as of {} (again every {}s)",
+      utc_timestamp(now),
+      GAPS_EVERY.as_secs()
+    ),
+    header,
+    lines,
+    empty,
   }
 }
 
 impl View {
+  /// What shows `page`, its key pressed while this shows: frames' key
+  /// again shows the next capture's frames.
+  fn show(self, page: Page, report: &Report) -> Self {
+    match (page, self) {
+      (Page::Log(name), _) => Self::Log(name),
+      (Page::Frames, current) => current.next_frames(report),
+      (Page::Gaps, gaps @ Self::Gaps(_)) => gaps,
+      (Page::Gaps, _) => Self::Gaps(Gaps::new()),
+    }
+  }
+
   fn pane(&self, paths: &Paths) -> Pane<'static> {
     match self {
       Self::Log(log) => Pane {
-        title: format!("{}.log", LOGS[*log]),
+        title: format!("{log}.log"),
         header: None,
-        lines: tail(&paths.logs.join(format!("{}.log", LOGS[*log])), 500)
+        lines: tail(&paths.logs.join(format!("{log}.log")), 500)
           .unwrap_or_default(),
         empty: "(empty: shell runs print to their own windows)",
       },
-      Self::Frames(instance) => Pane {
-        title: format!("frames: {instance}"),
+      Self::Frames(Some(instance)) => Pane {
+        title: format!("frames: {instance} (3 again for the next capture)"),
         header: None,
         lines: capture_tail(&paths.data.join("journal"), instance, 500)
           .unwrap_or_else(|e| vec![format!("(can't read: {e})")]),
         empty: "(no live file yet)",
       },
-      Self::Gaps(pane) => pane.clone(),
+      Self::Frames(None) => Pane {
+        title: "frames".into(),
+        header: None,
+        lines: Vec::new(),
+        empty: "(no capture running)",
+      },
+      Self::Gaps(Gaps {
+        pane: Some(pane), ..
+      }) => pane.clone(),
+      Self::Gaps(Gaps { pane: None, .. }) => Pane {
+        title: "gaps".into(),
+        header: None,
+        lines: Vec::new(),
+        empty: "(looking...)",
+      },
     }
   }
 
-  /// `f` pressed: the newest capture's frames, or the next older one's.
+  /// The newest capture's frames, or if a capture's are shown, the next
+  /// older one's.
   fn next_frames(&self, report: &Report) -> Self {
     let instances: Vec<&str> = report
       .captures
@@ -105,16 +204,13 @@ impl View {
       .map(|capture| capture.instance.as_str())
       .collect();
     let next = match self {
-      Self::Frames(current) => instances
+      Self::Frames(Some(current)) => instances
         .iter()
         .position(|instance| instance == current)
         .map_or(0, |at| (at + 1) % instances.len()),
-      Self::Log(_) | Self::Gaps(_) => 0,
+      Self::Frames(None) | Self::Log(_) | Self::Gaps(_) => 0,
     };
-    match instances.get(next) {
-      Some(instance) => Self::Frames((*instance).to_owned()),
-      None => Self::Log(0),
-    }
+    Self::Frames(instances.get(next).map(|instance| (*instance).to_owned()))
   }
 }
 
@@ -133,9 +229,12 @@ fn event_loop(
   paths: &Paths,
   interval: Duration,
 ) -> io::Result<()> {
-  let mut view = View::Log(0);
+  let mut view = View::Log("supervisor");
   loop {
     let report = watcher.gather(paths)?;
+    if let View::Gaps(gaps) = &mut view {
+      gaps.refresh(paths.data.join("index.sqlite"));
+    }
     let pane = view.pane(paths);
     terminal.draw(|frame| draw(frame, &report, &pane))?;
 
@@ -157,16 +256,8 @@ fn event_loop(
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
           return Ok(());
         }
-        KeyCode::Char(digit @ '1'..='7') => {
-          view = View::Log(digit as usize - '1' as usize);
-          break;
-        }
-        KeyCode::Char('f') => {
-          view = view.next_frames(&report);
-          break;
-        }
-        KeyCode::Char('g') => {
-          view = View::gaps(paths);
+        KeyCode::Char(key) if let Some(page) = page(key) => {
+          view = view.show(page, &report);
           break;
         }
         KeyCode::Char('r') => break,
@@ -177,8 +268,44 @@ fn event_loop(
   }
 }
 
+/// The page `key` offers, if any.
+fn page(key: char) -> Option<Page> {
+  PAGES
+    .iter()
+    .flat_map(|group| group.iter())
+    .find(|(offered, _, _)| *offered == key)
+    .map(|(_, _, page)| *page)
+}
+
+/// The keys, in their groups, on as many lines `width` wide as they need. A
+/// group isn't split across lines.
+pub fn keys(width: u16) -> Vec<String> {
+  let mut groups: Vec<String> = PAGES
+    .iter()
+    .map(|group| {
+      group
+        .iter()
+        .map(|(key, name, _)| format!("{key} {name}"))
+        .collect::<Vec<_>>()
+        .join("  ")
+    })
+    .collect();
+  groups.push(CONTROLS.to_owned());
+  let mut lines: Vec<String> = Vec::new();
+  for group in groups {
+    match lines.last_mut() {
+      Some(line) if line.len() + 3 + group.len() <= width as usize => {
+        line.push_str(" | ");
+        line.push_str(&group);
+      }
+      _ => lines.push(format!(" {group}")),
+    }
+  }
+  lines
+}
+
 /// Opens `path` in the system's file manager, if it can.
-fn open(path: &::std::path::Path) {
+fn open(path: &Path) {
   let program = if cfg!(windows) {
     "explorer"
   } else if cfg!(target_os = "macos") {
@@ -279,6 +406,10 @@ pub fn draw(frame: &mut Frame, report: &Report, pane: &Pane) {
     )),
   ]);
 
+  let keys: Vec<Line> = keys(frame.area().width)
+    .into_iter()
+    .map(|line| Line::from(line.dark_gray()))
+    .collect();
   // Kick's block only when Kick is captured.
   let kick_height = match kick.len() {
     0 => 0,
@@ -291,7 +422,7 @@ pub fn draw(frame: &mut Frame, report: &Report, pane: &Pane) {
     journal_area,
     kick_area,
     log_area,
-    keys,
+    keys_area,
   ] = Layout::vertical([
     Constraint::Length(1),
     Constraint::Length(programs.len() as u16 + 2),
@@ -299,7 +430,7 @@ pub fn draw(frame: &mut Frame, report: &Report, pane: &Pane) {
     Constraint::Length(journal.len() as u16 + 2),
     Constraint::Length(kick_height),
     Constraint::Min(3),
-    Constraint::Length(1),
+    Constraint::Length(keys.len() as u16),
   ])
   .areas(frame.area());
   frame.render_widget(header, top);
@@ -332,5 +463,5 @@ pub fn draw(frame: &mut Frame, report: &Report, pane: &Pane) {
   }
   frame
     .render_widget(Paragraph::new(body).block(heading(&pane.title)), log_area);
-  frame.render_widget(Line::from(KEYS.dark_gray()), keys);
+  frame.render_widget(Paragraph::new(keys), keys_area);
 }
