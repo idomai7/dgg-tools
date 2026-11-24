@@ -34,9 +34,17 @@
 //!
 //! A root's live files in its [legacy](Root::legacy) directory are its
 //! day's too: merged into the root's archive, and deleted from there.
+//!
+//! A day still open can be compacted early ([`compact_open_day`]), to tidy
+//! up after an upgrade without waiting for the day to end: only the files
+//! no capture may still write are merged, into an archive the rest join
+//! once the day is closed, as for a late `sync`. A capture may still write
+//! its instance's files while it holds its
+//! [live lock](::logger_journal::layout::live_lock_file), or, for builds
+//! from before the lock, while its status is fresh.
 
 use {
-  crate::service::Root,
+  crate::{capture::Handoff, control, service::Root},
   ::common::fs::MissingOk,
   ::common::{
     atomic_file,
@@ -46,7 +54,7 @@ use {
     archive::{self, Archive, valid_day},
     layout::{EXTENSION, archive_file, live_day_dir, live_dir},
     record::{END, Header, Variant, kick, split, v0},
-    writer::writing,
+    writer::{capturing, writing},
   },
   ::sha2::{Digest, Sha256},
   ::std::{
@@ -54,7 +62,7 @@ use {
     fs::{self, File},
     io::{self, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
-    time::Duration,
+    time::{Duration, UNIX_EPOCH},
   },
 };
 
@@ -71,6 +79,9 @@ pub struct Day {
   pub grown: u64,
   /// Live files left in place because a backfill run still writes them.
   pub busy: u64,
+  /// Live files of a day still open left in place because a capture may
+  /// still write them.
+  pub capturing: u64,
   /// Whether an existing archive for the day was merged in.
   pub remerged: bool,
   /// Copies of records dropped because they came from merging the same
@@ -88,6 +99,25 @@ pub fn closed_days(
   now: i64,
   grace: Duration,
 ) -> io::Result<Vec<String>> {
+  let mut days = live_days(root)?;
+  days.retain(|day| closed(day, now, grace));
+  Ok(days)
+}
+
+/// The days with live files in journal `root` that are still open at `now`
+/// (unix ms): not [closed](closed_days). Oldest first.
+pub fn open_days(
+  root: &Root,
+  now: i64,
+  grace: Duration,
+) -> io::Result<Vec<String>> {
+  let mut days = live_days(root)?;
+  days.retain(|day| !closed(day, now, grace));
+  Ok(days)
+}
+
+/// The days with live files in journal `root`, oldest first.
+fn live_days(root: &Root) -> io::Result<Vec<String>> {
   let mut days = Vec::new();
   for dir in root.dirs() {
     let Some(entries) = fs::read_dir(live_dir(dir)).missing_ok()? else {
@@ -96,11 +126,7 @@ pub fn closed_days(
     for entry in entries {
       let entry = entry?;
       let day = entry.file_name().to_string_lossy().into_owned();
-      if entry.file_type()?.is_dir()
-        && valid_day(&day)
-        && let Some(start) = day_start(&day)
-        && now >= start + DAY_MS + grace.as_millis() as i64
-      {
+      if entry.file_type()?.is_dir() && valid_day(&day) {
         days.push(day);
       }
     }
@@ -108,6 +134,12 @@ pub fn closed_days(
   days.sort();
   days.dedup();
   Ok(days)
+}
+
+/// Whether `day` ended at least `grace` before `now` (unix ms).
+fn closed(day: &str, now: i64, grace: Duration) -> bool {
+  day_start(day)
+    .is_some_and(|start| now >= start + DAY_MS + grace.as_millis() as i64)
 }
 
 /// One input's records, without their ends, in the newest version, and how
@@ -196,18 +228,49 @@ fn receive_time(record: &[u8]) -> i64 {
 }
 
 /// Whether a backfill run still writes the live file at `path`, in journal
-/// root `dir`: its instance's, `<instance>.journal`, or
-/// `<instance>.<n>.journal` after a change of format.
+/// root `dir`.
 pub(crate) fn busy_file(dir: &Path, path: &Path) -> io::Result<bool> {
+  held_by(path, |instance| writing(dir, instance))
+}
+
+/// Whether a capture may still write the live file at `path`, of a day
+/// still open, in journal root `dir`: its instance holds its live lock
+/// there, or has a status there written no longer ago at `now` (unix ms)
+/// than a capture's status goes stale.
+fn captured(dir: &Path, path: &Path, now: i64) -> io::Result<bool> {
+  let stale_after = Handoff::default().stale_after.as_millis() as i64;
+  held_by(path, |instance| {
+    if capturing(dir, instance)? {
+      return Ok(true);
+    }
+    let status = control::path(&control::dir(dir), instance);
+    let Some(metadata) = fs::metadata(status).missing_ok()? else {
+      return Ok(false);
+    };
+    let written = metadata
+      .modified()?
+      .duration_since(UNIX_EPOCH)
+      .map_or(0, |since| since.as_millis() as i64);
+    Ok(now - written <= stale_after)
+  })
+}
+
+/// Whether `held` holds for the instance that wrote the live file at
+/// `path`: its instance's, `<instance>.journal`, or `<instance>.<n>.journal`
+/// after a change of format.
+fn held_by(
+  path: &Path,
+  mut held: impl FnMut(&str) -> io::Result<bool>,
+) -> io::Result<bool> {
   let stem = path.file_stem().unwrap().to_string_lossy();
   let numbered = stem
     .rsplit_once('.')
     .filter(|(_, n)| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()));
-  if writing(dir, &stem)? {
+  if held(&stem)? {
     return Ok(true);
   }
   match numbered {
-    Some((instance, _)) => writing(dir, instance),
+    Some((instance, _)) => held(instance),
     None => Ok(false),
   }
 }
@@ -216,13 +279,35 @@ fn hex(bytes: &[u8]) -> String {
   bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// Compacts `day`'s live files (and existing archive) in journal `root`
-/// into its archive, at zstd `level`. `None` if it has no live files that
-/// aren't [busy](Day::busy).
+/// Compacts closed `day`'s live files (and existing archive) in journal
+/// `root` into its archive, at zstd `level`. `None` if it has no live files
+/// that aren't [busy](Day::busy).
 pub fn compact_day(
   root: &Root,
   day: &str,
   level: i32,
+) -> io::Result<Option<Day>> {
+  compact(root, day, level, None)
+}
+
+/// Like [`compact_day`], but for a `day` still open at `now` (unix ms):
+/// only the live files no capture may still write are merged. `None` if
+/// there are none.
+pub fn compact_open_day(
+  root: &Root,
+  day: &str,
+  level: i32,
+  now: i64,
+) -> io::Result<Option<Day>> {
+  compact(root, day, level, Some(now))
+}
+
+/// Compacts `day` in `root`, at `level`; `open` at `now` if it's still open.
+fn compact(
+  root: &Root,
+  day: &str,
+  level: i32,
+  open: Option<i64>,
 ) -> io::Result<Option<Day>> {
   let journal_root = root.dir.as_path();
   let mut inputs = Vec::new();
@@ -238,7 +323,7 @@ pub fn compact_day(
       live: None,
     });
   }
-  let (mut live, mut busy) = (Vec::new(), 0);
+  let (mut live, mut busy, mut capturing) = (Vec::new(), 0, 0);
   for dir in root.dirs() {
     let Some(entries) = fs::read_dir(live_day_dir(dir, day)).missing_ok()?
     else {
@@ -254,6 +339,10 @@ pub fn compact_day(
       }
       if busy_file(dir, &path)? {
         busy += 1;
+      } else if let Some(now) = open
+        && captured(dir, &path, now)?
+      {
+        capturing += 1;
       } else {
         live.push(path);
       }
@@ -351,6 +440,7 @@ pub fn compact_day(
     files,
     grown,
     busy,
+    capturing,
     remerged,
     duplicates: (total - records.len()) as u64,
     torn: inputs.iter().filter(|input| input.torn).count() as u64,

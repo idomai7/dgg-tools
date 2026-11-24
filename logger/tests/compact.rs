@@ -1,7 +1,8 @@
 use {
-  ::common::temp_dir::TempDir,
+  ::common::{temp_dir::TempDir, time::now_ms},
   ::logger::{
-    compact::{closed_days, compact_day},
+    compact::{closed_days, compact_day, compact_open_day, open_days},
+    control,
     service::Root,
   },
   ::logger_journal::{
@@ -10,7 +11,10 @@ use {
     record::v0::Body,
   },
   ::sha2::{Digest, Sha256},
-  ::std::{fs, time::Duration},
+  ::std::{
+    fs,
+    time::{Duration, SystemTime},
+  },
 };
 
 /// Writes a live file for 1970-01-01 verbatim.
@@ -56,6 +60,66 @@ fn finds_closed_days() {
       .len(),
     2
   );
+  assert_eq!(
+    open_days(&Root::at(root.path()), now, hour).unwrap(),
+    ["1970-01-02"]
+  );
+}
+
+#[test]
+fn compacts_what_captures_finished_on_an_open_day() {
+  let root = TempDir::new("logger-compact");
+  let control = control::dir(root.path());
+  fs::create_dir_all(&control).unwrap();
+  for (n, name) in ["a", "b", "c", "d"].into_iter().enumerate() {
+    live(
+      &root,
+      name,
+      &journal(&[&format!("{n} {name} 1 frame MSG {n}")]),
+    );
+  }
+  // a's capture holds its live lock.
+  let a = Writer::capture(root.path(), "a").unwrap();
+  // c's, from before the lock, has a fresh status; d's left a stale one.
+  fs::write(control::path(&control, "c"), "").unwrap();
+  let stale = SystemTime::now() - Duration::from_secs(60);
+  let d = fs::File::create(control::path(&control, "d")).unwrap();
+  d.set_modified(stale).unwrap();
+  drop(d);
+
+  let now = now_ms();
+  let done = compact_open_day(&Root::at(root.path()), DAY, 3, now)
+    .unwrap()
+    .unwrap();
+  assert_eq!((done.files, done.capturing), (2, 2));
+  assert_eq!(
+    archived(&root),
+    journal(&["1 b 1 frame MSG 1", "3 d 1 frame MSG 3"])
+  );
+  let dir = live_day_dir(root.path(), DAY);
+  assert!(dir.join("a.journal").exists() && dir.join("c.journal").exists());
+
+  // Once they've stopped, the rest join the archive.
+  drop(a);
+  fs::remove_file(control::path(&control, "c")).unwrap();
+  let done = compact_open_day(&Root::at(root.path()), DAY, 3, now)
+    .unwrap()
+    .unwrap();
+  assert_eq!((done.files, done.capturing, done.remerged), (2, 0, true));
+  assert_eq!(done.archive.records, 4);
+  assert!(!dir.exists());
+}
+
+#[test]
+fn a_capture_holds_back_only_open_days() {
+  let root = TempDir::new("logger-compact");
+  live(&root, "a", &journal(&["1 a 1 frame MSG 1"]));
+  let _a = Writer::capture(root.path(), "a").unwrap();
+  // Once the day is closed, a capture still running writes another's.
+  let done = compact_day(&Root::at(root.path()), DAY, 3)
+    .unwrap()
+    .unwrap();
+  assert_eq!((done.files, done.capturing), (1, 0));
 }
 
 #[test]

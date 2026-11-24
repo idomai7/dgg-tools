@@ -2,7 +2,9 @@
 
 use {
   crate::{
-    compact::{DEFAULT_LEVEL, closed_days, compact_day},
+    compact::{
+      DEFAULT_LEVEL, Day, closed_days, compact_day, compact_open_day, open_days,
+    },
     dgg::Dgg,
     kick::Kick,
     service::{Root, Service},
@@ -19,6 +21,11 @@ use {
 /// for each Kick channel's.
 #[derive(Args)]
 pub struct Compact {
+  /// Also compact days still open, now: only the files no capture may
+  /// still write (an older one's, after an upgrade), into an archive the
+  /// rest join once the day is closed.
+  #[arg(long)]
+  early: bool,
   /// Hours after a day ends before it counts as closed.
   #[arg(long, default_value_t = 1.0)]
   grace_hours: f64,
@@ -76,44 +83,67 @@ impl Compact {
       }
     };
     info!("{name}: {} closed days with live files", days.len());
+    let open = match self.early {
+      true => match open_days(root, now, grace) {
+        Ok(open) => open,
+        Err(e) => {
+          error!("compact {name} failed: {e}");
+          return false;
+        }
+      },
+      false => Vec::new(),
+    };
+    if self.early {
+      info!("{name}: {} open days with live files", open.len());
+    }
     if self.dry_run {
-      for day in &days {
+      for day in days.iter().chain(&open) {
         info!("  {day}");
       }
       return true;
     }
     let mut ok = true;
     for day in &days {
-      match compact_day(root, day, self.level) {
-        Ok(Some(done)) => {
-          let archive = &done.archive;
-          let ratio = archive.bytes as f64 / archive.compressed.max(1) as f64;
-          info!(
-            "  {day}: {} files, {} records, {} -> {} bytes \
-             ({ratio:.1}x){}{}{}{}{}",
-            done.files,
-            archive.records,
-            archive.bytes,
-            archive.compressed,
-            if done.remerged {
-              ", merged into the existing archive"
-            } else {
-              ""
-            },
-            note(done.duplicates, "duplicate records dropped"),
-            note(done.torn, "torn tails dropped"),
-            note(done.grown, "files kept: they grew meanwhile"),
-            note(done.busy, "files kept: their backfill is still running"),
-          );
-        }
-        Ok(None) => {}
-        Err(e) => {
-          error!("  {day}: failed, live files left in place: {e}");
-          ok = false;
-        }
-      }
+      ok &= report(day, compact_day(root, day, self.level));
+    }
+    for day in &open {
+      ok &= report(day, compact_open_day(root, day, self.level, now));
     }
     ok
+  }
+}
+
+/// Says how compacting `day` went; whether it went well.
+fn report(day: &str, compacted: ::std::io::Result<Option<Day>>) -> bool {
+  match compacted {
+    Ok(Some(done)) => {
+      let archive = &done.archive;
+      let ratio = archive.bytes as f64 / archive.compressed.max(1) as f64;
+      info!(
+        "  {day}: {} files, {} records, {} -> {} bytes \
+         ({ratio:.1}x){}{}{}{}{}{}",
+        done.files,
+        archive.records,
+        archive.bytes,
+        archive.compressed,
+        if done.remerged {
+          ", merged into the existing archive"
+        } else {
+          ""
+        },
+        note(done.duplicates, "duplicate records dropped"),
+        note(done.torn, "torn tails dropped"),
+        note(done.grown, "files kept: they grew meanwhile"),
+        note(done.busy, "files kept: their backfill is still running"),
+        note(done.capturing, "files kept: still being captured"),
+      );
+      true
+    }
+    Ok(None) => true,
+    Err(e) => {
+      error!("  {day}: failed, live files left in place: {e}");
+      false
+    }
   }
 }
 
