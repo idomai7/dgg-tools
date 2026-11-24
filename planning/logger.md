@@ -150,7 +150,7 @@ The logger, codenamed ledgerline: `logger-journal` and `logger`, run as
       needs the control token, since a pushed status makes the host's captures
       retire.
     - The new instance pushes its status there every second
-      (`PUT /dgg/control/<instance>`), shifted onto the old host's clock, and
+      (`PUT /dgg/v0/control/<instance>`), shifted onto the old host's clock, and
       withdraws it on exit.
     - The old instance retires by the same rule as a local handoff, and needs no
       flags or restart.
@@ -171,9 +171,9 @@ The logger, codenamed ledgerline: `logger-journal` and `logger`, run as
     interrupted run resumes exactly where it stopped.
   - `--rebuild-dgg` replays dgg's whole journal (`--rebuild` rebuilds both
     indexes). An index from another schema version must be rebuilt.
-- **serve / sync:** `serve` also lists live files (`GET /dgg/manifest`,
+- **serve / sync:** `serve` also lists live files (`GET /dgg/v0/manifest`,
   format `journal-manifest dgg.0.2`) and serves their bytes
-  (`GET /dgg/files/live/<day>/<instance>.journal`, honouring
+  (`GET /dgg/v0/files/live/<day>/<instance>.journal`, honouring
   `Range: bytes=N-`).
   - `sync --peer <url>` appends whatever remote bytes are missing locally, then
     fsyncs. Journal files are append-only, so a local copy is always a prefix of
@@ -341,10 +341,10 @@ undocumented endpoints anonymously: no token, no login, no app. Planned
     and `endpoint` if the day had only one). Its manifest is `journal-archive
     kick.0.0`.
   - `serve` lists Kick's journals in a manifest of their own, `GET
-    /kick/manifest` (`journal-manifest kick.0.0`), with paths relative to
-    `kick/`, `<slug>/live/...` and `<slug>/archive/...`, and serves those
-    files at `/kick/files/...`. A peer without Kick's manifest (`404`) has
-    none.
+    /kick/v0/manifest` (`journal-manifest kick.0.0`), with paths relative
+    to `kick/`, `<slug>/live/...` and `<slug>/archive/...`, and serves
+    those files at `/kick/v0/files/...`. A peer without Kick's manifest
+    (`404`) has none.
   - Each channel's root has its own `control/synced-archives`, as
     `synced-archives kick.0.0`.
 - **Index:** `index-kick.sqlite`, separate from dgg's, with schema versions of
@@ -368,7 +368,7 @@ undocumented endpoints anonymously: no token, no login, no app. Planned
   - `migrate` checks its schema too, and `status` shows its size and last
     write.
 - **Serving kick-mod:**
-  - `GET /kick/channels/<slug>/users/<id>`: a user's history in the
+  - `GET /kick/v0/channels/<slug>/users/<id>`: a user's history in the
     channel, as JSON: their messages (the newest 500, each with its
     deletion), and the bans, timeouts and unbans on them, with the newest
     name seen.
@@ -377,7 +377,7 @@ undocumented endpoints anonymously: no token, no login, no app. Planned
       query (the same code, into an in-memory database). Both are read in
       one snapshot of the index, so a round finishing meanwhile can't count
       anything twice, and the index's lag never shows.
-  - `GET /kick/channels/<slug>/events`: live chat as server-sent events, by
+  - `GET /kick/v0/channels/<slug>/events`: live chat as server-sent events, by
     tailing the channel's live files every 250 ms, apart from the capture
     process.
     - From now on: nothing written before is replayed. A new file (another
@@ -416,12 +416,17 @@ yet, so old peers need no compatibility. Planned 2026-11-24.
   each.
 - **Index flags:** `--rebuild` rebuilds both indexes, `--rebuild-dgg` and
   `--rebuild-kick` only one.
-- **Routes:** `/<service>/manifest`, `/<service>/files/<path>` and
-  `/<service>/control/<instance>`, each service's paths relative to its own
-  root. Kick's queries move to `/kick/channels/<slug>/...`, so a channel
-  named `files` or `manifest` can't collide. A peer without a service
-  answers 404, which reads as nothing there; an old build never asks for
-  a service it doesn't know.
+- **Routes:** `/<service>/<api>/manifest`, `/<service>/<api>/files/<path>`
+  and `/<service>/<api>/control/<instance>`, each service's paths relative
+  to its own root. Kick's queries move to `/kick/<api>/channels/<slug>/...`,
+  so a channel named `files` or `manifest` can't collide. A peer without a
+  service answers 404, which reads as nothing there; an old build never
+  asks for a service it doesn't know.
+  - `<api>` is each service's API's version (`Service::API`), `v0` for
+    both. `v0` is unstable: it may change incompatibly from one build to
+    the next, until a stable `v1` is decided on. A `v1` would then only
+    change compatibly, and a breaking change would be a `v2`, served beside
+    it for a while. (Added 2026-11-24, after the rest.)
 - **Layout:** dgg's journals move into `data/journal/dgg/`, beside `kick/`,
   and `index.sqlite` becomes `index-dgg.sqlite`. Paths inside a root don't
   change (`live/<day>/<instance>.journal`), so the index's checkpoints and
@@ -431,7 +436,7 @@ yet, so old peers need no compatibility. Planned 2026-11-24.
   before. The status format isn't changing, only where it's kept.
   - The new capture writes under `dgg/`, and while the old `control/`
     exists it heartbeats there too, so the old instance retires to it as
-    usual. Pushing across hosts tries `/dgg/control/<instance>`, then the
+    usual. Pushing across hosts tries `/dgg/v0/control/<instance>`, then the
     old `/control/<instance>` on a 404.
   - `migrate`, at the supervisor's start under the index, compact and sync
     locks, moves `archive/` (with its manifests and synced-archives),
@@ -473,7 +478,7 @@ yet, so old peers need no compatibility. Planned 2026-11-24.
     (capture, index, gaps, backfill, and the move), Kick's in `kick/`.
     Capture's handoff machinery (`capture.rs`) and the index's opening and
     pacing (`index.rs`) are shared.
-  - Not as planned: Kick has no `/kick/control` (`kick-capture` has no
+  - Not as planned: Kick has no `/kick/v0/control` (`kick-capture` has no
     `--peer` yet), so only dgg's control routes moved.
   - The move is `dgg::migrate`, called by `migrate`. Each step is safe to
     repeat; a file at both paths, or an index at both names, fails the
