@@ -362,9 +362,16 @@ undocumented endpoints anonymously: no token, no login, no app. Planned
 - **`logger-journal`:** live files, plus a writer and a reader. The `.zst`
   archives and manifests come with `compact`.
 - **`logger capture`:** done, including local handoff.
-- **`logger index`:** done for live files, one-shot or `--follow` (polls every
-  `--interval` seconds, default 1; prints a summary every `--report` seconds,
-  default 60).
+- **`logger index`:** done for live files, one-shot or `--follow`. Following,
+  it looks every `--interval` seconds (default 1) at how many records are
+  waiting in the live and backfill files, counted without decoding them. A
+  round is due once `--batch` (500) are waiting, but no sooner than
+  `--min-wait` (60) seconds after the last, and at the latest `--max-wait`
+  (600) seconds after it however few are waiting. It prints a summary every
+  `--report` seconds, default 60.
+  - Later, the newest messages, not yet indexed, could be searched directly
+    (a small, recent set, scanned in full for each query), so the index can
+    lag without searches missing anything.
 - **`logger gaps`:** done. It reports stretches when no connection was open (a
   connection that never closed ends at its last record), and whether the next
   connection's `HISTORY` reached back far enough to cover each one.
