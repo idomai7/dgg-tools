@@ -298,6 +298,14 @@ The logger, codenamed ledgerline: `logger-journal` and `logger`, run as
     and recorded in the monthly manifest. Only after that are the live files
     deleted, and only those that haven't grown since they were read.
   - Real data: 5 overlapping instances, 1.67 MB, compressed 32x at level 19.
+  - `--early` also compacts days still open, but only the files no capture
+    may still write: a capture holds `control/<instance>.live-lock` while it
+    writes (apart from backfill's `.lock`, as it doesn't hold back closed
+    days), and one from before the lock counts while its status is fresh.
+    The rest join that archive once the day is closed, as after a late
+    `sync`. The supervisor's first compaction after start is `--early`, so
+    an upgrade's old capture's files are archived within a minute.
+    (Added 2026-11-25.)
 
 ## Kick
 The logger captures Kick too, so kick-mod needs nothing but Kick's official
@@ -455,8 +463,9 @@ yet, so old peers need no compatibility. Planned 2026-11-24.
     what stayed, the index against one rebuilt from scratch, and
     compaction draining the old files.
 - **Removing the old code:** once every host has migrated and compacted
-  the day its old capture last wrote (the day after the rollout), a later
-  release drops reading the old places (`Service::legacy`, `Root::legacy`,
+  what its old capture left (since `compact --early`, a minute after the
+  supervisor starts; before, the day after the rollout), a later release
+  drops reading the old places (`Service::legacy`, `Root::legacy`,
   `service::locate`), the second heartbeat (`Config::legacy_control`, and
   serve's `legacy_control`), the `/control` fallback, and `dgg::migrate`.
   `migrate` then only checks that the old layout is gone, and logs anything
