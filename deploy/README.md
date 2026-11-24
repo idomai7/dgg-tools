@@ -268,6 +268,9 @@ target\release\dgg-logger serve --listen 0.0.0.0:8788
   takes no more of a file than the manifest lists, checks archives
   against their SHA-256, and doesn't follow redirects.
 - `serve` handles 8 requests at once and turns away the rest.
+- A third token, `--query-token` (`LOGGER_QUERY_TOKEN`), reads only Kick's
+  history and live chat (`/kick/...`), for kick-mod. It must differ from
+  the other two.
 
 ## Keeping the PC awake
 
