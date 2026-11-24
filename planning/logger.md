@@ -396,6 +396,67 @@ undocumented endpoints anonymously: no token, no login, no app. Planned
   6. The query and live endpoints.
   7. kick-mod switches over (see [kick-mod](kick-mod.md)).
 
+## By service
+dgg and Kick side by side, each a service with its own journals, index,
+manifest and routes, and the shared mechanics written once. Nothing syncs
+yet, so old peers need no compatibility. Planned 2026-11-24.
+- **Code:** a module per service, `dgg/` and `kick/`, each implementing a
+  `Service` trait: its name (the route segment, the directory and the
+  formats' variant), its formats' versions, its index (with its own
+  stats), its journal roots, which paths it serves, and routes of its own.
+  Manifests, sync, compaction and index pacing are generic over it, called
+  for each service in turn, so a new service is a module and a line in
+  each.
+- **Index flags:** `--rebuild` rebuilds both indexes, `--rebuild-dgg` and
+  `--rebuild-kick` only one.
+- **Routes:** `/<service>/manifest`, `/<service>/files/<path>` and
+  `/<service>/control/<instance>`, each service's paths relative to its own
+  root. Kick's queries move to `/kick/channels/<slug>/...`, so a channel
+  named `files` or `manifest` can't collide. A peer without a service
+  answers 404, which reads as nothing there; an old build never asks for
+  a service it doesn't know.
+- **Layout:** dgg's journals move into `data/journal/dgg/`, beside `kick/`,
+  and `index.sqlite` becomes `index-dgg.sqlite`. Paths inside a root don't
+  change (`live/<day>/<instance>.journal`), so the index's checkpoints and
+  every format's version stay as they are. Kick's index stores paths
+  relative to `kick/` instead (it has never run on a host).
+- **Migration, with capture running:** one release, by the handoffs used
+  before. The status format isn't changing, only where it's kept.
+  - The new capture writes under `dgg/`, and while the old `control/`
+    exists it heartbeats there too, so the old instance retires to it as
+    usual. Pushing across hosts tries `/dgg/control/<instance>`, then the
+    old `/control/<instance>` on a 404.
+  - `migrate`, at the supervisor's start under the index, compact and sync
+    locks, moves `archive/` (with its manifests and synced-archives),
+    `backfill/`, and every live file no running instance is writing (its
+    status missing, or stale by the handoff rule) into `dgg/`, and renames
+    the index. Each move is a rename within the volume; a file already at
+    its destination is refused, as `install`'s merge does.
+  - A running old instance's files stay where they are (moving an open
+    file isn't reliable on Windows). Index, compact, serve and sync read
+    dgg's live files from both places, and compaction merges the old ones
+    into `dgg/archive/` once their day is over. The next `migrate` removes
+    the empty old directories, and the old `control/` once nothing in it
+    is fresh.
+  - Tested locally with both builds, as before: the current build
+    capturing, the new one installed over it; the handoff, what moved and
+    what stayed, the index against one rebuilt from scratch, and
+    compaction draining the old files.
+- **Removing the old code:** once every host has migrated and compacted
+  the day its old capture last wrote (the day after the rollout), a later
+  release drops reading the old places, the second heartbeat and the
+  `/control` fallback. `migrate` then only checks that the old layout is
+  gone, and logs anything left.
+- **Steps,** each a pause for review:
+  1. The index flags.
+  2. The `Service` trait and `dgg/`, moving code without changing
+     behaviour.
+  3. Manifests, sync, compaction and index pacing generic over it.
+  4. The layout and its migration.
+  5. The routes.
+  6. Docs.
+  7. Removing the old code, after the rollout.
+
 ## Status
 - **`logger-journal`:** live files, plus a writer and a reader. The `.zst`
   archives and manifests come with `compact`.
