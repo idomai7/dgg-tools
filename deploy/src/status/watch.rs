@@ -2,9 +2,9 @@
 //! the rest of the screen.
 //!
 //! The pages, by key, are grouped: what's live (`1` the supervisor's log,
-//! `2` capture's, `3` the newest frames a capture wrote, again for the next
-//! capture, and `4` migrate's log), then periodic maintenance (`5` compact's
-//! log, `6` index's, `7` the gaps in capture, looked at again every 30
+//! `2` the newest records a capture wrote, again for the next capture, and
+//! `3` migrate's log), then periodic maintenance (`4` capture's log, `5`
+//! compact's, `6` index's, `7` the gaps in capture, looked at again every 30
 //! seconds, and `8` sync's log), then `9` kick-capture's log. `r` redraws
 //! now, `e` opens the data folder, `q` (or Esc, or Ctrl-C) quits. On a
 //! narrow screen the keys take more than one line.
@@ -42,7 +42,7 @@ use {
 enum Page {
   /// One of [`LOGS`](super::LOGS).
   Log(&'static str),
-  Frames,
+  Records,
   Gaps,
 }
 
@@ -51,11 +51,11 @@ enum Page {
 const PAGES: [&[(char, &str, Page)]; 3] = [
   &[
     ('1', "supervisor", Page::Log("supervisor")),
-    ('2', "capture", Page::Log("capture")),
-    ('3', "frames", Page::Frames),
-    ('4', "migrate", Page::Log("migrate")),
+    ('2', "records", Page::Records),
+    ('3', "migrate", Page::Log("migrate")),
   ],
   &[
+    ('4', "capture", Page::Log("capture")),
     ('5', "compact", Page::Log("compact")),
     ('6', "index", Page::Log("index")),
     ('7', "gaps", Page::Gaps),
@@ -75,8 +75,8 @@ const GAPS_EVERY: Duration = Duration::from_secs(30);
 enum View {
   /// One of [`LOGS`](super::LOGS).
   Log(&'static str),
-  /// The newest frames of a capture instance, if one is running.
-  Frames(Option<String>),
+  /// The newest records of a capture instance, if one is running.
+  Records(Option<String>),
   Gaps(Gaps),
 }
 
@@ -149,12 +149,12 @@ fn look_for_gaps(index: &Path) -> Pane<'static> {
 }
 
 impl View {
-  /// What shows `page`, its key pressed while this shows: frames' key
-  /// again shows the next capture's frames.
+  /// What shows `page`, its key pressed while this shows: records' key
+  /// again shows the next capture's records.
   fn show(self, page: Page, report: &Report) -> Self {
     match (page, self) {
       (Page::Log(name), _) => Self::Log(name),
-      (Page::Frames, current) => current.next_frames(report),
+      (Page::Records, current) => current.next_records(report),
       (Page::Gaps, gaps @ Self::Gaps(_)) => gaps,
       (Page::Gaps, _) => Self::Gaps(Gaps::new()),
     }
@@ -169,15 +169,15 @@ impl View {
           .unwrap_or_default(),
         empty: "(empty: shell runs print to their own windows)",
       },
-      Self::Frames(Some(instance)) => Pane {
-        title: format!("frames: {instance} (3 again for the next capture)"),
+      Self::Records(Some(instance)) => Pane {
+        title: format!("records: {instance} (2 again for the next capture)"),
         header: None,
         lines: capture_tail(&paths.data.join("journal"), instance, 500)
           .unwrap_or_else(|e| vec![format!("(can't read: {e})")]),
         empty: "(no live file yet)",
       },
-      Self::Frames(None) => Pane {
-        title: "frames".into(),
+      Self::Records(None) => Pane {
+        title: "records".into(),
         header: None,
         lines: Vec::new(),
         empty: "(no capture running)",
@@ -194,9 +194,9 @@ impl View {
     }
   }
 
-  /// The newest capture's frames, or if a capture's are shown, the next
+  /// The newest capture's records, or if a capture's are shown, the next
   /// older one's.
-  fn next_frames(&self, report: &Report) -> Self {
+  fn next_records(&self, report: &Report) -> Self {
     let instances: Vec<&str> = report
       .captures
       .iter()
@@ -204,13 +204,13 @@ impl View {
       .map(|capture| capture.instance.as_str())
       .collect();
     let next = match self {
-      Self::Frames(Some(current)) => instances
+      Self::Records(Some(current)) => instances
         .iter()
         .position(|instance| instance == current)
         .map_or(0, |at| (at + 1) % instances.len()),
-      Self::Frames(None) | Self::Log(_) | Self::Gaps(_) => 0,
+      Self::Records(None) | Self::Log(_) | Self::Gaps(_) => 0,
     };
-    Self::Frames(instances.get(next).map(|instance| (*instance).to_owned()))
+    Self::Records(instances.get(next).map(|instance| (*instance).to_owned()))
   }
 }
 
@@ -278,9 +278,10 @@ fn page(key: char) -> Option<Page> {
 }
 
 /// The keys, in their groups, on as many lines `width` wide as they need. A
-/// group isn't split across lines.
+/// group isn't split across lines, and the controls go on the first line
+/// with room.
 pub fn keys(width: u16) -> Vec<String> {
-  let mut groups: Vec<String> = PAGES
+  let groups: Vec<String> = PAGES
     .iter()
     .map(|group| {
       group
@@ -290,16 +291,24 @@ pub fn keys(width: u16) -> Vec<String> {
         .join("  ")
     })
     .collect();
-  groups.push(CONTROLS.to_owned());
+  let fits =
+    |line: &String, group: &str| line.len() + 3 + group.len() <= width as usize;
   let mut lines: Vec<String> = Vec::new();
   for group in groups {
     match lines.last_mut() {
-      Some(line) if line.len() + 3 + group.len() <= width as usize => {
+      Some(line) if fits(line, &group) => {
         line.push_str(" | ");
         line.push_str(&group);
       }
       _ => lines.push(format!(" {group}")),
     }
+  }
+  match lines.iter_mut().find(|line| fits(line, CONTROLS)) {
+    Some(line) => {
+      line.push_str(" | ");
+      line.push_str(CONTROLS);
+    }
+    None => lines.push(format!(" {CONTROLS}")),
   }
   lines
 }

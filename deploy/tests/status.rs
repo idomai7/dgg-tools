@@ -178,7 +178,7 @@ fn draws_the_watch_screen() {
     " journal ",
     " capture.log ",
     "capturing as a-1",
-    "1 supervisor  2 capture  3 frames  4 migrate | 5 compact",
+    "1 supervisor  2 records  3 migrate | 4 capture  5 compact",
   ] {
     assert!(screen.contains(expected), "{expected:?} not in\n{screen}");
   }
@@ -190,13 +190,14 @@ fn the_watch_keys_take_more_lines_when_narrow() {
 
   let wide = keys(200);
   assert_eq!(wide.len(), 1, "{wide:?}");
-  assert!(wide[0].contains("4 migrate | 5 compact"), "{wide:?}");
+  assert!(wide[0].contains("3 migrate | 4 capture"), "{wide:?}");
   assert!(wide[0].contains("9 kick | r redraw"), "{wide:?}");
   let narrow = keys(80);
   assert_eq!(narrow.len(), 2, "{narrow:?}");
   assert!(narrow.iter().all(|line| line.len() <= 80), "{narrow:?}");
-  assert!(narrow[0].ends_with("4 migrate"), "{narrow:?}");
-  assert!(narrow[1].starts_with(" 5 compact"), "{narrow:?}");
+  assert!(narrow[0].ends_with("3 migrate | r redraw  e open data  q quit"));
+  assert!(narrow[1].starts_with(" 4 capture"), "{narrow:?}");
+  assert!(narrow[1].ends_with("8 sync | 9 kick"), "{narrow:?}");
 }
 
 #[test]
