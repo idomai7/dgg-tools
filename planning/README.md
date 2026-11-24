@@ -39,8 +39,8 @@ The layout is flat: each crate is a direct child of the root.
 - `linkers-api/`: linkers.ooo's API, which backfill reads: decoding its pages
   of every kind of message and its rate limit, and with feature `http`,
   fetching them.
-- `kick-mod/`: a chat client and moderation tools for Kick channels. So far,
-  `kick-mod ids`, which looks up channels' ids with curl.
+- `kick-mod/`: a chat client and moderation tools for Kick channels, reading
+  Kick's chat from the logger.
 - `logger-journal/`: the logger's journal file format, with a writer and a
   reader.
 - `logger/`: the logger as a library: capture, index, serve, sync, backfill,

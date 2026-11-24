@@ -360,9 +360,12 @@ each chat setting and cleared chat.
   chatroom 1764849, channel 1772249, user 1823122).
   - It's on the unofficial `GET https://kick.com/api/v2/channels/<slug>`
     (`chatroom.id`).
-  - Cloudflare refuses reqwest there with
-    `{"error": "Request blocked by security policy."}`, but lets curl through,
-    so it's probably blocking on the TLS fingerprint.
+  - Cloudflare refused reqwest there with
+    `{"error": "Request blocked by security policy."}`, but let curl through,
+    so it was taken for blocking on the TLS fingerprint. More likely it was
+    the `User-Agent`, as on `web.kick.com` (below): so since 2026-11-25 the
+    lookup asks with reqwest, naming the tool by its codename. Not yet
+    tried live.
 
 ### Chat history (probed 2026-11-24)
 Found in kick.com's own page scripts, then asked anonymously for `destiny`.

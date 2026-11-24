@@ -322,8 +322,8 @@ undocumented endpoints anonymously: no token, no login, no app. Planned
   per channel, its slug, channel id and chatroom id.
   - `dgg-logger kick-ids <slug>...` looks the ids up with the unofficial
     channel lookup, anonymously, and writes them there. Asking the lookup
-    (with curl, which Cloudflare lets through) moved into `kick-api`'s
-    `lookup` feature, which kick-mod's `ids` uses until it switches over.
+    is `kick-api`'s `lookup` feature: with reqwest, as `ledgerline/<version>`
+    (with curl until 2026-11-25).
   - Slugs are lowercase letters, digits, `-` and `_`, so each is also a
     directory's name. Hand edits survive `kick-ids`: it changes only the
     channel's own line.
