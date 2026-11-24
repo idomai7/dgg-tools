@@ -8,7 +8,12 @@ use {
     serve::{self, Tokens, router},
     sync::{MAX_FILE, TAKEN, sync, unpack},
   },
-  ::logger_journal::{Writer, record::v0::Body},
+  ::logger_journal::{
+    Writer,
+    layout::{channel_root, kick_root},
+    record::{Variant, kick, v0::Body},
+    writer::kick::Writer as KickWriter,
+  },
   ::std::{
     fs::{self, OpenOptions},
     io::Write,
@@ -80,7 +85,7 @@ fn manifest_format() {
       sha256: Some(sha.clone()),
     },
   ];
-  let text = manifest::encode(&files);
+  let text = manifest::encode(Variant::Dgg, &files);
   assert_eq!(
     text,
     format!(
@@ -88,7 +93,7 @@ fn manifest_format() {
        archive/2026/11/2026-11-07.journal.zst 9 {sha}\u{1e}\n"
     )
   );
-  assert_eq!(manifest::decode(&text), Some(files.clone()));
+  assert_eq!(manifest::decode(Variant::Dgg, &text), Some(files.clone()));
   // An entry kind this version doesn't know is skipped.
   let body = text
     .strip_prefix("journal-manifest dgg.0.2\u{1e}\n")
@@ -96,11 +101,11 @@ fn manifest_format() {
   let extra = format!(
     "journal-manifest dgg.0.2 ; note=x\u{1e}\narchive/2026/11 9\u{1e}\n{body}"
   );
-  assert_eq!(manifest::decode(&extra), Some(files));
+  assert_eq!(manifest::decode(Variant::Dgg, &extra), Some(files));
   // An archive needs a whole SHA-256.
   let short = "journal-manifest dgg.0.2\u{1e}\n\
                archive/2026/11/2026-11-07.journal.zst 9 ab\u{1e}\n";
-  assert_eq!(manifest::decode(short), None);
+  assert_eq!(manifest::decode(Variant::Dgg, short), None);
   for bad in [
     // Within major 0, only the exact variant and version are read.
     "journal-manifest 0.0\nlive/2026-11-08/a-1.journal 42\n",
@@ -112,7 +117,7 @@ fn manifest_format() {
     "journal-manifest dgg.0.2\u{1e}\nlive/2026-11-08/a-1.journal 42\n",
     "journal-manifest dgg.0.1",
   ] {
-    assert_eq!(manifest::decode(bad), None, "{bad:?}");
+    assert_eq!(manifest::decode(Variant::Dgg, bad), None, "{bad:?}");
   }
 }
 
@@ -345,7 +350,12 @@ async fn takes_archives_without_overwriting() {
     taken.starts_with("synced-archives dgg.0.2\u{1e}\n"),
     "{taken}"
   );
-  assert_eq!(::logger::taken::read(local.path()).unwrap().len(), 2);
+  assert_eq!(
+    ::logger::taken::read(local.path(), Variant::Dgg)
+      .unwrap()
+      .len(),
+    2
+  );
   let stats = sync(&peer, local.path()).await.unwrap();
   assert_eq!((stats.installed, stats.merging, stats.bytes), (0, 0, 0));
 }
@@ -539,10 +549,10 @@ fn refuses_a_decompression_bomb() {
   fs::create_dir_all(root.path()).unwrap();
   let download = root.path().join("bomb.zst");
   fs::write(&download, &bomb).unwrap();
-  let error = unpack(&download, None, 1 << 20).unwrap_err();
+  let error = unpack(&download, Variant::Dgg, None, 1 << 20).unwrap_err();
   assert!(error.to_string().contains("over 1048576 bytes"), "{error}");
   assert_eq!(
-    unpack(&download, None, 16 << 20).unwrap(),
+    unpack(&download, Variant::Dgg, None, 16 << 20).unwrap(),
     ((8 << 20) + 17, 0)
   );
 }
@@ -554,7 +564,7 @@ fn counts_records_by_framing() {
   let count = |journal: &[u8]| {
     let path = root.path().join("archive.zst");
     fs::write(&path, ::zstd::encode_all(journal, 3).unwrap()).unwrap();
-    unpack(&path, None, 16 << 20).unwrap()
+    unpack(&path, Variant::Dgg, None, 16 << 20).unwrap()
   };
   // Records spanning lines, and an RS LF across where reads may split.
   let header = b"journal dgg.0.3\x1e\n";
@@ -569,5 +579,124 @@ fn counts_records_by_framing() {
   let path = root.path().join("archive.zst");
   let legacy = b"journal 0.1\n0 a 1 frame A\n0 a 1 frame B\n";
   fs::write(&path, ::zstd::encode_all(&legacy[..], 3).unwrap()).unwrap();
-  assert!(unpack(&path, None, 16 << 20).is_err());
+  assert!(unpack(&path, Variant::Dgg, None, 16 << 20).is_err());
+}
+
+/// Writes Kick records for channel `slug` under journal `root`, as instance
+/// `instance`, each `(receive time, body)`.
+fn kick_records(
+  root: &TempDir,
+  slug: &str,
+  instance: &str,
+  records: Vec<(i64, kick::v0::Body)>,
+) {
+  let channel = channel_root(&kick_root(root.path()), slug);
+  let mut writer = KickWriter::new(channel, instance, slug);
+  for (time, body) in records {
+    writer.write(time, 1, body).unwrap();
+  }
+}
+
+#[::tokio::test]
+async fn pulls_kick_journals() {
+  use kick::v0::Body::{Frame, Open};
+  let (remote, local) =
+    (TempDir::new("logger-sync"), TempDir::new("logger-sync"));
+  let peer = Peer {
+    url: serve(&remote).await,
+    token: "secret".into(),
+    ca: None,
+  };
+  let open = || Open("wss://one".into());
+  kick_records(
+    &remote,
+    "c",
+    "k",
+    vec![(0, open()), (1, Frame("{}".into()))],
+  );
+  compact(&channel_root(&kick_root(remote.path()), "c"));
+  kick_records(&remote, "c", "k", vec![(86_400_000, open())]);
+
+  // Its own manifest, every path under the channel's.
+  let manifest = ::reqwest::Client::new()
+    .get(format!("{}/manifest/kick", peer.url))
+    .bearer_auth("secret")
+    .send()
+    .await
+    .unwrap()
+    .text()
+    .await
+    .unwrap();
+  let files = manifest::decode(Variant::Kick, &manifest).unwrap();
+  let paths: Vec<_> = files.iter().map(|file| file.path.clone()).collect();
+  assert_eq!(
+    paths,
+    [
+      "kick/c/live/1970-01-02/k.journal",
+      "kick/c/archive/1970/01/1970-01-01.journal.zst"
+    ]
+  );
+  // Not in dgg's manifest, which a peer from before Kick reads.
+  assert_eq!(manifest::list(remote.path()).unwrap(), []);
+
+  let stats = sync(&peer, local.path()).await.unwrap();
+  assert_eq!((stats.files, stats.updated, stats.installed), (2, 1, 1));
+  for path in &paths {
+    let read = |root: &TempDir| fs::read(root.path().join(path)).unwrap();
+    assert_eq!(read(&local), read(&remote), "{path}");
+  }
+  let idle = sync(&peer, local.path()).await.unwrap();
+  assert_eq!((idle.updated, idle.bytes), (0, 0));
+
+  // A day both have: the peer's archive is written out for compaction to
+  // merge, and recorded as taken in the channel's own file.
+  kick_records(&local, "c", "l", vec![(86_400_005, open())]);
+  let local_channel = channel_root(&kick_root(local.path()), "c");
+  let remote_channel = channel_root(&kick_root(remote.path()), "c");
+  compact_day(&local_channel, "1970-01-02", 3)
+    .unwrap()
+    .unwrap();
+  compact_day(&remote_channel, "1970-01-02", 3)
+    .unwrap()
+    .unwrap();
+  let stats = sync(&peer, local.path()).await.unwrap();
+  assert_eq!((stats.installed, stats.merging), (0, 1));
+  let taken = fs::read_to_string(local_channel.join(TAKEN)).unwrap();
+  assert!(
+    taken.starts_with("synced-archives kick.0.0\u{1e}\n"),
+    "{taken}"
+  );
+  compact_day(&local_channel, "1970-01-02", 3)
+    .unwrap()
+    .unwrap();
+  let archives = ::logger_journal::archive::all(&local_channel).unwrap();
+  assert_eq!(archives[1].records, 2);
+}
+
+#[::tokio::test]
+async fn serves_only_kick_journal_paths() {
+  let root = TempDir::new("logger-sync");
+  kick_records(
+    &root,
+    "c",
+    "k",
+    vec![(0, kick::v0::Body::Frame("{}".into()))],
+  );
+  let base = serve(&root).await;
+  let client = ::reqwest::Client::new();
+  for (path, expected) in [
+    ("kick/c/live/1970-01-01/k.journal", 200),
+    ("kick/C/live/1970-01-01/k.journal", 400),
+    ("kick/c/backfill/live/1970-01-01/k.journal", 400),
+    ("kick/c/control/k.status", 400),
+    ("kick/live/1970-01-01/k.journal", 400),
+  ] {
+    let response = client
+      .get(format!("{base}/files/{path}"))
+      .bearer_auth("secret")
+      .send()
+      .await
+      .unwrap();
+    assert_eq!(response.status().as_u16(), expected, "{path}");
+  }
 }

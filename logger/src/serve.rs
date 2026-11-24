@@ -10,11 +10,12 @@
 //! - `GET /control`: `now <unix ms>`, a blank line, then every status here,
 //!   each followed by a blank line.
 //! - `GET /manifest`: every live journal file and backfill file, and its
-//!   size ([`manifest`]).
+//!   size ([`manifest`]); `GET /manifest/kick`, every Kick channel's.
 //! - `GET /files/live/<day>/<instance>.journal` (or `/files/backfill/live/
 //!   ...`): a file's bytes; with `Range: bytes=<from>-`, from that offset on
 //!   (`206`). Likewise `/files/archive/<YYYY>/<MM>/<day>.journal.zst` (or
-//!   `/files/backfill/archive/...`), for archives.
+//!   `/files/backfill/archive/...`), for archives, and `/files/kick/<slug>/
+//!   ...` for a Kick channel's live files and archives.
 //!
 //! Every request needs `Authorization: Bearer <token>`, with one of two
 //! [`Tokens`]: the read token reads (enough for `sync`); only the control
@@ -30,7 +31,7 @@
 use {
   crate::{
     control::{self, Status},
-    manifest::{self, archive_path, valid_live_path},
+    manifest::{self, archive_path, valid_kick_path, valid_live_path},
   },
   ::axum::{
     Router,
@@ -45,7 +46,7 @@ use {
   ::common::time::now_ms,
   ::common::warn,
   ::futures_util::stream::unfold,
-  ::logger_journal::record::v0::valid_instance,
+  ::logger_journal::record::{Variant, v0::valid_instance},
   ::rustls::ServerConfig,
   ::std::{
     io::{self, SeekFrom},
@@ -133,6 +134,7 @@ pub fn router(journal_root: PathBuf, tokens: Tokens) -> Router {
     .route("/control", get(list))
     .route("/control/{instance}", put(push).delete(remove))
     .route("/manifest", get(manifest))
+    .route("/manifest/kick", get(kick_manifest))
     .route("/files/{*path}", get(file))
     .with_state(shared)
 }
@@ -277,7 +279,17 @@ async fn manifest(
   let _permit = admit(&shared, &headers, Access::Read)?;
   let files = manifest::list(&shared.journal_root)
     .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
-  Ok(manifest::encode(&files))
+  Ok(manifest::encode(Variant::Dgg, &files))
+}
+
+async fn kick_manifest(
+  State(shared): State<Arc<Shared>>,
+  headers: HeaderMap,
+) -> Result<String, StatusCode> {
+  let _permit = admit(&shared, &headers, Access::Read)?;
+  let files = manifest::list_kick(&shared.journal_root)
+    .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+  Ok(manifest::encode(Variant::Kick, &files))
 }
 
 /// A live file's or archive's bytes, from the `Range: bytes=<from>-` offset
@@ -288,7 +300,10 @@ async fn file(
   headers: HeaderMap,
 ) -> Result<(StatusCode, [(HeaderName, u64); 1], Body), StatusCode> {
   let permit = admit(&shared, &headers, Access::Read)?;
-  if !valid_live_path(&path) && archive_path(&path).is_none() {
+  if !valid_live_path(&path)
+    && archive_path(&path).is_none()
+    && !valid_kick_path(&path)
+  {
     return Err(StatusCode::BAD_REQUEST);
   }
   let from = match headers.get(RANGE) {

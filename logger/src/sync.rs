@@ -1,5 +1,5 @@
-//! Sync: pull another host's live journal files, and its backfill files,
-//! into this one's.
+//! Sync: pull another host's live journal files, its backfill files and
+//! each Kick channel's, into this one's.
 //!
 //! Journal files are only ever appended to, so a local copy is always a
 //! prefix of the remote file. Each round fetches the [manifest](crate::
@@ -18,6 +18,11 @@
 //! merges with the rest of the day. Either way it's recorded in
 //! [`TAKEN`] (see [`taken`](crate::taken)), and not taken again.
 //!
+//! Kick's journals come from their own manifest, `GET /manifest/kick`, and
+//! are pulled the same way, each channel's into its own journal root. A
+//! peer from before Kick was synced has none (`404`), which is taken as
+//! having no Kick journals.
+//!
 //! The peer is trusted for what the journal says, but not for how much:
 //! a manifest over [`MAX_MANIFEST`], or a file over [`MAX_FILE`] (listed,
 //! sent, or decompressed), fails the round. Downloads go to disk as they
@@ -26,12 +31,12 @@
 use {
   crate::{
     capture::Peer,
-    manifest::{self, archive_path},
+    manifest::{self, archive_root},
   },
   ::common::{atomic_file, fs::MissingOk},
   ::logger_journal::{
     archive::{self, Archive},
-    layout::{EXTENSION, archive_file, backfill_root, live_day_dir},
+    layout::{EXTENSION, archive_file, live_day_dir},
     record::{Header, RS, Variant},
   },
   ::sha2::{Digest, Sha256},
@@ -106,18 +111,44 @@ async fn body(
   Ok(false)
 }
 
-/// Pulls everything `peer` has that `journal_root` doesn't.
+/// Pulls everything `peer` has that `journal_root` doesn't: dgg's journals,
+/// then Kick's.
 pub async fn sync(peer: &Peer, journal_root: &Path) -> Result<Stats, String> {
   let client = client(peer)?;
+  let mut stats = Stats::default();
+  for variant in [Variant::Dgg, Variant::Kick] {
+    let files = fetch_manifest(&client, peer, variant).await?;
+    stats.files += files.len() as u64;
+    pull(&client, peer, journal_root, variant, files, &mut stats).await?;
+  }
+  Ok(stats)
+}
+
+/// `peer`'s manifest of `variant`'s journals. A peer without Kick's has
+/// none of them.
+async fn fetch_manifest(
+  client: &::reqwest::Client,
+  peer: &Peer,
+  variant: Variant,
+) -> Result<Vec<manifest::File>, String> {
+  let path = match variant {
+    Variant::Dgg => "manifest",
+    Variant::Kick => "manifest/kick",
+  };
   let base = peer.url.trim_end_matches('/');
-  let get = |path: String| client.get(format!("{base}/{path}"));
-  let response = get("manifest".into())
+  let response = client
+    .get(format!("{base}/{path}"))
     .bearer_auth(&peer.token)
     .send()
     .await
     .map_err(|e| e.to_string())?;
+  if variant == Variant::Kick
+    && response.status() == ::reqwest::StatusCode::NOT_FOUND
+  {
+    return Ok(Vec::new());
+  }
   if !response.status().is_success() {
-    return Err(format!("manifest: HTTP {}", response.status()));
+    return Err(format!("{path}: HTTP {}", response.status()));
   }
   let mut text = Vec::new();
   let more = body(response, MAX_MANIFEST, |chunk| {
@@ -125,33 +156,39 @@ pub async fn sync(peer: &Peer, journal_root: &Path) -> Result<Stats, String> {
     Ok(())
   })
   .await
-  .map_err(|e| format!("manifest: {e}"))?;
+  .map_err(|e| format!("{path}: {e}"))?;
   if more {
-    return Err(format!("manifest: over {MAX_MANIFEST} bytes"));
+    return Err(format!("{path}: over {MAX_MANIFEST} bytes"));
   }
   let files = String::from_utf8(text)
     .ok()
-    .and_then(|text| manifest::decode(&text))
-    .ok_or("manifest isn't a readable manifest")?;
+    .and_then(|text| manifest::decode(variant, &text))
+    .ok_or(format!("{path} isn't a readable manifest"))?;
   if let Some(file) = files.iter().find(|file| file.size > MAX_FILE) {
     return Err(format!("{}: listed as over {MAX_FILE} bytes", file.path));
   }
+  Ok(files)
+}
 
-  let mut stats = Stats {
-    files: files.len() as u64,
-    ..Stats::default()
-  };
+/// Pulls each of `files`, from `peer`'s manifest of `variant`'s journals,
+/// that `journal_root` doesn't have, adding what was done to `stats`.
+async fn pull(
+  client: &::reqwest::Client,
+  peer: &Peer,
+  journal_root: &Path,
+  variant: Variant,
+  files: Vec<manifest::File>,
+  stats: &mut Stats,
+) -> Result<(), String> {
+  let base = peer.url.trim_end_matches('/');
+  let get = |path: String| client.get(format!("{base}/{path}"));
   for file in files {
     if let Some(sha256) = &file.sha256 {
-      let Some((day, backfill)) = archive_path(&file.path) else {
+      let Some((root, day)) = archive_root(journal_root, &file.path) else {
         continue;
       };
-      let root = match backfill {
-        true => backfill_root(journal_root),
-        false => journal_root.to_path_buf(),
-      };
       let fail = |e: &dyn ::std::fmt::Display| format!("{}: {e}", file.path);
-      if !wanted(&root, day, sha256).map_err(|e| fail(&e))? {
+      if !wanted(&root, variant, day, sha256).map_err(|e| fail(&e))? {
         continue;
       }
       let response = get(format!("files/{}", file.path))
@@ -166,7 +203,7 @@ pub async fn sync(peer: &Peer, journal_root: &Path) -> Result<Stats, String> {
       let taken = download_archive(response, &download, file.size, sha256)
         .await
         .and_then(|()| {
-          take(&root, day, sha256, file.size, &download)
+          take(&root, variant, day, sha256, file.size, &download)
             .map_err(|e| e.to_string())
         });
       let _ = fs::remove_file(&download);
@@ -205,7 +242,7 @@ pub async fn sync(peer: &Peer, journal_root: &Path) -> Result<Stats, String> {
     stats.updated += 1;
     stats.bytes += appended;
   }
-  Ok(stats)
+  Ok(())
 }
 
 /// Appends up to `limit` bytes of `response` to `path`, as they arrive,
@@ -267,9 +304,14 @@ fn invalid(why: &str) -> io::Error {
   io::Error::new(io::ErrorKind::InvalidData, why)
 }
 
-/// Whether the archive of `day` with `sha256` is new to journal `root`: it
-/// isn't the archive here, and wasn't taken before.
-fn wanted(root: &Path, day: &str, sha256: &str) -> io::Result<bool> {
+/// Whether the archive of `day` with `sha256` is new to journal `root`, of
+/// `variant`'s: it isn't the archive here, and wasn't taken before.
+fn wanted(
+  root: &Path,
+  variant: Variant,
+  day: &str,
+  sha256: &str,
+) -> io::Result<bool> {
   let here = archive::read_month(root, day)?;
   if here
     .iter()
@@ -277,7 +319,7 @@ fn wanted(root: &Path, day: &str, sha256: &str) -> io::Result<bool> {
   {
     return Ok(false);
   }
-  let taken = crate::taken::read(root)?;
+  let taken = crate::taken::read(root, variant)?;
   Ok(!taken.iter().any(|(d, s)| d == day && s == sha256))
 }
 
@@ -301,13 +343,14 @@ fn has_live(root: &Path, day: &str) -> io::Result<bool> {
 
 /// Decompresses the archive at `path` into `out`, if given; its size and
 /// records (after the header, counted by their ends). Fails if it isn't a
-/// readable dgg journal, or decompresses to over `limit` bytes.
+/// readable journal of `variant`'s, or decompresses to over `limit` bytes.
 pub fn unpack(
   path: &Path,
+  variant: Variant,
   mut out: Option<&mut File>,
   limit: u64,
 ) -> io::Result<(u64, u64)> {
-  let unreadable = || invalid("archive isn't a readable dgg journal");
+  let unreadable = || invalid("archive isn't a readable journal of its kind");
   let mut decoder = ::zstd::Decoder::new(File::open(path)?)?;
   let mut buffer = vec![0; 64 << 10];
   let (mut bytes, mut records) = (0_u64, 0_u64);
@@ -341,7 +384,7 @@ pub fn unpack(
         continue;
       };
       Header::parse(&head[..end])
-        .filter(|h| h.variant == Variant::Dgg && h.readable())
+        .filter(|h| h.variant == variant && h.readable())
         .ok_or_else(unreadable)?;
       header = true;
       // What of the head follows the header, kept apart from `chunk`.
@@ -362,10 +405,11 @@ pub fn unpack(
 }
 
 /// Takes `download`, the peer's archive of `day`, checked against the
-/// manifest's `sha256` and `size`, into journal `root` (see the [module
-/// docs](self)); whether it was installed as it is.
+/// manifest's `sha256` and `size`, into journal `root`, of `variant`'s (see
+/// the [module docs](self)); whether it was installed as it is.
 fn take(
   root: &Path,
+  variant: Variant,
   day: &str,
   sha256: &str,
   size: u64,
@@ -377,13 +421,13 @@ fn take(
     || archive_file(root, day).exists();
   let installed = !archived && !has_live(root, day)?;
   if installed {
-    let (bytes, records) = unpack(download, None, MAX_FILE)?;
+    let (bytes, records) = unpack(download, variant, None, MAX_FILE)?;
     let path = archive_file(root, day);
     fs::create_dir_all(path.parent().unwrap())?;
     fs::rename(download, path)?;
     archive::record(
       root,
-      Variant::Dgg,
+      variant,
       &Archive {
         day: day.into(),
         compressed: size,
@@ -395,10 +439,10 @@ fn take(
   } else {
     let name = format!("archive-{}.{EXTENSION}", &sha256[..16]);
     write_new(&live_day_dir(root, day).join(name), |file| {
-      unpack(download, Some(file), MAX_FILE).map(|_| ())
+      unpack(download, variant, Some(file), MAX_FILE).map(|_| ())
     })?;
   }
-  crate::taken::add(root, day, sha256)?;
+  crate::taken::add(root, variant, day, sha256)?;
   Ok(installed)
 }
 

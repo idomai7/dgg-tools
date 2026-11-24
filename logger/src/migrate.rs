@@ -169,7 +169,7 @@ fn check_root(
       ["synced-archives"; 2],
       synced,
       taken::FORMAT,
-      taken::VERSION,
+      taken::version(variant),
     ),
     (
       ["capture status", "capture statuses"],
