@@ -1,7 +1,8 @@
 /target
 .env
 /kick-mod.toml
-/kick-mod.env.jsonc
+*.env.json
+*.env.jsonc
 /data/
 *.sqlite
 *.sqlite-*
