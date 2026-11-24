@@ -37,17 +37,25 @@ only, built on [kick-api](kick-api.md). See the [overall rules](README.md).
   - Until then, history covers only the times kick-mod was running.
 - **Files:** settings in a config file, and what kick-mod learns or keeps in
   `data/kick-mod/`.
-  - **Config:** `kick-mod.toml` (`--config` for another), gitignored since it
-    holds the app's secret. Only edited by hand; kick-mod never writes it. It
-    replaces kick-mod's use of `.env`.
-    ```toml
-    [app]
-    client_id = "..."
-    client_secret = "..."
-
-    [server]
-    listen = "127.0.0.1:8787"
+  - **Config:** JSON, as every config with secrets is (see the
+    [overall rules](README.md)): `kick-mod.env.json` (`--config-file` for
+    another), or on stdin with `--config-stdin`. Gitignored, since it holds
+    the app's secret and the logger's token. Only edited by hand; kick-mod
+    never writes it. `kick-mod config` shows it, each secret as `<secret>`.
+    It replaced `kick-mod.toml` on 2026-11-25, which replaced `.env`.
+    ```json
+    {
+      "app": {"client_id": "...", "client_secret": "..."},
+      "server": {"listen": "127.0.0.1:8787"},
+      "logger": {
+        "url": "https://pi:8788",
+        "token": "...",
+        "ca": "-----BEGIN CERTIFICATE-----\n..."
+      }
+    }
     ```
+    - `server` is optional. `logger` is the logger's `serve` to read Kick
+      from, with its query token, and the mesh CA's certificate for HTTPS.
   - **Channels:** `data/kick-mod/channels.json`, an object per channel by slug,
     written by kick-mod and editable by hand:
     ```json
@@ -177,6 +185,18 @@ Each is a pause for review.
      and with them every undocumented endpoint.
    - `channels.json` keeps each channel's slug and `broadcaster_user_id`,
      both from the official API.
+   - In parts, each a pause for review:
+     1. The config as JSON, with the `logger` section (optional until 2).
+        Done 2026-11-25.
+     2. Live chat from the logger's events, per channel: Kick's events
+        decoded as now; its connections' opens and closes as the column's
+        status; a gap's history pages as `filled`. A dropped stream is
+        retried, and the page told that chat is missing.
+     3. User history from the logger, with the mod log's actions added.
+     4. What's left goes: the Centrifugo connection, the journal, gap
+        filling and `ids`, which becomes `kick-mod add <slug>`, from the
+        official API only. Old journals stay on disk, in the logger's
+        format.
 
 Later, each its own step:
 - Automod rules.
