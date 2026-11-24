@@ -4,7 +4,9 @@ use {
     capture::Peer,
     cert,
     compact::compact_day,
-    manifest::{self, File, archive_path, valid_live_path},
+    dgg::Dgg,
+    kick::Kick,
+    manifest::{self, File, archive_path, live_path, valid_path},
     serve::{self, Tokens, router},
     sync::{MAX_FILE, TAKEN, sync, unpack},
   },
@@ -38,9 +40,13 @@ async fn serve(root: &TempDir) -> String {
 
 #[test]
 fn manifest_format() {
-  assert!(valid_live_path("live/2026-11-08/a-1.journal"));
-  assert!(valid_live_path(
+  assert!(live_path("live/2026-11-08/a-1.journal"));
+  assert!(valid_path::<Dgg>("live/2026-11-08/a-1.journal"));
+  assert!(valid_path::<Dgg>(
     "backfill/live/2026-11-08/backfill-a.journal"
+  ));
+  assert!(valid_path::<Dgg>(
+    "backfill/archive/2026/11/2026-11-08.journal.zst"
   ));
   for bad in [
     "backfill/archive/2026/11/x.journal",
@@ -54,15 +60,11 @@ fn manifest_format() {
     "/live/2026-11-08/a.journal",
     "live/2026-11-08/.journal",
   ] {
-    assert!(!valid_live_path(bad), "{bad:?}");
+    assert!(!valid_path::<Dgg>(bad), "{bad:?}");
   }
   assert_eq!(
     archive_path("archive/2026/11/2026-11-08.journal.zst"),
-    Some(("2026-11-08", false))
-  );
-  assert_eq!(
-    archive_path("backfill/archive/2026/11/2026-11-08.journal.zst"),
-    Some(("2026-11-08", true))
+    Some("2026-11-08")
   );
   for bad in [
     "archive/2026/12/2026-11-08.journal.zst",
@@ -86,7 +88,7 @@ fn manifest_format() {
       sha256: Some(sha.clone()),
     },
   ];
-  let text = manifest::encode(Variant::Dgg, &files);
+  let text = manifest::encode::<Dgg>(&files);
   assert_eq!(
     text,
     format!(
@@ -94,7 +96,7 @@ fn manifest_format() {
        archive/2026/11/2026-11-07.journal.zst 9 {sha}\u{1e}\n"
     )
   );
-  assert_eq!(manifest::decode(Variant::Dgg, &text), Some(files.clone()));
+  assert_eq!(manifest::decode::<Dgg>(&text), Some(files.clone()));
   // An entry kind this version doesn't know is skipped.
   let body = text
     .strip_prefix("journal-manifest dgg.0.2\u{1e}\n")
@@ -102,11 +104,11 @@ fn manifest_format() {
   let extra = format!(
     "journal-manifest dgg.0.2 ; note=x\u{1e}\narchive/2026/11 9\u{1e}\n{body}"
   );
-  assert_eq!(manifest::decode(Variant::Dgg, &extra), Some(files));
+  assert_eq!(manifest::decode::<Dgg>(&extra), Some(files));
   // An archive needs a whole SHA-256.
   let short = "journal-manifest dgg.0.2\u{1e}\n\
                archive/2026/11/2026-11-07.journal.zst 9 ab\u{1e}\n";
-  assert_eq!(manifest::decode(Variant::Dgg, short), None);
+  assert_eq!(manifest::decode::<Dgg>(short), None);
   for bad in [
     // Within major 0, only the exact variant and version are read.
     "journal-manifest 0.0\nlive/2026-11-08/a-1.journal 42\n",
@@ -118,7 +120,7 @@ fn manifest_format() {
     "journal-manifest dgg.0.2\u{1e}\nlive/2026-11-08/a-1.journal 42\n",
     "journal-manifest dgg.0.1",
   ] {
-    assert_eq!(manifest::decode(Variant::Dgg, bad), None, "{bad:?}");
+    assert_eq!(manifest::decode::<Dgg>(bad), None, "{bad:?}");
   }
 }
 
@@ -132,7 +134,7 @@ async fn file_endpoint() {
   let client = ::reqwest::Client::new();
   let get = |path: &str, range: Option<&str>| {
     let mut request = client
-      .get(format!("{base}/files/{path}"))
+      .get(format!("{base}/dgg/files/{path}"))
       .bearer_auth("secret");
     if let Some(range) = range {
       request = request.header("Range", range);
@@ -157,7 +159,11 @@ async fn file_endpoint() {
   for escape in ["live/1970-01-01/..%2F..%2Fx.journal", "control/a.status"] {
     assert_eq!(code(get(escape, None).await.unwrap()), 400, "{escape}");
   }
-  let anonymous = client.get(format!("{base}/manifest")).send().await.unwrap();
+  let anonymous = client
+    .get(format!("{base}/dgg/manifest"))
+    .send()
+    .await
+    .unwrap();
   assert_eq!(code(anonymous), 401);
 }
 
@@ -495,12 +501,12 @@ async fn takes_no_more_than_the_manifest_says() {
       "journal-manifest dgg.0.2\u{1e}\n{}",
       text.replace('\n', "\u{1e}\n")
     );
-    ::axum::Router::new().route("/manifest", get(move || async { text }))
+    ::axum::Router::new().route("/dgg/manifest", get(move || async { text }))
   };
 
   // A file sent longer than listed: only what was listed is taken.
   let routes = manifest("live/2026-11-08/a.journal 5\n".into()).route(
-    "/files/{*path}",
+    "/dgg/files/{*path}",
     get(|| async { (StatusCode::PARTIAL_CONTENT, "x".repeat(100_000)) }),
   );
   let stats = sync_from(routes).await.unwrap();
@@ -520,7 +526,7 @@ async fn takes_no_more_than_the_manifest_says() {
   let sha = "ab".repeat(32);
   let routes =
     manifest(format!("archive/2026/11/2026-11-07.journal.zst 3 {sha}\n"))
-      .route("/files/{*path}", get(|| async { "abc" }));
+      .route("/dgg/files/{*path}", get(|| async { "abc" }));
   let error = sync_from(routes).await.unwrap_err();
   assert!(error.contains("doesn't match"), "{error}");
   assert_eq!(
@@ -531,7 +537,7 @@ async fn takes_no_more_than_the_manifest_says() {
 
   // A redirect isn't followed: the token would go with it.
   let routes = ::axum::Router::new().route(
-    "/manifest",
+    "/dgg/manifest",
     get(|| async { Redirect::temporary("/elsewhere") }),
   );
   let error = sync_from(routes).await.unwrap_err();
@@ -621,7 +627,7 @@ async fn pulls_kick_journals() {
 
   // Its own manifest, every path under the channel's.
   let manifest = ::reqwest::Client::new()
-    .get(format!("{}/manifest/kick", peer.url))
+    .get(format!("{}/kick/manifest", peer.url))
     .bearer_auth("secret")
     .send()
     .await
@@ -629,22 +635,23 @@ async fn pulls_kick_journals() {
     .text()
     .await
     .unwrap();
-  let files = manifest::decode(Variant::Kick, &manifest).unwrap();
+  let files = manifest::decode::<Kick>(&manifest).unwrap();
   let paths: Vec<_> = files.iter().map(|file| file.path.clone()).collect();
   assert_eq!(
     paths,
     [
-      "kick/c/live/1970-01-02/k.journal",
-      "kick/c/archive/1970/01/1970-01-01.journal.zst"
+      "c/live/1970-01-02/k.journal",
+      "c/archive/1970/01/1970-01-01.journal.zst"
     ]
   );
-  // Not in dgg's manifest, which a peer from before Kick reads.
-  assert_eq!(manifest::list(remote.path()).unwrap(), []);
+  // Not in dgg's manifest.
+  assert_eq!(manifest::list::<Dgg>(remote.path()).unwrap(), []);
 
   let stats = sync(&peer, local.path()).await.unwrap();
   assert_eq!((stats.files, stats.updated, stats.installed), (2, 1, 1));
   for path in &paths {
-    let read = |root: &TempDir| fs::read(root.path().join(path)).unwrap();
+    let read =
+      |root: &TempDir| fs::read(kick_root(root.path()).join(path)).unwrap();
     assert_eq!(read(&local), read(&remote), "{path}");
   }
   let idle = sync(&peer, local.path()).await.unwrap();
@@ -687,14 +694,15 @@ async fn serves_only_kick_journal_paths() {
   let base = serve(&root).await;
   let client = ::reqwest::Client::new();
   for (path, expected) in [
-    ("kick/c/live/1970-01-01/k.journal", 200),
-    ("kick/C/live/1970-01-01/k.journal", 400),
-    ("kick/c/backfill/live/1970-01-01/k.journal", 400),
-    ("kick/c/control/k.status", 400),
-    ("kick/live/1970-01-01/k.journal", 400),
+    ("c/live/1970-01-01/k.journal", 200),
+    ("C/live/1970-01-01/k.journal", 400),
+    ("c/backfill/live/1970-01-01/k.journal", 400),
+    ("c/control/k.status", 400),
+    ("live/1970-01-01/k.journal", 400),
+    ("d/live/1970-01-01/k.journal", 404),
   ] {
     let response = client
-      .get(format!("{base}/files/{path}"))
+      .get(format!("{base}/kick/files/{path}"))
       .bearer_auth("secret")
       .send()
       .await

@@ -6,14 +6,15 @@
 //! upgrade touches, so its log shows how one went:
 //!
 //! - first, the build, and the versions it writes;
-//! - for each journal root (dgg's, the backfill journal's and each Kick
-//!   channel's), a line for each kind of file in it, with its version: live
+//! - for each service's journal roots (dgg's, the backfill journal's and
+//!   each Kick channel's), a line for each kind of file in it, with its
+//!   version: live
 //!   files, archive manifests, `synced-archives` and capture statuses. A
 //!   file at another version, which this build can't read, gets a line of
 //!   its own, and is left as it was;
 //! - the index's schema, which must be [`SCHEMA_VERSION`] (or there's none
 //!   yet), and Kick's index's, which must be its own
-//!   [`SCHEMA_VERSION`](kick::index::SCHEMA_VERSION).
+//!   [`SCHEMA_VERSION`](kick_index::SCHEMA_VERSION).
 //!
 //! How the captures hand over is theirs to say, in their own logs.
 //!
@@ -26,13 +27,17 @@
 
 use {
   crate::{
-    BUILD, control, dgg::index::SCHEMA_VERSION, index::schema_version,
-    kick::index as kick_index, taken,
+    BUILD, control,
+    dgg::{Dgg, index::SCHEMA_VERSION},
+    index::schema_version,
+    kick::{Kick, index as kick_index},
+    service::Service,
+    taken,
   },
   ::common::{fs::MissingOk, log::Level},
   ::logger_journal::{
     Format, Header, Variant, Version, archive,
-    layout::{archive_dir, backfill_root, channel_root, kick_root, live_files},
+    layout::{archive_dir, live_files},
     record::{JOURNAL, kick, v0},
   },
   ::rusqlite::{Connection, OpenFlags},
@@ -87,17 +92,8 @@ pub fn migrate(
   };
   let mut report = Report::default();
   let journal = data.join("journal");
-  let mut roots = vec![
-    ("journal".to_owned(), journal.clone(), Variant::Dgg),
-    ("backfill".to_owned(), backfill_root(&journal), Variant::Dgg),
-  ];
-  for slug in dir_names(&kick_root(&journal))? {
-    let root = channel_root(&kick_root(&journal), &slug);
-    roots.push((format!("kick {slug}"), root, Variant::Kick));
-  }
-  for (name, root, variant) in &roots {
-    check_root(name, root, *variant, &mut report, say)?;
-  }
+  check_service::<Dgg>(&journal, &mut report, say)?;
+  check_service::<Kick>(&journal, &mut report, say)?;
 
   report.index = check_index(
     "index",
@@ -145,6 +141,18 @@ fn check_index(
     failed.push(format!("{name}: {why}"));
   }
   Ok(Some(version))
+}
+
+/// Checks each of `S`'s journal roots, in the journal directory `journal`.
+fn check_service<S: Service>(
+  journal: &Path,
+  report: &mut Report,
+  say: &mut dyn FnMut(Level, &str),
+) -> io::Result<()> {
+  for root in S::roots(&S::dir(journal))? {
+    check_root(&root.name, &root.dir, S::VARIANT, report, say)?;
+  }
+  Ok(())
 }
 
 /// Checks each kind of file under journal `root`, `name` in what it says.

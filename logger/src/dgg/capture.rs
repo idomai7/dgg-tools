@@ -172,7 +172,7 @@ fn peer_client(peer: &Peer) -> Result<::reqwest::Client, String> {
 }
 
 fn peer_url(peer: &Peer, instance: &str) -> String {
-  format!("{}/control/{instance}", peer.url.trim_end_matches('/'))
+  format!("{}/dgg/control/{instance}", peer.url.trim_end_matches('/'))
 }
 
 /// Pushes this instance's status file to `peer` every `interval`, until

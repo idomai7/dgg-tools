@@ -1,10 +1,14 @@
-//! Sync: pull another host's live journal files, its backfill files and
-//! each Kick channel's, into this one's.
+//! Sync: pull another host's journals, every service's, into this one's.
+//!
+//! Each service is pulled in turn, by the same rules: its [manifest](crate::
+//! manifest) from `GET /<service>/manifest`, its files from `GET
+//! /<service>/files/<path>`, each path relative to its directory there and
+//! here. A peer without a service (`404`) has none of its journals.
 //!
 //! Journal files are only ever appended to, so a local copy is always a
-//! prefix of the remote file. Each round fetches the [manifest](crate::
-//! manifest) and, for every remote file longer than its local copy, just
-//! the missing bytes, appended and fsynced. An interrupted round leaves a
+//! prefix of the remote file. Each round fetches the manifest and, for
+//! every remote file longer than its local copy, just the missing bytes,
+//! appended and fsynced. An interrupted round leaves a
 //! shorter prefix, which the next round extends. A record still being
 //! written remotely is copied as far as it goes; readers wait for its end. A
 //! remote file shorter than its local copy has been rewritten, so it's
@@ -16,12 +20,8 @@
 //! hosts hold the same bytes. Otherwise it's decompressed into a live file,
 //! `live/<day>/archive-<sha-256 prefix>.journal`, which the next compaction
 //! merges with the rest of the day. Either way it's recorded in
-//! [`TAKEN`] (see [`taken`](crate::taken)), and not taken again.
-//!
-//! Kick's journals come from their own manifest, `GET /manifest/kick`, and
-//! are pulled the same way, each channel's into its own journal root. A
-//! peer from before Kick was synced has none (`404`), which is taken as
-//! having no Kick journals.
+//! [`TAKEN`] (see [`taken`](crate::taken)), in its journal root, and not
+//! taken again.
 //!
 //! The peer is trusted for what the journal says, but not for how much:
 //! a manifest over [`MAX_MANIFEST`], or a file over [`MAX_FILE`] (listed,
@@ -31,7 +31,10 @@
 use {
   crate::{
     capture::Peer,
+    dgg::Dgg,
+    kick::Kick,
     manifest::{self, archive_root},
+    service::Service,
   },
   ::common::{atomic_file, fs::MissingOk},
   ::logger_journal::{
@@ -48,9 +51,8 @@ use {
   },
 };
 
-/// The file, under each journal root (the journal's and the backfill
-/// journal's), listing the archives taken from peers (see
-/// [`taken`](crate::taken)).
+/// The file, under each journal root, listing the archives taken from
+/// peers (see [`taken`](crate::taken)).
 pub const TAKEN: &str = crate::taken::PATH;
 
 /// The largest manifest taken from a peer. A year of files lists in well
@@ -111,30 +113,22 @@ async fn body(
   Ok(false)
 }
 
-/// Pulls everything `peer` has that `journal_root` doesn't: dgg's journals,
-/// then Kick's.
-pub async fn sync(peer: &Peer, journal_root: &Path) -> Result<Stats, String> {
+/// Pulls everything `peer` has that the journal directory `journal`
+/// doesn't: dgg's journals, then Kick's.
+pub async fn sync(peer: &Peer, journal: &Path) -> Result<Stats, String> {
   let client = client(peer)?;
   let mut stats = Stats::default();
-  for variant in [Variant::Dgg, Variant::Kick] {
-    let files = fetch_manifest(&client, peer, variant).await?;
-    stats.files += files.len() as u64;
-    pull(&client, peer, journal_root, variant, files, &mut stats).await?;
-  }
+  pull::<Dgg>(&client, peer, journal, &mut stats).await?;
+  pull::<Kick>(&client, peer, journal, &mut stats).await?;
   Ok(stats)
 }
 
-/// `peer`'s manifest of `variant`'s journals. A peer without Kick's has
-/// none of them.
-async fn fetch_manifest(
+/// `peer`'s manifest of `S`'s journals: none if it doesn't have `S`.
+async fn fetch_manifest<S: Service>(
   client: &::reqwest::Client,
   peer: &Peer,
-  variant: Variant,
 ) -> Result<Vec<manifest::File>, String> {
-  let path = match variant {
-    Variant::Dgg => "manifest",
-    Variant::Kick => "manifest/kick",
-  };
+  let path = format!("{}/manifest", S::NAME);
   let base = peer.url.trim_end_matches('/');
   let response = client
     .get(format!("{base}/{path}"))
@@ -142,9 +136,7 @@ async fn fetch_manifest(
     .send()
     .await
     .map_err(|e| e.to_string())?;
-  if variant == Variant::Kick
-    && response.status() == ::reqwest::StatusCode::NOT_FOUND
-  {
+  if response.status() == ::reqwest::StatusCode::NOT_FOUND {
     return Ok(Vec::new());
   }
   if !response.status().is_success() {
@@ -162,7 +154,7 @@ async fn fetch_manifest(
   }
   let files = String::from_utf8(text)
     .ok()
-    .and_then(|text| manifest::decode(variant, &text))
+    .and_then(|text| manifest::decode::<S>(&text))
     .ok_or(format!("{path} isn't a readable manifest"))?;
   if let Some(file) = files.iter().find(|file| file.size > MAX_FILE) {
     return Err(format!("{}: listed as over {MAX_FILE} bytes", file.path));
@@ -170,28 +162,31 @@ async fn fetch_manifest(
   Ok(files)
 }
 
-/// Pulls each of `files`, from `peer`'s manifest of `variant`'s journals,
-/// that `journal_root` doesn't have, adding what was done to `stats`.
-async fn pull(
+/// Pulls each file in `peer`'s manifest of `S`'s journals that the
+/// journal directory `journal` doesn't have, adding what was done to
+/// `stats`.
+async fn pull<S: Service>(
   client: &::reqwest::Client,
   peer: &Peer,
-  journal_root: &Path,
-  variant: Variant,
-  files: Vec<manifest::File>,
+  journal: &Path,
   stats: &mut Stats,
 ) -> Result<(), String> {
+  let files = fetch_manifest::<S>(client, peer).await?;
+  stats.files += files.len() as u64;
+  let dir = S::dir(journal);
+  let variant = S::VARIANT;
   let base = peer.url.trim_end_matches('/');
-  let get = |path: String| client.get(format!("{base}/{path}"));
+  let get = |path: &str| client.get(format!("{base}/{}/files/{path}", S::NAME));
   for file in files {
     if let Some(sha256) = &file.sha256 {
-      let Some((root, day)) = archive_root(journal_root, &file.path) else {
+      let Some((root, day)) = archive_root::<S>(&dir, &file.path) else {
         continue;
       };
       let fail = |e: &dyn ::std::fmt::Display| format!("{}: {e}", file.path);
       if !wanted(&root, variant, day, sha256).map_err(|e| fail(&e))? {
         continue;
       }
-      let response = get(format!("files/{}", file.path))
+      let response = get(&file.path)
         .bearer_auth(&peer.token)
         .send()
         .await
@@ -215,7 +210,7 @@ async fn pull(
       stats.bytes += file.size;
       continue;
     }
-    let local = journal_root.join(&file.path);
+    let local = dir.join(&file.path);
     let have = fs::metadata(&local)
       .missing_ok()
       .map_err(|e| format!("{}: {e}", file.path))?
@@ -227,7 +222,7 @@ async fn pull(
     if file.size == have {
       continue;
     }
-    let response = get(format!("files/{}", file.path))
+    let response = get(&file.path)
       .bearer_auth(&peer.token)
       .header("Range", format!("bytes={have}-"))
       .send()

@@ -1,15 +1,15 @@
-//! Compact closed days of the journal, the backfill journal and each Kick
-//! channel's journal into zstd archives.
+//! Compact closed days of every service's journals into zstd archives.
 
 use {
   crate::{
     compact::{DEFAULT_LEVEL, closed_days, compact_day},
-    kick::channels,
+    dgg::Dgg,
+    kick::Kick,
+    service::Service,
   },
   ::clap::Args,
   ::common::time::now_ms,
   ::common::{error, info},
-  ::logger_journal::layout::{backfill_root, channel_root, kick_root},
   ::std::{path::Path, process::ExitCode, time::Duration},
 };
 
@@ -34,27 +34,11 @@ pub struct Compact {
 }
 
 impl Compact {
-  /// Compacts `<data>/journal`, then its backfill journal, then each Kick
-  /// channel's.
+  /// Compacts each service's journals, in `<data>/journal`: dgg's, then
+  /// Kick's.
   pub fn run(self, data: &Path) -> ExitCode {
-    let journal_root = data.join("journal");
-    let backfill = backfill_root(&journal_root);
-    let mut ok =
-      self.compact(&journal_root, "") & self.compact(&backfill, "backfill ");
-    // Every channel with a journal, even one dropped from the list.
-    let kick = kick_root(&journal_root);
-    match channels::journaled(&journal_root) {
-      Ok(slugs) => {
-        for slug in slugs {
-          let root = channel_root(&kick, &slug);
-          ok &= self.compact(&root, &format!("kick {slug} "));
-        }
-      }
-      Err(e) => {
-        error!("compact kick failed: {e}");
-        ok = false;
-      }
-    }
+    let journal = data.join("journal");
+    let ok = self.service::<Dgg>(&journal) & self.service::<Kick>(&journal);
     if ok {
       ExitCode::SUCCESS
     } else {
@@ -62,19 +46,36 @@ impl Compact {
     }
   }
 
-  /// Compacts the journal at `journal_root`, its days labelled with `kind`;
-  /// whether every day went well.
-  fn compact(&self, journal_root: &Path, kind: &str) -> bool {
+  /// Compacts each of `S`'s journal roots; whether every day went well.
+  fn service<S: Service>(&self, journal: &Path) -> bool {
+    match S::roots(&S::dir(journal)) {
+      Ok(roots) => {
+        let mut ok = true;
+        for root in roots {
+          ok &= self.compact(&root.dir, &root.name);
+        }
+        ok
+      }
+      Err(e) => {
+        error!("compact {} failed: {e}", S::NAME);
+        false
+      }
+    }
+  }
+
+  /// Compacts the journal at `journal_root`, called `name`; whether every
+  /// day went well.
+  fn compact(&self, journal_root: &Path, name: &str) -> bool {
     let grace = Duration::from_secs_f64(self.grace_hours * 3600.0);
     let now = self.now.unwrap_or_else(now_ms);
     let days = match closed_days(journal_root, now, grace) {
       Ok(days) => days,
       Err(e) => {
-        error!("compact {kind}failed: {e}");
+        error!("compact {name} failed: {e}");
         return false;
       }
     };
-    info!("{} closed {kind}days with live files", days.len());
+    info!("{name}: {} closed days with live files", days.len());
     if self.dry_run {
       for day in &days {
         info!("  {day}");

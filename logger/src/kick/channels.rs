@@ -13,7 +13,6 @@
 use {
   ::common::{atomic_file, fs::MissingOk},
   ::kick_api::channel,
-  ::logger_journal::layout::kick_root,
   ::std::{fs, io, path::Path},
 };
 
@@ -46,13 +45,12 @@ pub fn valid_slug(slug: &str) -> bool {
     })
 }
 
-/// The channels with journals under dgg's journal root `journal_root`
-/// (see [`kick_root`]), sorted: every directory there named by a
-/// [`valid_slug`], whether or not the list still has it.
-pub fn journaled(journal_root: &Path) -> io::Result<Vec<String>> {
+/// The channels with journals in Kick's directory `dir` (see
+/// [`Kick::dir`](crate::service::Service::dir)), sorted: every directory
+/// there named by a [`valid_slug`], whether or not the list still has it.
+pub fn journaled(dir: &Path) -> io::Result<Vec<String>> {
   let mut slugs = Vec::new();
-  let Some(entries) = fs::read_dir(kick_root(journal_root)).missing_ok()?
-  else {
+  let Some(entries) = fs::read_dir(dir).missing_ok()? else {
     return Ok(slugs);
   };
   for entry in entries {

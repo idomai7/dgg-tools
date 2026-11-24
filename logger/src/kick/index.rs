@@ -4,8 +4,9 @@
 //!
 //! As dgg's, it's derived data, rebuilt from the journal at will, and each
 //! file's progress is checkpointed in the same transaction as its rows.
-//! Channels are found as the journal roots under `kick/`, archives through
-//! their manifests.
+//! Channels are found as the journal roots in Kick's directory, `kick/`,
+//! archives through their manifests. Files are named by their paths in
+//! Kick's directory, `<slug>/live/...` and `<slug>/archive/...`.
 //!
 //! Rows are keyed by Kick's own ids, so the same message, deletion or ban
 //! seen by captures on several hosts is kept once, with the earliest
@@ -35,7 +36,7 @@ use {
   },
   ::logger_journal::{
     Entry, ReadError, Reader, Record, Version, archive,
-    layout::{channel_root, kick_root, live_files},
+    layout::{channel_root, live_files},
     record::kick::v0::Body,
   },
   ::rusqlite::{Connection, Transaction, params},
@@ -126,25 +127,27 @@ pub fn open_read_only(
 /// counting up to `at_most`.
 pub fn waiting(
   db: &Connection,
-  journal_root: &Path,
+  journal: &Path,
   at_most: u64,
 ) -> Result<u64, Error> {
+  let dir = Kick::dir(journal);
   let mut files = Vec::new();
-  for slug in channels::journaled(journal_root)? {
-    files.extend(live_files(&channel_root(&kick_root(journal_root), &slug))?);
+  for slug in channels::journaled(&dir)? {
+    files.extend(live_files(&channel_root(&dir, &slug))?);
   }
-  waiting_in(db, journal_root, files, at_most)
+  waiting_in(db, &dir, files, at_most)
 }
 
-/// Indexes everything in every Kick channel's journal, under dgg's journal
-/// root `journal_root`, that isn't indexed yet.
-pub fn index(db: &mut Connection, journal_root: &Path) -> Result<Stats, Error> {
+/// Indexes everything in every Kick channel's journal, in the journal
+/// directory `journal`, that isn't indexed yet.
+pub fn index(db: &mut Connection, journal: &Path) -> Result<Stats, Error> {
+  let dir = Kick::dir(journal);
   let mut stats = Stats::default();
   let mut live = Vec::new();
-  for slug in channels::journaled(journal_root)? {
-    let root = channel_root(&kick_root(journal_root), &slug);
+  for slug in channels::journaled(&dir)? {
+    let root = channel_root(&dir, &slug);
     for file in live_files(&root)? {
-      let path = relative(journal_root, &file);
+      let path = relative(&dir, &file);
       let (offset, _) = checkpoint(db, &path)?;
       live.push(path.clone());
       let reader = match Reader::open(&file, offset) {
@@ -163,7 +166,7 @@ pub fn index(db: &mut Connection, journal_root: &Path) -> Result<Stats, Error> {
     }
     for archive in archive::all(&root)? {
       let file = archive.path(&root);
-      let path = relative(journal_root, &file);
+      let path = relative(&dir, &file);
       let (offset, digest) = checkpoint(db, &path)?;
       let same = digest.as_deref() == Some(archive.sha256.as_str());
       if same && offset >= archive.bytes {
@@ -197,15 +200,16 @@ pub fn index(db: &mut Connection, journal_root: &Path) -> Result<Stats, Error> {
 /// to build for each query.
 pub(crate) fn recent(
   db: Option<&Connection>,
-  journal_root: &Path,
+  journal: &Path,
   slug: &str,
 ) -> Result<Connection, Error> {
   let mut recent = Connection::open_in_memory()?;
   recent.execute_batch(SCHEMA)?;
-  let root = channel_root(&kick_root(journal_root), slug);
+  let dir = Kick::dir(journal);
+  let root = channel_root(&dir, slug);
   let mut stats = Stats::default();
   for file in live_files(&root)? {
-    let path = relative(journal_root, &file);
+    let path = relative(&dir, &file);
     let offset = match db {
       Some(db) => checkpoint(db, &path)?.0,
       None => 0,
@@ -233,9 +237,9 @@ fn forget_gone(db: &mut Connection, live: &[String]) -> Result<(), Error> {
   let transaction = db.transaction()?;
   let stale: Vec<String> = transaction
     .prepare(
-      "SELECT path FROM files WHERE path GLOB 'kick/*/live/*'
+      "SELECT path FROM files WHERE path GLOB '*/live/*'
        UNION
-       SELECT path FROM unparsed WHERE path GLOB 'kick/*/live/*'",
+       SELECT path FROM unparsed WHERE path GLOB '*/live/*'",
     )?
     .query_map([], |row| row.get(0))?
     .collect::<Result<Vec<String>, _>>()?

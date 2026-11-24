@@ -89,36 +89,44 @@ async fn control_endpoints() {
   };
   let code = |response: ::reqwest::Response| response.status().as_u16();
   assert_eq!(
-    code(put("/control/remote", "wrong", body.clone()).await.unwrap()),
+    code(
+      put("/dgg/control/remote", "wrong", body.clone())
+        .await
+        .unwrap()
+    ),
     401
   );
-  let unauthenticated = client.get(url("/control")).send().await.unwrap();
+  let unauthenticated = client.get(url("/dgg/control")).send().await.unwrap();
   assert_eq!(code(unauthenticated), 401);
   // The read token reads, but can't push.
   assert_eq!(
     code(
-      put("/control/remote", "reader", body.clone())
+      put("/dgg/control/remote", "reader", body.clone())
         .await
         .unwrap()
     ),
     403
   );
-  let read = client.get(url("/control")).bearer_auth("reader").send();
+  let read = client.get(url("/dgg/control")).bearer_auth("reader").send();
   assert_eq!(code(read.await.unwrap()), 200);
   assert_eq!(
-    code(put("/control/other", "secret", body.clone()).await.unwrap()),
-    400
-  );
-  assert_eq!(
     code(
-      put("/control/remote", "secret", "junk".into())
+      put("/dgg/control/other", "secret", body.clone())
         .await
         .unwrap()
     ),
     400
   );
   assert_eq!(
-    code(put("/control/remote", "secret", body).await.unwrap()),
+    code(
+      put("/dgg/control/remote", "secret", "junk".into())
+        .await
+        .unwrap()
+    ),
+    400
+  );
+  assert_eq!(
+    code(put("/dgg/control/remote", "secret", body).await.unwrap()),
     204
   );
 
@@ -128,7 +136,7 @@ async fn control_endpoints() {
   assert_eq!(written.len(), 1);
   assert_eq!(written[0].instance, "remote");
   let listed = client
-    .get(url("/control"))
+    .get(url("/dgg/control"))
     .bearer_auth("secret")
     .send()
     .await
@@ -143,7 +151,7 @@ async fn control_endpoints() {
   );
 
   let deleted = client
-    .delete(url("/control/remote"))
+    .delete(url("/dgg/control/remote"))
     .bearer_auth("secret")
     .send()
     .await
@@ -165,7 +173,7 @@ async fn without_a_control_token_nothing_pushes() {
   let body = push_body(&status("remote").encode(), now_ms());
   for token in ["reader", ""] {
     let pushed = client
-      .put(format!("{base}/control/remote"))
+      .put(format!("{base}/dgg/control/remote"))
       .bearer_auth(token)
       .body(body.clone())
       .send()
@@ -195,7 +203,7 @@ async fn serves_a_few_requests_at_once() {
   let client = ::reqwest::Client::new();
   let get = || {
     client
-      .get(format!("{base}/files/live/1970-01-01/a.journal"))
+      .get(format!("{base}/dgg/files/live/1970-01-01/a.journal"))
       .bearer_auth("reader")
       .send()
   };
@@ -251,7 +259,7 @@ async fn serves_over_tls() {
   let (base, ca_cert) = serve_tls(&root, "127.0.0.1").await;
   let manifest = |client: ::reqwest::Client, base: String| async move {
     client
-      .get(format!("{base}/manifest"))
+      .get(format!("{base}/dgg/manifest"))
       .bearer_auth("reader")
       .send()
       .await
@@ -271,7 +279,7 @@ async fn a_certificate_for_another_host_is_refused() {
   let root = TempDir::new("logger-serve");
   let (base, ca_cert) = serve_tls(&root, "192.0.2.1").await;
   let sent = trusting(&ca_cert)
-    .get(format!("{base}/manifest"))
+    .get(format!("{base}/dgg/manifest"))
     .bearer_auth("reader")
     .send()
     .await;

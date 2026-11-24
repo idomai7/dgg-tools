@@ -110,10 +110,10 @@ fn says_each_kind_of_file() {
   );
   assert!(said.starts_with(&format!("build {BUILD}:")), "{said}");
   for line in [
-    "journal: 2 live files, journal dgg.0.3; 1 at another version",
-    "journal: live/2026-11-24/b.journal is journal dgg.0.2",
-    "journal: 2 capture statuses, capture-status dgg.0.2",
-    "backfill: 1 live file, journal dgg.0.3",
+    "dgg: 2 live files, journal dgg.0.3; 1 at another version",
+    "dgg: live/2026-11-24/b.journal is journal dgg.0.2",
+    "dgg: 2 capture statuses, capture-status dgg.0.2",
+    "dgg backfill: 1 live file, journal dgg.0.3",
     "kick someone: 1 live file, journal kick.0.1",
     "index: none yet",
     "Kick's index: none yet",

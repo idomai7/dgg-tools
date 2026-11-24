@@ -1,6 +1,6 @@
 //! The dgg chat logger, and Kick's. The commands in `cli`, run as
 //! `dgg-logger` subcommands, are thin wrappers over these modules: one per
-//! [service](service) (`dgg`, `kick`), and what they share.
+//! [`service`] (`dgg`, `kick`), and what they share.
 
 pub mod capture;
 pub mod cert;

@@ -309,7 +309,7 @@ fn reads_archives_once() {
     .unwrap()
     .map(Result::unwrap)
     .collect();
-  assert_eq!(paths, ["kick/c/archive/1970/01/1970-01-01.journal.zst"]);
+  assert_eq!(paths, ["c/archive/1970/01/1970-01-01.journal.zst"]);
   let again = index(&mut db, &journal(&dir)).unwrap();
   assert_eq!(again.records, 0);
   // Rebuilt from the archive alone, it's the same.

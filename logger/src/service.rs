@@ -2,17 +2,25 @@
 //! its own: [`Dgg`](crate::dgg::Dgg) and [`Kick`](crate::kick::Kick). What
 //! they share is written once, generic over [`Service`], and called for
 //! each in turn, so a new service is a module implementing it.
+//!
+//! A service's journals are in a directory of its own under the journal
+//! directory, as one or more journal roots, each laid out as any (see
+//! [`layout`](::logger_journal::layout)). Paths in a service's manifest, its
+//! routes and its index are relative to its directory.
 
 use {
   crate::index::{Error, Tally},
   ::logger_journal::Variant,
   ::rusqlite::Connection,
-  ::std::path::Path,
+  ::std::{
+    io,
+    path::{Path, PathBuf},
+  },
 };
 
-pub trait Service {
-  /// Its name: in its index's flags (`--rebuild-<name>`), and in what's
-  /// logged about it.
+pub trait Service: 'static {
+  /// Its name: its routes' first segment (`/<name>/...`), its index's
+  /// flag (`--rebuild-<name>`), and how what's logged about it starts.
   const NAME: &'static str;
   /// Its journals' variant.
   const VARIANT: Variant;
@@ -22,22 +30,68 @@ pub trait Service {
   /// What an index round did.
   type Stats: Tally;
 
+  /// Its directory, under the journal directory `journal`.
+  fn dir(journal: &Path) -> PathBuf;
+
+  /// Its journal roots, in its directory `dir`, in order.
+  fn roots(dir: &Path) -> io::Result<Vec<Root>>;
+
+  /// The prefix of the journal root `path`, relative to its directory,
+  /// would be under (see [`Root::prefix`]), and the rest of it; `None` if
+  /// it can't be under any.
+  fn split(path: &str) -> Option<(&str, &str)>;
+
   /// Opens its index at `path`, creating it if needed.
   fn open_index(path: &Path) -> Result<Connection, Error>;
 
-  /// Indexes everything in its journals, under `journal_root`, that isn't
-  /// indexed yet.
-  fn index(
-    db: &mut Connection,
-    journal_root: &Path,
-  ) -> Result<Self::Stats, Error>;
+  /// Indexes everything in its journals, under the journal directory
+  /// `journal`, that isn't indexed yet.
+  fn index(db: &mut Connection, journal: &Path) -> Result<Self::Stats, Error>;
 
   /// How many records in its live files aren't indexed yet, counting up to
   /// `at_most`. Archives aren't counted: a newly archived day is mostly
   /// records already indexed from its live files.
   fn waiting(
     db: &Connection,
-    journal_root: &Path,
+    journal: &Path,
     at_most: u64,
   ) -> Result<u64, Error>;
+}
+
+/// One of a service's journal roots.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Root {
+  /// What it's called in what's logged: the service's name, then which
+  /// root it is, if it has more than one kind.
+  pub name: String,
+  /// How its files' paths, relative to the service's directory, start:
+  /// empty, or a directory's name and `/`.
+  pub prefix: String,
+  /// Its directory: the service's, joined with the prefix.
+  pub dir: PathBuf,
+}
+
+impl Root {
+  /// The root at `prefix` in service `S`'s directory `dir`, called `name`.
+  pub fn new<S: Service>(dir: &Path, prefix: &str, name: &str) -> Self {
+    Self {
+      name: match name {
+        "" => S::NAME.to_owned(),
+        name => format!("{} {name}", S::NAME),
+      },
+      prefix: prefix.to_owned(),
+      dir: match prefix.strip_suffix('/') {
+        Some(directory) => dir.join(directory),
+        None => dir.to_owned(),
+      },
+    }
+  }
+
+  /// The path of `file`, in this root, relative to the service's
+  /// directory, `/`-separated.
+  pub fn path(&self, file: &Path) -> String {
+    let relative = file.strip_prefix(&self.dir).unwrap_or(file);
+    let relative = relative.to_string_lossy().replace('\\', "/");
+    format!("{}{relative}", self.prefix)
+  }
 }

@@ -7,13 +7,21 @@ pub mod gaps;
 pub mod index;
 
 use {
-  crate::{index::Error, service::Service},
+  crate::{
+    index::Error,
+    service::{Root, Service},
+  },
   ::logger_journal::Variant,
   ::rusqlite::Connection,
-  ::std::path::Path,
+  ::std::{
+    io,
+    path::{Path, PathBuf},
+  },
 };
 
-/// dgg, as a [`Service`].
+/// dgg, as a [`Service`]: its journal, and the backfill journal (see
+/// [`backfill_root`](::logger_journal::layout::backfill_root)), at
+/// `backfill/` in it.
 pub struct Dgg;
 
 impl Service for Dgg {
@@ -23,22 +31,37 @@ impl Service for Dgg {
 
   type Stats = index::Stats;
 
+  fn dir(journal: &Path) -> PathBuf {
+    journal.to_owned()
+  }
+
+  fn roots(dir: &Path) -> io::Result<Vec<Root>> {
+    Ok(vec![
+      Root::new::<Self>(dir, "", ""),
+      Root::new::<Self>(dir, "backfill/", "backfill"),
+    ])
+  }
+
+  fn split(path: &str) -> Option<(&str, &str)> {
+    Some(match path.strip_prefix("backfill/") {
+      Some(rest) => ("backfill/", rest),
+      None => ("", path),
+    })
+  }
+
   fn open_index(path: &Path) -> Result<Connection, Error> {
     index::open(path)
   }
 
-  fn index(
-    db: &mut Connection,
-    journal_root: &Path,
-  ) -> Result<index::Stats, Error> {
-    index::index(db, journal_root)
+  fn index(db: &mut Connection, journal: &Path) -> Result<index::Stats, Error> {
+    index::index(db, &Self::dir(journal))
   }
 
   fn waiting(
     db: &Connection,
-    journal_root: &Path,
+    journal: &Path,
     at_most: u64,
   ) -> Result<u64, Error> {
-    index::waiting(db, journal_root, at_most)
+    index::waiting(db, &Self::dir(journal), at_most)
   }
 }

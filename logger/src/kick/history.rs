@@ -67,11 +67,11 @@ struct Happened {
 }
 
 /// The history of `user_id` in channel `slug`, from Kick's index at
-/// `index_path` (if there is one yet) and the journal at `journal_root`, as
-/// JSON (see the [module docs](self)).
+/// `index_path` (if there is one yet) and the journal directory `journal`,
+/// as JSON (see the [module docs](self)).
 pub fn user(
   index_path: &Path,
-  journal_root: &Path,
+  journal: &Path,
   slug: &str,
   user_id: u64,
 ) -> Result<Value, Error> {
@@ -84,7 +84,7 @@ pub fn user(
     .as_ref()
     .map(Connection::unchecked_transaction)
     .transpose()?;
-  let recent = recent(main.as_ref(), journal_root, slug)?;
+  let recent = recent(main.as_ref(), journal, slug)?;
   let dbs: Vec<&Connection> = main.iter().chain([&recent]).collect();
 
   let mut messages: HashMap<String, Said> = HashMap::new();
