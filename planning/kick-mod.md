@@ -191,7 +191,17 @@ Each is a pause for review.
      2. Live chat from the logger's events, per channel: Kick's events
         decoded as now; its connections' opens and closes as the column's
         status; a gap's history pages as `filled`. A dropped stream is
-        retried, and the page told that chat is missing.
+        retried, and the page told that chat is missing. Done 2026-11-25:
+        only with the config's `logger` section, which then also stops
+        kick-mod's own connection and journal.
+        - A stream starts live: a capture's connection opened before it
+          isn't known. A close leaves it down until an open.
+        - Filled messages are those since following started, but those
+          already seen; a page with none isn't shown.
+        - Retried after 1 s, doubling to 30 s; 45 s of silence is a drop. A
+          `400`, `401` or `403` stops the channel: the config needs fixing.
+        - Not yet: the page doesn't show `filled` (step 7's page part), and
+          user history still reads kick-mod's own journal, until 3.
      3. User history from the logger, with the mod log's actions added.
      4. What's left goes: the Centrifugo connection, the journal, gap
         filling and `ids`, which becomes `kick-mod add <slug>`, from the
