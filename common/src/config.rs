@@ -103,8 +103,8 @@ pub fn parse<T: for<'de> Deserialize<'de>>(text: &str) -> Result<T, String> {
 
 /// `text` as JSON: its comments and trailing commas as spaces, a byte for
 /// a byte, and comments' line breaks kept, so errors' lines and columns are
-/// still `text`'s.
-fn as_json(text: &str) -> Zeroizing<String> {
+/// still `text`'s, and a value's place in it is its place in `text`.
+pub fn as_json(text: &str) -> Zeroizing<String> {
   let mut json = without_comments(text);
   let trailing = trailing_commas(&json);
   for at in trailing {
