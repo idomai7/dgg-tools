@@ -3,6 +3,7 @@ use {
   ::logger::{
     dgg::{
       Dgg,
+      channels::DESTINY,
       index::{SCHEMA_VERSION, index, open, waiting},
     },
     index::{Error, Pace, follow, rebuild, user_version},
@@ -27,7 +28,7 @@ fn journal(dir: &TempDir) -> PathBuf {
 
 /// dgg's journal root, in the journal directory.
 fn dgg(dir: &TempDir) -> PathBuf {
-  Dgg::dir(&journal(dir))
+  Dgg::channel_dir(&Dgg::dir(&journal(dir)), DESTINY)
 }
 
 fn database(dir: &TempDir) -> PathBuf {

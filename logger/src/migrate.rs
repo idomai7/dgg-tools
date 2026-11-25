@@ -1,15 +1,20 @@
 //! Migrate: brings the journal and the index up to this build's layout and
 //! formats, in place, as a supervisor starts.
 //!
-//! Every host is on this build's layout and formats (`journal dgg.0.3`,
-//! index schema 0.6), so there's nothing to migrate. It logs what an
-//! upgrade touches, so its log shows how one went:
+//! Every host is on this build's formats (`journal dgg.0.3`, index schema
+//! 0.6), but dgg's journals move into a directory per channel, and its
+//! index to one per channel, while capture keeps running (see
+//! [`crate::dgg::migrate`]). It logs what an upgrade touches, so its log
+//! shows how one went:
 //!
 //! - first, the build, and the versions it writes;
 //! - anything left of the layout from before dgg's journals had a
 //!   directory of their own (see [`OLD_LAYOUT`]), which nothing reads now;
-//! - for each service's journal roots (dgg's, the backfill journal's and
-//!   each Kick channel's), a line for each kind of file in it, with its
+//! - what moved into dgg's channel's directory, and what was left where it
+//!   was;
+//! - for each service's journal roots (each dgg channel's, its backfill
+//!   journal's and each Kick channel's), a line for each kind of file in it,
+//!   with its
 //!   version: live files, archive manifests, `synced-archives` and capture
 //!   statuses. A file at another version, which this build can't read, gets
 //!   a line of its own, and is left as it was;
@@ -27,7 +32,7 @@
 use {
   crate::{
     BUILD, control,
-    dgg::{Dgg, index::SCHEMA_VERSION},
+    dgg::{self, Dgg, index::SCHEMA_VERSION},
     index::schema_version,
     kick::{Kick, index as kick_index},
     service::{Root, Service},
@@ -69,6 +74,10 @@ pub struct Report {
   pub failed: Vec<String>,
   /// What's left of the [old layout](OLD_LAYOUT), which nothing reads now.
   pub old: Vec<PathBuf>,
+  /// Files moved into dgg's channel's directory.
+  pub moved: u64,
+  /// Live files left where they were, still being written.
+  pub left: Vec<PathBuf>,
   /// Each index there is, by its file, and its schema.
   pub indexes: Vec<(String, Version)>,
   /// Files at a version this build can't read, left as they were.
@@ -103,6 +112,10 @@ pub fn migrate(
     old: old_layout(data, say),
     ..Report::default()
   };
+  let moved = dgg::migrate::move_in(data, dry_run, say)?;
+  report.moved = moved.files;
+  report.left = moved.left;
+  report.failed = moved.failed;
   let journal = data.join("journal");
   check_service::<Dgg>(&journal, &mut report, say)?;
   check_service::<Kick>(&journal, &mut report, say)?;

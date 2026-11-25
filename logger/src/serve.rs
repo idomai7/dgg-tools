@@ -4,7 +4,8 @@
 //! from one build to the next until a stable `v1` is decided on. A
 //! channel's are under `/<service>/<api>/channels/<name>/`, so no channel's
 //! name can be mistaken for another route, and its paths are relative to
-//! its directory. A channel without journals here is `404`.
+//! its directory. A channel without journals here is `404`, but to its
+//! capture handoff, which may come first.
 //!
 //! It carries journal sync between hosts, for every service:
 //!
@@ -296,6 +297,15 @@ fn admit(
     .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)
 }
 
+/// The directory of dgg's channel `name`, for its capture handoff: whether
+/// or not it has journals here yet.
+fn control_channel(shared: &Shared, name: &str) -> Result<PathBuf, StatusCode> {
+  if !Dgg::valid_channel(name) {
+    return Err(StatusCode::BAD_REQUEST);
+  }
+  Ok(Dgg::channel_dir(&Dgg::dir(&shared.journal), name))
+}
+
 /// The directory of `S`'s channel `name`, if it's one with journals here.
 fn channel<S: Service>(
   shared: &Shared,
@@ -322,7 +332,7 @@ async fn push(
     Ok(permit) => permit,
     Err(status) => return status,
   };
-  let dir = match channel::<Dgg>(&shared, &name) {
+  let dir = match control_channel(&shared, &name) {
     Ok(dir) => dir,
     Err(status) => return status,
   };
@@ -350,7 +360,7 @@ async fn remove(
     Ok(permit) => permit,
     Err(status) => return status,
   };
-  let dir = match channel::<Dgg>(&shared, &name) {
+  let dir = match control_channel(&shared, &name) {
     Ok(dir) => dir,
     Err(status) => return status,
   };
@@ -372,7 +382,7 @@ async fn list(
   headers: HeaderMap,
 ) -> Result<String, StatusCode> {
   let _permit = admit(&shared, &headers, Access::Read)?;
-  let dir = channel::<Dgg>(&shared, &name)?;
+  let dir = control_channel(&shared, &name)?;
   let statuses = control::read_all(&control::dir(&dir))
     .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
   let mut body = format!("now {}\n\n", now_ms());

@@ -302,9 +302,9 @@ async fn pulls_backfill_files() {
   );
 }
 
-/// dgg's journal root in `root`'s journal directory.
+/// destiny.gg's journal root in `root`'s journal directory.
 fn dgg(root: &TempDir) -> ::std::path::PathBuf {
-  Dgg::dir(root.path())
+  Dgg::channel_dir(&Dgg::dir(root.path()), DESTINY)
 }
 
 /// Compacts 1970-01-01 under journal `root`.
@@ -404,7 +404,8 @@ async fn takes_backfill_archives() {
 
 /// The records of `root`'s archive of 1970-01-01, sorted.
 fn archived_records(root: &::std::path::Path) -> Vec<String> {
-  let path = Dgg::dir(root).join("archive/1970/01/1970-01-01.journal.zst");
+  let path = Dgg::channel_dir(&Dgg::dir(root), DESTINY)
+    .join("archive/1970/01/1970-01-01.journal.zst");
   let bytes = ::zstd::decode_all(fs::File::open(path).unwrap()).unwrap();
   let text = String::from_utf8(bytes).unwrap();
   // The header's a record like the rest.
@@ -607,12 +608,18 @@ async fn lists_each_services_channels() {
     assert_eq!(response.status().as_u16(), 200, "{path}");
     response.text().await.unwrap()
   };
-  assert_eq!(text("/dgg/v0/channels").await, "destiny.gg\n");
+  assert_eq!(text("/dgg/v0/channels").await, "");
+  for name in [DESTINY, "chat.example"] {
+    let dir = Dgg::channel_dir(&Dgg::dir(root.path()), name);
+    let mut writer = Writer::new(dir, "a");
+    writer.write(0, 1, Body::Frame("MSG 1".into())).unwrap();
+  }
+  assert_eq!(text("/dgg/v0/channels").await, "chat.example\ndestiny.gg\n");
   assert_eq!(text("/kick/v0/channels").await, "a\nb\n");
   // Not a channel with journals here, or not a channel's name.
   for (path, expected) in [
     ("/dgg/v0/channels/other.example/manifest", 404),
-    ("/dgg/v0/channels/other.example/control", 404),
+    ("/dgg/v0/channels/live/control", 400),
     ("/dgg/v0/channels/live/manifest", 400),
     ("/kick/v0/channels/c/manifest", 404),
     ("/kick/v0/channels/a.b/manifest", 400),
@@ -726,10 +733,7 @@ async fn pulls_kick_journals() {
     ]
   );
   // Not in dgg's manifest.
-  assert_eq!(
-    manifest::list::<Dgg>(&Dgg::dir(remote.path()), DESTINY).unwrap(),
-    []
-  );
+  assert_eq!(manifest::list::<Dgg>(&dgg(&remote), DESTINY).unwrap(), []);
 
   let stats = sync(&peer, local.path()).await.unwrap();
   assert_eq!((stats.files, stats.updated, stats.installed), (2, 1, 1));

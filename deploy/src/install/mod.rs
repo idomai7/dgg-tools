@@ -56,7 +56,7 @@ use {
   },
   ::logger::{
     control,
-    dgg::{self, Dgg},
+    dgg::{self, Dgg, channels::DESTINY},
     kick::{capture::control_dir, channels},
     service::Service,
   },
@@ -248,13 +248,14 @@ fn exe(dir: &Path, name: &str) -> PathBuf {
 
 /// Waits up to `patience` for a dgg capture started at or after `since`
 /// (unix ms) to be healthy, as its status in the journal directory
-/// `journal` has it; its instance.
+/// `journal` has it (destiny.gg's, the one channel captured for now); its
+/// instance.
 pub fn wait_healthy(
   journal: &Path,
   since: i64,
   patience: Duration,
 ) -> io::Result<Option<String>> {
-  let dir = control::dir(&Dgg::dir(journal));
+  let dir = control::dir(&Dgg::channel_dir(&Dgg::dir(journal), DESTINY));
   wait_healthy_in(&dir, Variant::Dgg, since, patience)
 }
 

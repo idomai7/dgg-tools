@@ -4,13 +4,18 @@ use {
   ::logger::{
     cert,
     control::{self, Status, parse_push, push_body},
-    dgg::Dgg,
+    dgg::{Dgg, channels::DESTINY},
     serve::{self, CONCURRENT, Tokens, router},
     service::Service,
   },
   ::logger_journal::{Writer, record::v0::Body},
   ::rcgen::KeyPair,
 };
+
+/// destiny.gg's directory, in the journal directory `journal`.
+fn destiny(journal: &::std::path::Path) -> ::std::path::PathBuf {
+  Dgg::channel_dir(&Dgg::dir(journal), DESTINY)
+}
 
 fn status(instance: &str) -> Status {
   Status {
@@ -161,7 +166,7 @@ async fn control_endpoints() {
   );
 
   // It's written where local instances look.
-  let control = control::dir(&Dgg::dir(root.path()));
+  let control = control::dir(&destiny(root.path()));
   let written = control::read_all(&control).unwrap();
   assert_eq!(written.len(), 1);
   assert_eq!(written[0].instance, "remote");
@@ -211,7 +216,7 @@ async fn without_a_control_token_nothing_pushes() {
       .unwrap();
     assert!([401, 403].contains(&pushed.status().as_u16()), "{token:?}");
   }
-  let control = control::dir(&Dgg::dir(root.path()));
+  let control = control::dir(&destiny(root.path()));
   assert_eq!(control::read_all(&control).unwrap(), []);
 }
 
@@ -219,7 +224,7 @@ async fn without_a_control_token_nothing_pushes() {
 async fn serves_a_few_requests_at_once() {
   let root = TempDir::new("logger-serve");
   // Big enough that sending it stalls until it's read.
-  let mut writer = Writer::new(Dgg::dir(root.path()), "a");
+  let mut writer = Writer::new(destiny(root.path()), "a");
   let frame = "x".repeat(1 << 20);
   for _ in 0..64 {
     writer.write(0, 1, Body::Frame(frame.clone())).unwrap();
@@ -292,7 +297,7 @@ async fn serves_over_tls() {
   let (base, ca_cert) = serve_tls(&root, "127.0.0.1").await;
   let manifest = |client: ::reqwest::Client, base: String| async move {
     client
-      .get(format!("{base}/dgg/v0/channels/destiny.gg/manifest"))
+      .get(format!("{base}/dgg/v0/channels"))
       .bearer_auth("reader")
       .send()
       .await

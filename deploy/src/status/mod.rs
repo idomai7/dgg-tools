@@ -526,18 +526,24 @@ fn last_round(log: &[String], name: &str) -> Option<String> {
   })
 }
 
-/// dgg's journal roots, in the journal directory `journal`: its own, and
-/// the backfill journal's.
-fn dgg_roots(journal: &Path) -> io::Result<[Root; 2]> {
-  Dgg::roots(&Dgg::dir(journal))?
-    .try_into()
-    .map_err(|_| io::Error::other("dgg has two journal roots"))
+/// destiny.gg's directory, in the journal directory `journal`: the one dgg
+/// channel captured for now.
+fn destiny(journal: &Path) -> PathBuf {
+  Dgg::channel_dir(&Dgg::dir(journal), DESTINY)
 }
 
-/// dgg's captures, from their statuses in dgg's control directory.
+/// destiny.gg's journal roots, in the journal directory `journal`: its own,
+/// and the backfill journal's.
+fn dgg_roots(journal: &Path) -> io::Result<[Root; 2]> {
+  Dgg::channel_roots(&destiny(journal), DESTINY)
+    .try_into()
+    .map_err(|_| io::Error::other("a dgg channel has two journal roots"))
+}
+
+/// dgg's captures, from their statuses in destiny.gg's control directory.
 fn captures(journal: &Path, now: i64) -> io::Result<Vec<Capture>> {
   let mut captures: Vec<Capture> =
-    control::read_all(&control::dir(&Dgg::dir(journal)))?
+    control::read_all(&control::dir(&destiny(journal)))?
       .into_iter()
       .map(|status| capture(status, now))
       .collect();

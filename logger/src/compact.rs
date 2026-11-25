@@ -231,7 +231,7 @@ pub(crate) fn busy_file(dir: &Path, path: &Path) -> io::Result<bool> {
 /// still open, in journal root `dir`: its instance holds its live lock
 /// there, or has a status there written no longer ago at `now` (unix ms)
 /// than a capture's status goes stale.
-fn captured(dir: &Path, path: &Path, now: i64) -> io::Result<bool> {
+pub(crate) fn captured(dir: &Path, path: &Path, now: i64) -> io::Result<bool> {
   let stale_after = Handoff::default().stale_after.as_millis() as i64;
   held_by(path, |instance| {
     if capturing(dir, instance)? {

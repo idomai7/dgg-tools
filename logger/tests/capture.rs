@@ -8,6 +8,7 @@ use {
     dgg::{
       Dgg,
       capture::{Config, run},
+      channels::DESTINY,
     },
     service::Service,
   },
@@ -20,6 +21,11 @@ use {
   ::tokio::{net::TcpListener, sync::oneshot},
   ::tokio_tungstenite::tungstenite::Message,
 };
+
+/// destiny.gg's directory, in the journal directory `journal`.
+fn destiny(journal: &::std::path::Path) -> ::std::path::PathBuf {
+  Dgg::channel_dir(&Dgg::dir(journal), DESTINY)
+}
 
 /// A chat server where every connection gets HISTORY, then a MSG every
 /// 10 ms, so instances become healthy at once.
@@ -98,6 +104,7 @@ async fn journals_connections_and_shutdown() {
     started: 1,
     handoff: Handoff::default(),
     peer: None,
+    old_control: None,
     bridge: false,
   };
   assert_eq!(run(config, shutdown).await.unwrap(), Exit::Shutdown);
@@ -171,6 +178,7 @@ async fn hands_off_to_a_newer_instance() {
     started,
     handoff: quick_handoff(),
     peer: None,
+    old_control: None,
     bridge: false,
   };
 
@@ -200,6 +208,64 @@ async fn hands_off_to_a_newer_instance() {
   assert_eq!(control::read_all(&control).unwrap(), []);
 }
 
+/// A capture from before dgg's journals were by channel, writing `dgg/`,
+/// hands off to one writing destiny.gg's, `dgg/destiny.gg/`, which writes
+/// its status in the old `control/` too while it's there, and not once it's
+/// gone.
+#[::tokio::test]
+async fn hands_off_from_before_channels() {
+  let (url, server) = chat_server().await;
+  let root = TempDir::new("logger-capture");
+  let dir = Dgg::dir(root.path());
+  let old_control = control::dir(&dir);
+  let config = |journal_root, instance: &str, started, old_control| Config {
+    chat: Options {
+      url: url.clone(),
+      origin: None,
+      ..Options::default()
+    },
+    journal_root,
+    instance: instance.into(),
+    started,
+    handoff: quick_handoff(),
+    peer: None,
+    old_control,
+    bridge: false,
+  };
+
+  let old = config(dir.clone(), "old", 1, None);
+  let old = ::tokio::spawn(run(old, ::std::future::pending()));
+  ::tokio::time::sleep(Duration::from_millis(300)).await;
+  let (stop, stopped) = oneshot::channel::<()>();
+  let new = config(destiny(root.path()), "new", 2, Some(old_control.clone()));
+  let new = ::tokio::spawn(run(new, async {
+    let _ = stopped.await;
+  }));
+  let old_exit = ::tokio::time::timeout(Duration::from_secs(5), old)
+    .await
+    .expect("old instance didn't retire")
+    .unwrap()
+    .unwrap();
+  assert_eq!(old_exit, Exit::HandedOff("new".into()));
+  // Its copy stops once the old directory's gone.
+  let copy = control::path(&old_control, "new");
+  assert!(copy.exists());
+  ::std::fs::remove_dir_all(&old_control).unwrap();
+  ::tokio::time::sleep(Duration::from_millis(100)).await;
+  assert!(!old_control.exists());
+  stop.send(()).unwrap();
+  assert_eq!(new.await.unwrap().unwrap(), Exit::Shutdown);
+  server.abort();
+
+  assert_eq!(
+    bodies(&dir, "old").last(),
+    Some(&Body::Close(format!("{HANDOFF}new")))
+  );
+  assert!(bodies(&dir, "new").is_empty());
+  let new = bodies(&destiny(root.path()), "new");
+  assert_eq!(new.last(), Some(&Body::Close(SHUTDOWN.into())));
+}
+
 /// Cross-host handoff: the old instance's host runs `serve`; the new
 /// instance, on another host (here, another data directory), pushes its
 /// status there, and the old one retires as if it were local.
@@ -227,11 +293,12 @@ async fn hands_off_to_an_instance_on_another_host() {
       origin: None,
       ..Options::default()
     },
-    journal_root: Dgg::dir(root.path()),
+    journal_root: destiny(root.path()),
     instance: instance.into(),
     started,
     handoff: quick_handoff(),
     peer,
+    old_control: None,
     bridge: false,
   };
   let old = config(&old_host, "old", 1, None);
@@ -259,10 +326,10 @@ async fn hands_off_to_an_instance_on_another_host() {
   server.abort();
   serving.abort();
 
-  let old_bodies = bodies(&Dgg::dir(old_host.path()), "old");
+  let old_bodies = bodies(&destiny(old_host.path()), "old");
   let handoff = Body::Close(format!("{HANDOFF}new"));
   assert_eq!(old_bodies.last(), Some(&handoff));
   // The new instance withdrew its status from the old host on exit.
-  let control = control::dir(&Dgg::dir(old_host.path()));
+  let control = control::dir(&destiny(old_host.path()));
   assert_eq!(control::read_all(&control).unwrap(), []);
 }

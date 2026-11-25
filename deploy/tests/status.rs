@@ -34,7 +34,7 @@ fn reports_captures_and_the_journal() {
   let dir = TempDir::new("deploy-status-report");
   let now = now_ms();
   let today = utc_day(now);
-  let control = "data/journal/dgg/control";
+  let control = "data/journal/dgg/destiny.gg/control";
   dir.write(
     format!("{control}/a-1.status"),
     status("a-1", now - 3_600_000, now - 500, Some(now - 3_500_000)),
@@ -49,18 +49,24 @@ fn reports_captures_and_the_journal() {
   );
   // Two frames, a connection opening, and a frame still being written.
   dir.write(
-    format!("data/journal/dgg/live/{today}/a-3.journal"),
+    format!("data/journal/dgg/destiny.gg/live/{today}/a-3.journal"),
     "journal dgg.0.3\u{1e}\n1 a-3 1 open wss://x\u{1e}\n2 a-3 1 frame MSG {}\u{1e}\n\
      3 a-3 1 frame NAMES {}\u{1e}\n4 a-3 1 frame JO",
   );
   dir.write(
-    format!("data/journal/dgg/live/{today}/a-1.journal"),
+    format!("data/journal/dgg/destiny.gg/live/{today}/a-1.journal"),
     "0123456789",
   );
-  dir.write("data/journal/dgg/live/2026-01-02/a-1.journal", "01234");
-  dir.write("data/journal/dgg/backfill/live/2026-01-01/b.journal", "012");
   dir.write(
-    "data/journal/dgg/archive/2026/01/manifest",
+    "data/journal/dgg/destiny.gg/live/2026-01-02/a-1.journal",
+    "01234",
+  );
+  dir.write(
+    "data/journal/dgg/destiny.gg/backfill/live/2026-01-01/b.journal",
+    "012",
+  );
+  dir.write(
+    "data/journal/dgg/destiny.gg/archive/2026/01/manifest",
     format!(
       "journal-archive dgg.0.2\u{1e}\n2026-01-01 100 1000 10 {0}\u{1e}\n\
        2026-01-03 50 500 5 {0}\u{1e}\n",
@@ -121,12 +127,12 @@ fn reports_captures_and_the_journal() {
 
   // A second look sees today's growth.
   dir.write(
-    format!("data/journal/dgg/live/{today}/a-1.journal"),
+    format!("data/journal/dgg/destiny.gg/live/{today}/a-1.journal"),
     "0".repeat(5000),
   );
   // The frame being written was finished, and the connection closed.
   dir.write(
-    format!("data/journal/dgg/live/{today}/a-3.journal"),
+    format!("data/journal/dgg/destiny.gg/live/{today}/a-3.journal"),
     "journal dgg.0.3\u{1e}\n1 a-3 1 open wss://x\u{1e}\n2 a-3 1 frame MSG {}\u{1e}\n\
      3 a-3 1 frame NAMES {}\u{1e}\n4 a-3 1 frame JOIN {}\u{1e}\n5 a-3 1 close bye\u{1e}\n",
   );
@@ -158,7 +164,7 @@ fn draws_the_watch_screen() {
   let dir = TempDir::new("deploy-status-watch");
   let now = now_ms();
   dir.write(
-    "data/journal/dgg/control/a-1.status",
+    "data/journal/dgg/destiny.gg/control/a-1.status",
     status("a-1", now - 60_000, now, Some(now - 50_000)),
   );
   let mut report = Watcher::new()
@@ -226,7 +232,7 @@ fn scrolls_and_minimizes_the_watch_boxes() {
   let now = now_ms();
   for n in 0..10 {
     dir.write(
-      format!("data/journal/dgg/control/c-{n}.status"),
+      format!("data/journal/dgg/destiny.gg/control/c-{n}.status"),
       status(&format!("c-{n}"), now - 10_000 + n, now, Some(now - 5000)),
     );
   }
@@ -399,9 +405,9 @@ fn tails_a_captures_frames() {
     at + 9,
     at + 10
   );
-  dir.write("journal/dgg/live/2026-11-09/a-1.journal", &text);
+  dir.write("journal/dgg/destiny.gg/live/2026-11-09/a-1.journal", &text);
   dir.write(
-    "journal/dgg/live/2026-11-09/a-2.journal",
+    "journal/dgg/destiny.gg/live/2026-11-09/a-2.journal",
     "journal dgg.0.3\u{1e}\n",
   );
   assert_eq!(
@@ -418,7 +424,7 @@ fn tails_a_captures_frames() {
   );
   // A newer day's file is the one shown.
   dir.write(
-    "journal/dgg/live/2026-11-10/a-1.journal",
+    "journal/dgg/destiny.gg/live/2026-11-10/a-1.journal",
     format!(
       "journal dgg.0.3\u{1e}\n{} a-1 2 frame PING {{}}\u{1e}\n",
       at + 86_400_000
@@ -458,13 +464,16 @@ fn reports_gaps_without_writing_the_index() {
   assert_eq!(gaps(&index), Err("no index yet".into()));
   // Connected 1 s to 2 s, then again from 5 s: one 3 s gap, not filled.
   dir.write(
-    "journal/dgg/live/1970-01-01/a.journal",
+    "journal/dgg/destiny.gg/live/1970-01-01/a.journal",
     "journal dgg.0.3\u{1e}\n1000 a 1 open wss://x\u{1e}\n2000 a 1 close reset\u{1e}\n\
      5000 a 2 open wss://x\u{1e}\n6000 a 2 close shutdown\u{1e}\n",
   );
   let mut db = ::logger::dgg::index::open(&index).unwrap();
-  ::logger::dgg::index::index(&mut db, &dir.path().join("journal/dgg"))
-    .unwrap();
+  ::logger::dgg::index::index(
+    &mut db,
+    &dir.path().join("journal/dgg/destiny.gg"),
+  )
+  .unwrap();
   drop(db);
   let (summary, lines) = gaps(&index).unwrap().unwrap();
   assert!(summary.ends_with("1 gaps, 3.0s in all; 1 not filled, 3.0s"));
@@ -593,7 +602,10 @@ fn says_what_a_capture_listens_to() {
     build: None,
     listening: Some("wss://chat.example/ws".into()),
   };
-  dir.write("data/journal/dgg/control/a-1.status", status.encode());
+  dir.write(
+    "data/journal/dgg/destiny.gg/control/a-1.status",
+    status.encode(),
+  );
   let paths = Paths::under(dir.to_path_buf());
   let report = Watcher::new().unwrap().gather(&paths).unwrap();
   // From its status, with no live file to say.
@@ -609,7 +621,7 @@ fn puts_the_busiest_captures_first() {
   let today = utc_day(now);
   for instance in ["a-1", "a-2"] {
     dir.write(
-      format!("data/journal/dgg/control/{instance}.status"),
+      format!("data/journal/dgg/destiny.gg/control/{instance}.status"),
       status(instance, now - 1000, now, Some(now - 1000)),
     );
   }
@@ -625,7 +637,7 @@ fn puts_the_busiest_captures_first() {
   assert_eq!(report.captures[0].per_minute, None);
 
   dir.write(
-    format!("data/journal/dgg/live/{today}/a-2.journal"),
+    format!("data/journal/dgg/destiny.gg/live/{today}/a-2.journal"),
     "journal dgg.0.3\u{1e}\n1 a-2 1 frame MSG {}\u{1e}\n\
      2 a-2 1 frame MSG {}\u{1e}\n",
   );

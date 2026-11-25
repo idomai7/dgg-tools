@@ -29,6 +29,11 @@ pub struct Config {
   /// Another host to push this instance's status to, so instances there
   /// hand off to this one.
   pub peer: Option<Peer>,
+  /// The control directory dgg's captures used before dgg's journals were
+  /// by channel, `dgg/control/`: this instance's status is written there
+  /// too while it's there, so a capture from before hands off to it (see
+  /// [`migrate`](super::migrate)).
+  pub old_control: Option<PathBuf>,
   /// Whether this is a bridge, for its log lines (see [`Say`]).
   pub bridge: bool,
 }
@@ -72,6 +77,7 @@ pub async fn run(
     started,
     handoff,
     peer,
+    mut old_control,
     bridge,
   } = config;
   let say = Say {
@@ -137,6 +143,9 @@ pub async fn run(
         // Control files are advisory: a failed round (e.g. Windows refusing
         // a rename while another instance reads the file) is retried next
         // tick rather than stopping capture.
+        if let Err(e) = mirror(&mut old_control, &me) {
+          say.warn(format_args!("control: {e}"));
+        }
         match check_handoff(&control, &me, &handoff, &mut older) {
           Ok((successor, gone)) => {
             for line in gone {
@@ -160,8 +169,10 @@ pub async fn run(
     writer.write(now_ms(), connection, Body::Close(reason))?;
   }
   writer.sync()?;
-  if let Err(e) = control::remove(&control, &instance) {
-    say.warn(format_args!("control: {e}"));
+  for dir in [Some(&control), old_control.as_ref()].into_iter().flatten() {
+    if let Err(e) = control::remove(dir, &instance) {
+      say.warn(format_args!("control: {e}"));
+    }
   }
   if let (Some(pusher), Some(peer)) = (pusher, peer) {
     pusher.abort();
@@ -247,6 +258,17 @@ async fn withdraw_status(peer: &Peer, say: &Say) {
   if let Err(e) = sent {
     say.warn(format_args!("peer {}: {e}", peer.url));
   }
+}
+
+/// Writes `me` in `old_control` too, while it's there; once it's gone,
+/// stops.
+fn mirror(old_control: &mut Option<PathBuf>, me: &Status) -> io::Result<()> {
+  if let Some(dir) = old_control
+    && !control::write_if_there(dir, me)?
+  {
+    *old_control = None;
+  }
+  Ok(())
 }
 
 /// Writes this instance's status, then returns the successor to hand off

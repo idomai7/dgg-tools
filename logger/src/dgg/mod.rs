@@ -6,24 +6,26 @@ pub mod capture;
 pub mod channels;
 pub mod gaps;
 pub mod index;
+pub mod migrate;
 
 use {
   crate::{
     index::Error,
     service::{Indexed, Root, Service},
   },
+  ::common::fs::MissingOk,
   ::logger_journal::Variant,
   ::rusqlite::Connection,
   ::std::{
-    io,
+    fs, io,
     path::{Path, PathBuf},
   },
 };
 
-/// dgg, as a [`Service`]: its journal, in `dgg/`, and the backfill journal
-/// (see [`backfill_root`](::logger_journal::layout::backfill_root)), at
-/// `backfill/` in it. They're one channel's, [`channels::DESTINY`]'s, and
-/// `dgg/` is its directory; any other channel's would be in `dgg/<name>/`.
+/// dgg, as a [`Service`]: a directory per channel in `dgg/`, `dgg/<name>/`
+/// (see [`channels::valid_name`]), holding its journal and its backfill
+/// journal (see [`backfill_root`](::logger_journal::layout::backfill_root)),
+/// at `backfill/` in it.
 pub struct Dgg;
 
 impl Service for Dgg {
@@ -37,29 +39,55 @@ impl Service for Dgg {
     journal.join(Self::NAME)
   }
 
+  /// Every channel's, each channel's journal then its backfill journal.
   fn roots(dir: &Path) -> io::Result<Vec<Root>> {
-    Ok(Self::channel_roots(dir, channels::DESTINY))
+    let mut roots = Vec::new();
+    for name in Self::channels(dir)? {
+      let channel = Self::channel_dir(dir, &name);
+      for root in Self::channel_roots(&channel, &name) {
+        roots.push(Root {
+          prefix: format!("{name}/{}", root.prefix),
+          ..root
+        });
+      }
+    }
+    Ok(roots)
   }
 
   fn valid_channel(name: &str) -> bool {
     channels::valid_name(name)
   }
 
-  fn channels(_: &Path) -> io::Result<Vec<String>> {
-    Ok(vec![channels::DESTINY.into()])
+  /// Every directory in `dir` named by a [`channels::valid_name`], whether
+  /// or not the list still has it.
+  fn channels(dir: &Path) -> io::Result<Vec<String>> {
+    let mut names = Vec::new();
+    let Some(entries) = fs::read_dir(dir).missing_ok()? else {
+      return Ok(names);
+    };
+    for entry in entries {
+      let entry = entry?;
+      let name = entry.file_name().to_string_lossy().into_owned();
+      if entry.file_type()?.is_dir() && channels::valid_name(&name) {
+        names.push(name);
+      }
+    }
+    names.sort();
+    Ok(names)
   }
 
   fn channel_dir(dir: &Path, name: &str) -> PathBuf {
-    match name {
-      channels::DESTINY => dir.to_owned(),
-      name => dir.join(name),
-    }
+    dir.join(name)
   }
 
-  fn channel_roots(dir: &Path, _: &str) -> Vec<Root> {
+  fn channel_roots(dir: &Path, name: &str) -> Vec<Root> {
+    let backfill = match name {
+      "" => "backfill".to_owned(),
+      name => format!("{name} backfill"),
+    };
     vec![
-      Root::new::<Self>(dir, "", ""),
-      Root::new::<Self>(dir, "backfill/", "backfill"),
+      Root::new::<Self>(dir, "", name),
+      Root::new::<Self>(dir, "backfill/", &backfill),
     ]
   }
 

@@ -4,9 +4,11 @@ use {
   super::ConfigFrom,
   crate::{
     capture::{Exit, Handoff, Peer, Say, instance_id},
+    control,
     dgg::{
       Dgg,
       capture::{Config, run},
+      channels::DESTINY,
     },
     service::Service,
   },
@@ -83,8 +85,9 @@ impl Capture {
     if self.no_origin {
       chat.origin = None;
     }
-    let journal = data.join("journal");
-    let journal_root = Dgg::dir(&journal);
+    let dir = Dgg::dir(&data.join("journal"));
+    // destiny.gg's, the one channel captured for now.
+    let journal_root = Dgg::channel_dir(&dir, DESTINY);
     let say = Say {
       instance: instance.clone(),
       bridge: self.bridge,
@@ -133,6 +136,7 @@ impl Capture {
         ..Handoff::default()
       },
       peer,
+      old_control: Some(control::dir(&dir)),
       bridge: self.bridge,
     };
     match run(config, shutdown()).await {

@@ -3,6 +3,7 @@ use {
   ::logger::{
     dgg::{
       Dgg,
+      channels::DESTINY,
       gaps::{Gap, coverage, unfetched},
       index::{index, open},
     },
@@ -10,6 +11,11 @@ use {
   },
   ::logger_journal::{Writer, record::v0::Body},
 };
+
+/// destiny.gg's directory, in the journal directory `journal`.
+fn destiny(journal: &::std::path::Path) -> ::std::path::PathBuf {
+  Dgg::channel_dir(&Dgg::dir(journal), DESTINY)
+}
 
 fn history(timestamps: &[i64]) -> Body {
   let entries: Vec<_> = timestamps
@@ -34,7 +40,7 @@ fn finds_gaps_and_coverage() {
 
   // a#1: 1000..2000, closed. a#2: 2500..3000, never closed (crashed); its
   // HISTORY reaches back to 1500, before the 2000..2500 gap.
-  let mut a = Writer::new(Dgg::dir(&journal), "a");
+  let mut a = Writer::new(destiny(&journal), "a");
   a.write(1000, 1, open_url()).unwrap();
   a.write(2000, 1, Body::Close("reset".into())).unwrap();
   a.write(2500, 2, open_url()).unwrap();
@@ -42,19 +48,19 @@ fn finds_gaps_and_coverage() {
   a.write(3000, 2, Body::Frame("JOIN {}".into())).unwrap();
   drop(a);
   // c overlaps a#1 entirely, so adds no gap.
-  let mut c = Writer::new(Dgg::dir(&journal), "c");
+  let mut c = Writer::new(destiny(&journal), "c");
   c.write(1200, 1, open_url()).unwrap();
   c.write(1800, 1, Body::Close("shutdown".into())).unwrap();
   drop(c);
   // b resumes after the 3000..3500 gap, but its HISTORY only reaches 3200.
-  let mut b = Writer::new(Dgg::dir(&journal), "b");
+  let mut b = Writer::new(destiny(&journal), "b");
   b.write(3500, 1, open_url()).unwrap();
   b.write(3501, 1, history(&[3200, 3400])).unwrap();
   b.write(4000, 1, Body::Close("shutdown".into())).unwrap();
   drop(b);
 
   let mut db = open(&root.path().join("index.sqlite")).unwrap();
-  index(&mut db, &Dgg::dir(&journal)).unwrap();
+  index(&mut db, &destiny(&journal)).unwrap();
   let coverage = coverage(&db).unwrap().unwrap();
   assert_eq!((coverage.first, coverage.last), (1000, 4000));
   assert_eq!(
@@ -107,7 +113,7 @@ fn no_connections_no_coverage() {
 fn fetched_spans_fill_gaps() {
   let root = TempDir::new("logger-gaps");
   let journal = root.path().join("journal");
-  let mut a = Writer::new(Dgg::dir(&journal), "a");
+  let mut a = Writer::new(destiny(&journal), "a");
   a.write(1000, 1, Body::Open("wss://x".into())).unwrap();
   a.write(2000, 1, Body::Close("reset".into())).unwrap();
   a.write(5000, 2, Body::Open("wss://x".into())).unwrap();
@@ -116,8 +122,7 @@ fn fetched_spans_fill_gaps() {
   drop(a);
   // Two touching spans cover 2000..5000; 6000..8000 is only half fetched.
   // Read from the backfill directory.
-  let mut backfill =
-    Writer::backfill(Dgg::dir(&journal), "backfill-x").unwrap();
+  let mut backfill = Writer::backfill(destiny(&journal), "backfill-x").unwrap();
   for (from, to) in [(1900, 3000), (3000, 5100), (7000, 8100)] {
     let range = Body::FetchRange {
       source: "rustlesearch".into(),
@@ -129,7 +134,7 @@ fn fetched_spans_fill_gaps() {
   drop(backfill);
 
   let mut db = open(&root.path().join("index.sqlite")).unwrap();
-  index(&mut db, &Dgg::dir(&journal)).unwrap();
+  index(&mut db, &destiny(&journal)).unwrap();
   let gaps = coverage(&db).unwrap().unwrap().gaps;
   let summary: Vec<_> = gaps
     .iter()
@@ -145,8 +150,7 @@ fn fetched_spans_fill_gaps() {
 fn unfetched_ranges_resume_a_history_import() {
   let root = TempDir::new("logger-gaps");
   let journal = root.path().join("journal");
-  let mut backfill =
-    Writer::backfill(Dgg::dir(&journal), "backfill-x").unwrap();
+  let mut backfill = Writer::backfill(destiny(&journal), "backfill-x").unwrap();
   let spans = [
     ("linkers", 2000, 3000),
     ("linkers", 3000, 4000),
@@ -164,7 +168,7 @@ fn unfetched_ranges_resume_a_history_import() {
   drop(backfill);
 
   let mut db = open(&root.path().join("index.sqlite")).unwrap();
-  index(&mut db, &Dgg::dir(&journal)).unwrap();
+  index(&mut db, &destiny(&journal)).unwrap();
   // Only this source's spans count; what's left comes newest first.
   assert_eq!(
     unfetched(&db, "linkers", 1000, 8000).unwrap(),

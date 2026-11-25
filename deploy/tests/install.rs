@@ -73,7 +73,7 @@ fn prunes_old_builds() {
 #[test]
 fn waits_for_a_new_healthy_capture() {
   let dir = TempDir::new("deploy-install-healthy");
-  let control = dir.path().join("dgg").join("control");
+  let control = dir.path().join("dgg/destiny.gg/control");
   fs::create_dir_all(&control).unwrap();
   let now = now_ms();
   let write = |instance: &str, started: i64, healthy: bool| {
