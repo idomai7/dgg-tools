@@ -1,12 +1,19 @@
 //! The supervisor: keeps the logger's programs running against one data
 //! directory.
 //!
-//! - `dgg-logger dgg-capture` is restarted after it fails. When it exits cleanly it has
-//!   handed off to a newer instance, so the supervisor stops everything and
-//!   exits too: starting a newer supervisor is how an upgrade happens.
+//! - A `dgg-logger dgg-capture` runs for each dgg channel in its list (with
+//!   none, destiny.gg's alone), each on its own, so one failing leaves the
+//!   others; the list is read every `check_every` to start the added. Each
+//!   is restarted after it fails. When one exits cleanly it has handed off
+//!   to a newer instance, so the supervisor stops everything and exits too:
+//!   starting a newer supervisor is how an upgrade happens. The other
+//!   captures, dgg's and Kick's, are given `handoff_wait` to hand off too
+//!   (an upgrade's new ones are starting alongside) before they're
+//!   stopped. One whose channel was removed from the list (exiting
+//!   [`REMOVED_EXIT`]) ends alone.
 //! - `dgg-logger migrate` runs once, at start, alongside capture: it brings
-//!   the journal and the index up to this build's formats, and does nothing
-//!   once they are (for now, there's nothing to migrate). It waits for the locks below, so it runs
+//!   the journal and the index up to this build's layout and formats, and
+//!   does nothing once they are. It waits for the locks below, so it runs
 //!   once an older supervisor has exited. Only once it has succeeded do
 //!   index, compact and sync start; if it fails, they wait for the next
 //!   start.
@@ -27,26 +34,22 @@
 //!   key on its stdin. Only one supervisor runs it at a time (`serve.lock`),
 //!   so during a handoff the new one waits for the old one's port.
 //! - Given the Kick channel list, a `dgg-logger kick-capture` runs for each
-//!   channel in it, each on its own, so one failing leaves the others; the
-//!   list is read every `kick_check_every` to start the added. Each is
-//!   restarted after it fails. A clean exit (a handoff to a newer instance,
-//!   or its channel removed) ends one alone. When dgg's capture hands off,
-//!   Kick's are given `kick_handoff_wait` to hand off too (an upgrade's new
-//!   ones are starting alongside) before they're stopped.
+//!   channel in it, as dgg's do, but a clean exit (a handoff to a newer
+//!   instance, or its channel removed) ends one alone.
+//! - The captures' first starts are `stagger` apart, dgg's first, so an
+//!   upgrade's handoffs, which follow each start, are spread out too:
+//!   dgg's and Kick's servers don't see every channel reconnect at once.
 //!
 //! Each program's stdout and stderr go, line by line, to `<name>.log` in the
-//! logs directory, each Kick channel's capture to its own (see
-//! [`kick_capture_log`]); the supervisor's own lines to `supervisor.log`. Restarts
-//! wait `first`, doubling up to `max`, back to `first` once a run has lasted
-//! `reset_after`.
+//! logs directory, each channel's capture to its own (see
+//! [`dgg_capture_log`] and [`kick_capture_log`]); the supervisor's own lines
+//! to `supervisor.log`. Restarts wait `first`, doubling up to `max`, back to
+//! `first` once a run has lasted `reset_after`.
 
 use {
   crate::{lifeline::Lifeline, log::Log, peer},
   ::common::{config::Secret, log::Level},
-  ::logger::{
-    dgg::{self, channels::DESTINY},
-    kick::channels,
-  },
+  ::logger::{capture::REMOVED_EXIT, dgg, kick::channels},
   ::std::{
     collections::HashSet,
     ffi::OsString,
@@ -125,8 +128,13 @@ pub struct Config {
   pub kick_capture: Program,
   /// The Kick channel list, if Kick is captured.
   pub kick_channels: Option<PathBuf>,
-  pub kick_check_every: Duration,
-  pub kick_handoff_wait: Duration,
+  /// How often the channel lists are read, to start the added.
+  pub check_every: Duration,
+  /// How long the other captures are given to hand off, once one of dgg's
+  /// has.
+  pub handoff_wait: Duration,
+  /// How far apart the captures' first starts are.
+  pub stagger: Duration,
   /// Holds `index.lock`, `compact.lock` and `sync.lock`.
   pub lock_dir: PathBuf,
   pub logs: PathBuf,
@@ -159,8 +167,9 @@ impl Config {
       peers: None,
       kick_capture: command(&["kick-capture"]),
       kick_channels: None,
-      kick_check_every: Duration::from_secs(60),
-      kick_handoff_wait: Duration::from_secs(90),
+      check_every: Duration::from_secs(60),
+      handoff_wait: Duration::from_secs(90),
+      stagger: STAGGER,
       lock_dir: data.to_owned(),
       logs: logs.to_owned(),
       compact_first: Duration::from_secs(60),
@@ -173,6 +182,10 @@ impl Config {
     }
   }
 }
+
+/// How far apart the captures' first starts are, by default: enough that
+/// each has connected, and so its handoff begun, before the next starts.
+pub const STAGGER: Duration = Duration::from_secs(5);
 
 /// The dgg channel list of the install whose root is `root`: none without
 /// one.
@@ -242,12 +255,7 @@ pub fn run(config: &Config, stop: &Stop) -> io::Result<Exit> {
     Ok(Arc::new(Mutex::new(log)))
   };
   let supervisor = open("supervisor")?;
-  let logs = [
-    open("dgg-capture")?,
-    open("migrate")?,
-    open("index")?,
-    open("compact")?,
-  ];
+  let logs = [open("migrate")?, open("index")?, open("compact")?];
   let sync_log = match &config.peers {
     Some(_) => Some(open("sync")?),
     None => None,
@@ -277,7 +285,7 @@ pub fn run(config: &Config, stop: &Stop) -> io::Result<Exit> {
     ),
   );
 
-  // Stops the programs: on request, or once capture hands off.
+  // Stops the programs: on request, or once a dgg capture hands off.
   let programs = Stop::new();
   let lifeline = Lifeline::new()?;
   let context = Context {
@@ -286,40 +294,88 @@ pub fn run(config: &Config, stop: &Stop) -> io::Result<Exit> {
     lifeline: &lifeline,
   };
   let handed_off = AtomicBool::new(false);
-  // Kick's capture is stopped apart, to let it hand off on its own.
-  let kick = Stop::new();
-  let kick_context = Context {
+  // The captures are stopped apart, to let them hand off on their own.
+  let captures = Stop::new();
+  let capture_context = Context {
     supervisor: &supervisor,
-    stop: &kick,
+    stop: &captures,
     lifeline: &lifeline,
   };
   // How many are running, to wait only for those.
-  let kick_running = AtomicUsize::new(0);
+  let running = AtomicUsize::new(0);
+  let stagger = Stagger::new(config.stagger);
+  let at = &Shared {
+    config,
+    running: &running,
+    stagger: &stagger,
+    context: &capture_context,
+  };
   // References, so the threads started from the migration's can take them.
   let (context, programs, sync_log, serve_log, supervisor) =
     (&context, &programs, &sync_log, &serve_log, &supervisor);
+  let handed_off = &handed_off;
+  // dgg's captures start first.
+  let dgg_looked = &Stop::new();
   thread::scope(|scope| {
+    scope.spawn(move || {
+      let list = config.dgg_channels.as_deref();
+      let listed = || match list {
+        Some(list) => dgg::channels::load(list)
+          .map(|found| found.into_iter().map(|c| c.name).collect()),
+        None => Ok(vec![dgg::channels::DESTINY.to_owned()]),
+      };
+      let program = |name: &str| dgg_capture(config, name);
+      let ended = |name: &str, status: ExitStatus| {
+        let said = match status.success() {
+          true => {
+            handed_off.store(true, Ordering::SeqCst);
+            programs.request();
+            format!("dgg-capture {name}: handed off; stopping")
+          }
+          false => format!("dgg-capture {name}: ended (removed)"),
+        };
+        log_line(supervisor, Level::Info, &said);
+      };
+      let dgg = Captures {
+        name: "dgg-capture",
+        list,
+        listed: &listed,
+        program: &program,
+        log: dgg_capture_log,
+        ends: |status| status.success() || removed(status),
+        ended: &ended,
+        after: None,
+        looked: Some(dgg_looked),
+      };
+      dgg.run(at);
+    });
     if let Some(list) = &config.kick_channels {
-      scope.spawn(|| {
-        capture_kick(config, list, &kick_running, &kick_context);
+      scope.spawn(move || {
+        let listed = || {
+          channels::load(list)
+            .map(|found| found.into_iter().map(|c| c.slug).collect())
+        };
+        let program = |slug: &str| kick_capture(config, list, slug);
+        let ended = |slug: &str, _| {
+          let said =
+            format!("kick-capture {slug}: ended (handed off, or removed)");
+          log_line(supervisor, Level::Info, &said);
+        };
+        let kick = Captures {
+          name: "kick-capture",
+          list: Some(list),
+          listed: &listed,
+          program: &program,
+          log: kick_capture_log,
+          ends: |status| status.success(),
+          ended: &ended,
+          after: Some(dgg_looked),
+          looked: None,
+        };
+        kick.run(at);
       });
     }
-    let [capture_log, migrate_log, index_log, compact_log] = &logs;
-    scope.spawn(|| {
-      let ended = keep_running(
-        &dgg_capture(config, DESTINY),
-        "dgg-capture",
-        capture_log,
-        &config.backoff,
-        true,
-        context,
-      );
-      if ended {
-        log_line(supervisor, Level::Info, "capture handed off; stopping");
-        handed_off.store(true, Ordering::SeqCst);
-      }
-      programs.request();
-    });
+    let [migrate_log, index_log, compact_log] = &logs;
     // The rest wait for the migration.
     scope.spawn(move || {
       match run_once(&config.migrate, "migrate", None, migrate_log, context) {
@@ -363,7 +419,7 @@ pub fn run(config: &Config, stop: &Stop) -> io::Result<Exit> {
             "serve",
             serve_log,
             &config.backoff,
-            false,
+            never,
             context,
           );
         });
@@ -378,7 +434,7 @@ pub fn run(config: &Config, stop: &Stop) -> io::Result<Exit> {
           "index",
           index_log,
           &config.backoff,
-          false,
+          never,
           context,
         );
       });
@@ -465,27 +521,25 @@ pub fn run(config: &Config, stop: &Stop) -> io::Result<Exit> {
         programs.request();
       }
     }
-    if handed_off.load(Ordering::SeqCst)
-      && kick_running.load(Ordering::SeqCst) > 0
-    {
-      let wait = config.kick_handoff_wait;
+    if handed_off.load(Ordering::SeqCst) && running.load(Ordering::SeqCst) > 0 {
+      let wait = config.handoff_wait;
       log_line(
         supervisor,
         Level::Info,
         &format!(
-          "waiting up to {}s for kick-capture to hand off",
+          "waiting up to {}s for the other captures to hand off",
           wait.as_secs_f64()
         ),
       );
       let until = Instant::now() + wait;
-      while kick_running.load(Ordering::SeqCst) > 0
+      while running.load(Ordering::SeqCst) > 0
         && Instant::now() < until
         && !stop.requested()
       {
         thread::sleep(Duration::from_millis(200));
       }
     }
-    kick.request();
+    captures.request();
   });
   let exit = if handed_off.load(Ordering::SeqCst) {
     Exit::HandedOff
@@ -500,100 +554,188 @@ pub fn run(config: &Config, stop: &Stop) -> io::Result<Exit> {
   Ok(exit)
 }
 
+/// The name of the log dgg channel `name`'s capture writes to, bridges
+/// too: `dgg-capture.<name>`, dots and all.
+pub fn dgg_capture_log(name: &str) -> String {
+  format!("dgg-capture.{name}")
+}
+
 /// The name of the log Kick channel `slug`'s capture writes to, bridges
 /// too: `kick-capture.<slug>`, as slugs hold no dots.
 pub fn kick_capture_log(slug: &str) -> String {
   format!("kick-capture.{slug}")
 }
 
-/// Runs a `kick-capture` for each channel in `list`, each on its own, and
-/// restarted after it fails, reading the list every `kick_check_every` to
-/// start the added; until stopped, with `running` counting those running.
-/// A clean exit (a handoff, or its channel removed) ends one alone: it's
-/// started again only once its channel has left the list and come back.
-fn capture_kick(
-  config: &Config,
-  list: &Path,
-  running: &AtomicUsize,
-  context: &Context,
-) {
-  // What was last said of the list, to say only changes.
-  let mut said = None;
-  // The channels with a capture, running or ended.
-  let mut started: HashSet<String> = HashSet::new();
-  // Those whose capture ended cleanly.
-  let ended: Mutex<HashSet<String>> = Mutex::default();
-  thread::scope(|scope| {
-    loop {
-      let now = match channels::load(list) {
-        Ok(found) => {
-          let listed: HashSet<String> =
-            found.into_iter().map(|channel| channel.slug).collect();
-          ended.lock().unwrap().retain(|slug| {
-            let still = listed.contains(slug);
-            if !still {
-              started.remove(slug);
-            }
-            still
-          });
-          for slug in &listed {
-            if !started.insert(slug.clone()) {
-              continue;
-            }
-            let path =
-              config.logs.join(format!("{}.log", kick_capture_log(slug)));
-            let log = match Log::open(path, config.log_size, config.log_keep) {
-              Ok(log) => Arc::new(Mutex::new(log)),
-              Err(e) => {
-                let said = format!("kick-capture {slug}: no log: {e}");
-                log_line(context.supervisor, Level::Error, &said);
-                // Tried again at the next look.
-                started.remove(slug);
-                continue;
-              }
-            };
-            let program = kick_capture(config, list, slug);
-            let (ended, slug) = (&ended, slug.clone());
-            scope.spawn(move || {
-              let name = format!("kick-capture {slug}");
-              running.fetch_add(1, Ordering::SeqCst);
-              let clean = keep_running(
-                &program,
-                &name,
-                &log,
-                &config.backoff,
-                true,
-                context,
-              );
-              running.fetch_sub(1, Ordering::SeqCst);
-              if clean {
-                let said = format!("{name}: ended (handed off, or removed)");
-                log_line(context.supervisor, Level::Info, &said);
-                ended.lock().unwrap().insert(slug);
-              }
-            });
-          }
-          match listed.is_empty() {
-            true => Some((
-              Level::Info,
-              format!("kick-capture: no channels in {}", list.display()),
-            )),
-            false => None,
-          }
+/// Whether `status` says a `dgg-capture`'s channel was removed from the
+/// list.
+fn removed(status: ExitStatus) -> bool {
+  status.code() == Some(REMOVED_EXIT.into())
+}
+
+/// Hands out the captures' first starts, `every` apart.
+struct Stagger {
+  next: Mutex<Instant>,
+  every: Duration,
+}
+
+impl Stagger {
+  fn new(every: Duration) -> Self {
+    Self {
+      next: Mutex::new(Instant::now()),
+      every,
+    }
+  }
+
+  /// The next start, taken.
+  fn take(&self) -> Instant {
+    let mut next = self.next.lock().unwrap();
+    let at = (*next).max(Instant::now());
+    *next = at + self.every;
+    at
+  }
+}
+
+/// What every service's captures share.
+struct Shared<'a> {
+  config: &'a Config,
+  /// How many are running.
+  running: &'a AtomicUsize,
+  stagger: &'a Stagger,
+  context: &'a Context<'a>,
+}
+
+/// A service's captures, one per channel in its list.
+struct Captures<'a> {
+  /// The program, as the supervisor's lines name it.
+  name: &'static str,
+  /// The list's file, if it has one, for what's said of it.
+  list: Option<&'a Path>,
+  /// The channels the list holds now, or why it can't be read.
+  listed: &'a (dyn Fn() -> Result<Vec<String>, String> + Sync),
+  /// The capture of a channel.
+  program: &'a (dyn Fn(&str) -> Program + Sync),
+  /// The name of a channel's log.
+  log: fn(&str) -> String,
+  /// Whether a run that exited so ends its channel's capture.
+  ends: fn(ExitStatus) -> bool,
+  /// Told when a channel's capture ended, and how.
+  ended: &'a (dyn Fn(&str, ExitStatus) + Sync),
+  /// Waited for before the list's first look, so another service's
+  /// captures take the first starts.
+  after: Option<&'a Stop>,
+  /// Requested once the list's first look has taken its starts.
+  looked: Option<&'a Stop>,
+}
+
+impl Captures<'_> {
+  /// Runs a capture for each channel listed, each on its own, and
+  /// restarted after it fails, reading the list every `check_every` to
+  /// start the added; until stopped. An exit that `ends` ends one alone:
+  /// it's started again only once its channel has left the list and come
+  /// back.
+  fn run(&self, at: &Shared) {
+    let Shared {
+      config,
+      running,
+      stagger,
+      context,
+    } = at;
+    let name = self.name;
+    // What was last said of the list, to say only changes.
+    let mut said = None;
+    // The channels with a capture, running or ended.
+    let mut started: HashSet<String> = HashSet::new();
+    // Those whose capture ended.
+    let ended: Mutex<HashSet<String>> = Mutex::default();
+    if let Some(after) = self.after {
+      while !after.wait(Duration::from_millis(100)) {
+        if context.stop.requested() {
+          return;
         }
-        Err(e) => Some((Level::Warn, format!("kick-capture: {e}"))),
-      };
-      if said != now {
-        if let Some((level, line)) = &now {
-          log_line(context.supervisor, *level, line);
-        }
-        said = now;
-      }
-      if context.stop.wait(config.kick_check_every) {
-        break;
       }
     }
-  });
+    thread::scope(|scope| {
+      loop {
+        let now = match (self.listed)() {
+          Ok(listed) => {
+            let listed: HashSet<String> = listed.into_iter().collect();
+            ended.lock().unwrap().retain(|channel| {
+              let still = listed.contains(channel);
+              if !still {
+                started.remove(channel);
+              }
+              still
+            });
+            let mut adding: Vec<&String> = listed
+              .iter()
+              .filter(|channel| !started.contains(*channel))
+              .collect();
+            adding.sort();
+            for channel in adding {
+              started.insert(channel.clone());
+              let path =
+                config.logs.join(format!("{}.log", (self.log)(channel)));
+              let log = match Log::open(path, config.log_size, config.log_keep)
+              {
+                Ok(log) => Arc::new(Mutex::new(log)),
+                Err(e) => {
+                  let said = format!("{name} {channel}: no log: {e}");
+                  log_line(context.supervisor, Level::Error, &said);
+                  // Tried again at the next look.
+                  started.remove(channel);
+                  continue;
+                }
+              };
+              let program = (self.program)(channel);
+              let starts = stagger.take();
+              let (ended, channel) = (&ended, channel.clone());
+              scope.spawn(move || {
+                let wait = starts.saturating_duration_since(Instant::now());
+                if context.stop.wait(wait) {
+                  return;
+                }
+                let shown = format!("{name} {channel}");
+                running.fetch_add(1, Ordering::SeqCst);
+                let exit = keep_running(
+                  &program,
+                  &shown,
+                  &log,
+                  &config.backoff,
+                  self.ends,
+                  context,
+                );
+                running.fetch_sub(1, Ordering::SeqCst);
+                if let Some(status) = exit {
+                  (self.ended)(&channel, status);
+                  ended.lock().unwrap().insert(channel);
+                }
+              });
+            }
+            match (listed.is_empty(), self.list) {
+              (true, Some(list)) => Some((
+                Level::Info,
+                format!("{name}: no channels in {}", list.display()),
+              )),
+              _ => None,
+            }
+          }
+          Err(e) => Some((Level::Warn, format!("{name}: {e}"))),
+        };
+        if said != now {
+          if let Some((level, line)) = &now {
+            log_line(context.supervisor, *level, line);
+          }
+          said = now;
+        }
+        if let Some(looked) = self.looked {
+          looked.request();
+        }
+        if context.stop.wait(config.check_every) {
+          break;
+        }
+      }
+    });
+  }
 }
 
 /// `dgg-capture` for channel `name`, in the list if there's one.
@@ -733,27 +875,31 @@ struct Context<'a> {
   lifeline: &'a Lifeline,
 }
 
+/// Whether an exit ends a program's runs: never, for one always restarted.
+fn never(_: ExitStatus) -> bool {
+  false
+}
+
 /// Runs `program` again and again, waiting longer after each quick failure,
-/// until stopped. With `until_clean`, a clean exit ends it too: then `true`.
+/// until stopped, or until it exits as `ends` says ends it: then `Some` of
+/// that exit.
 fn keep_running(
   program: &Program,
   name: &str,
   log: &SharedLog,
   backoff: &Backoff,
-  until_clean: bool,
+  ends: fn(ExitStatus) -> bool,
   context: &Context,
-) -> bool {
+) -> Option<ExitStatus> {
   let Context {
     supervisor, stop, ..
   } = context;
   let mut delay = backoff.first;
   loop {
     let started = Instant::now();
-    let Some(status) = run_once(program, name, None, log, context) else {
-      return false;
-    };
-    if until_clean && status.is_some_and(|status| status.success()) {
-      return true;
+    let status = run_once(program, name, None, log, context)?;
+    if let Some(status) = status.filter(|status| ends(*status)) {
+      return Some(status);
     }
     if started.elapsed() >= backoff.reset_after {
       delay = backoff.first;
@@ -764,7 +910,7 @@ fn keep_running(
       &format!("{name}: restarting in {}s", delay.as_secs_f64()),
     );
     if stop.wait(delay) {
-      return false;
+      return None;
     }
     delay = (delay * 2).min(backoff.max);
   }

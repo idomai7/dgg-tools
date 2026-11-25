@@ -45,9 +45,10 @@ An install lives in one folder:
     index-dgg-<name>.sqlite  each dgg channel's searchable index; can be
                            rebuilt from the journal
     index-kick.sqlite      Kick's, likewise
-  logs\                    dgg-capture.log, index.log, compact.log, supervisor.log,
-                           sync.log, migrate.log, and a
-                           kick-capture.<slug>.log for each Kick channel
+  logs\                    index.log, compact.log, supervisor.log, sync.log,
+                           migrate.log, a dgg-capture.<name>.log for each
+                           dgg channel, and a kick-capture.<slug>.log for
+                           each Kick channel
   install.env.json         the install's config, secrets included: the mesh
                            this node is in, other hosts to sync from, the
                            mesh's CA (`dgg-logger config` shows it without

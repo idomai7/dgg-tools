@@ -87,6 +87,7 @@ fn config(dir: &TempDir, capture: Program, index: Program) -> Config {
     &dir.path().join("logs"),
   );
   config.dgg_capture = capture;
+  config.stagger = Duration::ZERO;
   config.migrate = script(dir.path(), "migrate", &[Step::Exit(0)]);
   config.index = index;
   config.compact = quiet;
@@ -123,12 +124,14 @@ fn exits_when_capture_hands_off() {
   assert!(started.elapsed() < Duration::from_secs(10));
   // A line that doesn't say its level is information; one that does keeps
   // it.
-  assert!(log(&dir, "dgg-capture").contains("Z INFO  capturing"));
+  assert!(log(&dir, "dgg-capture.destiny.gg").contains("Z INFO  capturing"));
   let index = log(&dir, "index");
   assert!(index.contains("Z INFO  indexing"), "{index}");
   assert!(index.contains("Z WARN  slow"), "{index}");
   let supervisor = log(&dir, "supervisor");
-  assert!(supervisor.contains("INFO  capture handed off; stopping"));
+  assert!(
+    supervisor.contains("INFO  dgg-capture destiny.gg: handed off; stopping")
+  );
   assert!(supervisor.contains("index: stopped"));
 }
 
@@ -140,8 +143,12 @@ fn restarts_programs_that_fail() {
   let exit = run(&config(&dir, capture, index), &Stop::new()).unwrap();
   assert_eq!(exit, Exit::HandedOff);
   let supervisor = log(&dir, "supervisor");
-  assert!(supervisor.contains("ERROR dgg-capture: exited, exit code: 1"));
-  assert!(supervisor.contains("WARN  dgg-capture: restarting in 0.05s"));
+  assert!(
+    supervisor.contains("ERROR dgg-capture destiny.gg: exited, exit code: 1")
+  );
+  assert!(
+    supervisor.contains("WARN  dgg-capture destiny.gg: restarting in 0.05s")
+  );
 }
 
 #[test]
@@ -160,7 +167,7 @@ fn stops_on_request() {
   assert_eq!(exit, Exit::Stopped);
   assert!(started.elapsed() < Duration::from_secs(10));
   let supervisor = log(&dir, "supervisor");
-  assert!(supervisor.contains("dgg-capture: stopped"));
+  assert!(supervisor.contains("dgg-capture destiny.gg: stopped"));
   assert!(supervisor.contains("index: stopped"));
 }
 
@@ -427,7 +434,10 @@ fn indexes_once_migrated() {
   );
   run(&config, &Stop::new()).unwrap();
   // Capture doesn't wait for it; the index does.
-  assert!(said(&dir, "dgg-capture: started") < said(&dir, "migrate: exited"));
+  assert!(
+    said(&dir, "dgg-capture destiny.gg: started")
+      < said(&dir, "migrate: exited")
+  );
   assert!(said(&dir, "migrate: exited") < said(&dir, "index: started"));
   assert!(log(&dir, "migrate").contains(" migrating"));
   assert!(log(&dir, "index").contains(" indexing"));
@@ -447,7 +457,7 @@ fn a_failed_migration_leaves_index_compact_and_sync_off() {
   config.compact_first = Duration::from_millis(10);
   run(&config, &Stop::new()).unwrap();
   said(&dir, "migrate failed");
-  assert!(log(&dir, "dgg-capture").contains(" capturing"));
+  assert!(log(&dir, "dgg-capture.destiny.gg").contains(" capturing"));
   assert!(!log(&dir, "supervisor").contains("index: started"));
   assert!(!log(&dir, "supervisor").contains("compact: started"));
 }
@@ -463,8 +473,8 @@ fn with_kick(
   fs::write(&path, list).unwrap();
   config.kick_capture = kick;
   config.kick_channels = Some(path);
-  config.kick_check_every = Duration::from_millis(100);
-  config.kick_handoff_wait = Duration::from_millis(300);
+  config.check_every = Duration::from_millis(100);
+  config.handoff_wait = Duration::from_millis(300);
   config
 }
 
@@ -491,7 +501,8 @@ fn captures_kick_given_channels() {
   // Given a while to hand off too, then stopped.
   let supervisor = log(&dir, "supervisor");
   assert!(
-    supervisor.contains("waiting up to 0.3s for kick-capture to hand off")
+    supervisor
+      .contains("waiting up to 0.3s for the other captures to hand off")
   );
   assert!(supervisor.contains("kick-capture one: stopped"));
 }
@@ -503,7 +514,7 @@ fn lets_kick_capture_hand_off_on_its_own() {
   let index = script(dir.path(), "index", &[Step::Sleep(20)]);
   let kick = script(dir.path(), "kick", &[Step::Sleep(3), Step::Exit(0)]);
   let mut config = with_kick(&dir, config(&dir, capture, index), kick, "a 2 1");
-  config.kick_handoff_wait = Duration::from_secs(30);
+  config.handoff_wait = Duration::from_secs(30);
   let started = Instant::now();
   assert_eq!(run(&config, &Stop::new()).unwrap(), Exit::HandedOff);
   assert!(started.elapsed() < Duration::from_secs(20));
@@ -587,4 +598,105 @@ fn starts_an_ended_kick_capture_once_its_channel_is_back() {
   // Not again while listed, but again once back.
   let started = supervisor.matches("kick-capture a: started").count();
   assert_eq!(started, 2, "{supervisor}");
+}
+
+/// `config` with a dgg channel list holding `list`.
+fn with_dgg_list(dir: &TempDir, mut config: Config, list: &str) -> Config {
+  let path = dir.path().join("dgg-channels");
+  fs::write(&path, list).unwrap();
+  config.dgg_channels = Some(path);
+  config.check_every = Duration::from_millis(100);
+  config.handoff_wait = Duration::from_millis(300);
+  config
+}
+
+#[test]
+fn runs_a_dgg_capture_per_channel() {
+  let dir = TempDir::new("deploy-supervise-dgg-each");
+  let mut capture = script(
+    dir.path(),
+    "capture",
+    &[Step::SayArgsAndStdin, Step::Sleep(20)],
+  );
+  capture.args = vec!["dgg-capture".into()];
+  let config = config(&dir, capture, script(dir.path(), "index", &[]));
+  let config = with_dgg_list(&dir, config, "destiny.gg wss://a -\n");
+  let list = dir.path().join("dgg-channels");
+  let stop = Stop::new();
+  thread::scope(|scope| {
+    scope.spawn(|| {
+      // A channel added while it runs.
+      thread::sleep(Duration::from_millis(500));
+      fs::write(&list, "destiny.gg wss://a -\nomni.example wss://b -\n")
+        .unwrap();
+      thread::sleep(Duration::from_millis(1500));
+      stop.request();
+    });
+    assert_eq!(run(&config, &stop).unwrap(), Exit::Stopped);
+  });
+  // Each to its own log, its name dots and all.
+  for name in ["destiny.gg", "omni.example"] {
+    let capture = log(&dir, &format!("dgg-capture.{name}"));
+    let said =
+      format!("dgg-capture --channels {} --channel {name}", list.display());
+    assert!(capture.contains(&said), "{capture}");
+  }
+}
+
+#[test]
+fn a_dgg_channel_removed_ends_alone() {
+  let dir = TempDir::new("deploy-supervise-dgg-removed");
+  // Exits as dgg-capture does once its channel's removed.
+  let capture = script(dir.path(), "capture", &[Step::Exit(3)]);
+  let config = config(&dir, capture, script(dir.path(), "index", &[]));
+  let config = with_dgg_list(&dir, config, "destiny.gg wss://a -\n");
+  let stop = Stop::new();
+  thread::scope(|scope| {
+    scope.spawn(|| {
+      thread::sleep(Duration::from_millis(1000));
+      stop.request();
+    });
+    assert_eq!(run(&config, &stop).unwrap(), Exit::Stopped);
+  });
+  let supervisor = log(&dir, "supervisor");
+  // Not restarted, and nothing else stopped for it.
+  let started = supervisor
+    .matches("dgg-capture destiny.gg: started")
+    .count();
+  assert_eq!(started, 1, "{supervisor}");
+  assert!(supervisor.contains("dgg-capture destiny.gg: ended (removed)"));
+  assert!(!supervisor.contains("handed off"), "{supervisor}");
+}
+
+#[test]
+fn staggers_the_captures_first_starts() {
+  let dir = TempDir::new("deploy-supervise-stagger");
+  let capture = script(dir.path(), "capture", &[Step::Sleep(20)]);
+  let kick = script(dir.path(), "kick", &[Step::Sleep(20)]);
+  let config = config(&dir, capture, script(dir.path(), "index", &[]));
+  let config = with_dgg_list(&dir, config, "a.example wss://a -\n");
+  let mut config = with_kick(&dir, config, kick, "one 2 1\ntwo 4 3\n");
+  config.stagger = Duration::from_millis(700);
+  let stop = Stop::new();
+  thread::scope(|scope| {
+    scope.spawn(|| {
+      thread::sleep(Duration::from_millis(1000));
+      stop.request();
+    });
+    assert_eq!(run(&config, &stop).unwrap(), Exit::Stopped);
+  });
+  let supervisor = log(&dir, "supervisor");
+  // dgg's first, then Kick's a stagger apart: two within the second.
+  for started in ["dgg-capture a.example", "kick-capture one"] {
+    let started = format!("{started}: started");
+    assert!(supervisor.contains(&started), "{supervisor}");
+  }
+  assert!(
+    !supervisor.contains("kick-capture two: started"),
+    "{supervisor}"
+  );
+  let at = |what: &str| supervisor.find(what).unwrap();
+  assert!(
+    at("dgg-capture a.example: started") < at("kick-capture one: started")
+  );
 }

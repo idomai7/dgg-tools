@@ -9,7 +9,11 @@
 pub mod watch;
 
 use {
-  crate::{paths::Paths, peer, processes, supervise::kick_capture_log},
+  crate::{
+    paths::Paths,
+    peer, processes,
+    supervise::{dgg_capture_log, kick_capture_log},
+  },
   ::common::{
     format,
     time::{now_ms, utc_day, utc_timestamp},
@@ -47,8 +51,9 @@ pub const STALE_MS: i64 = 5000;
 pub const RATE_OVER: i64 = 60_000;
 
 /// The logs a supervisor writes, in the order they're offered, but for
-/// each Kick channel's capture's (see [`logs`]). `kick-capture` is the
-/// one Kick's captures shared before each channel had its own.
+/// each channel's capture's (see [`logs`]). `dgg-capture` and
+/// `kick-capture` are the ones each service's captures wrote before each
+/// channel had its own.
 pub const LOGS: [&str; 8] = [
   "dgg-capture",
   "index",
@@ -671,6 +676,15 @@ impl Log {
     }
   }
 
+  /// dgg channel `name`'s capture's, shown as `dgg-capture <name>`, as
+  /// the supervisor names its capture.
+  fn dgg(name: &str) -> Self {
+    Self {
+      name: dgg_capture_log(name),
+      shown: format!("dgg-capture {name}"),
+    }
+  }
+
   /// Kick channel `slug`'s capture's, shown as `kick-capture <slug>`, as
   /// the programs box names its capture.
   fn kick(slug: &str) -> Self {
@@ -681,18 +695,21 @@ impl Log {
   }
 }
 
-/// Every log: the [`LOGS`], then each Kick channel's capture's.
+/// Every log: the [`LOGS`], then each channel's capture's: destiny.gg's,
+/// then each Kick channel's.
 pub fn logs(report: &Report) -> Vec<Log> {
   let mut logs: Vec<Log> = LOGS.iter().map(|name| Log::named(name)).collect();
+  logs.push(Log::dgg(DESTINY));
   let channels = report.kick.channels.iter();
   logs.extend(channels.map(|channel| Log::kick(&channel.slug)));
   logs
 }
 
-/// The captures' logs: dgg's, each Kick channel's, then the one Kick's
-/// shared before.
+/// The captures' logs: destiny.gg's, then the one dgg's wrote before each
+/// channel had its own, each Kick channel's, then the one Kick's shared
+/// before.
 pub fn capture_logs(report: &Report) -> Vec<Log> {
-  let mut logs = vec![Log::named("dgg-capture")];
+  let mut logs = vec![Log::dgg(DESTINY), Log::named("dgg-capture")];
   let channels = report.kick.channels.iter();
   logs.extend(channels.map(|channel| Log::kick(&channel.slug)));
   logs.push(Log::named("kick-capture"));

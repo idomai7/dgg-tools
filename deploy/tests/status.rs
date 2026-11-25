@@ -721,21 +721,37 @@ fn merges_the_captures_logs() {
     "logs/kick-capture.log",
     "2026-11-24 10:00:00.000Z INFO  a-0: one: capturing\n",
   );
+  dir.write(
+    "logs/dgg-capture.destiny.gg.log",
+    "2026-11-24 10:00:03.000Z INFO  a-2: capturing\n",
+  );
   dir.write("logs/index.log", "2026-11-24 10:00:01.500Z INFO  indexed\n");
   let paths = Paths::under(dir.to_path_buf());
   let report = Watcher::new().unwrap().gather(&paths).unwrap();
   let logs = capture_logs(&report);
   let shown: Vec<_> = logs.iter().map(|log| log.shown.as_str()).collect();
-  assert_eq!(shown, ["dgg-capture", "kick-capture one", "kick-capture"]);
+  assert_eq!(
+    shown,
+    [
+      "dgg-capture destiny.gg",
+      "dgg-capture",
+      "kick-capture one",
+      "kick-capture"
+    ]
+  );
   assert_eq!(
     merge_logs(&paths.logs, &logs, 500),
     [
-      "2026-11-24 10:00:00.000Z INFO  kick-capture     a-0: one: capturing",
-      "2026-11-24 10:00:01.000Z INFO  dgg-capture      a-1: capturing",
-      "2026-11-24 10:00:02.000Z WARN  kick-capture one a-1: one: dropped",
+      "2026-11-24 10:00:00.000Z INFO  kick-capture           a-0: one: \
+       capturing",
+      "2026-11-24 10:00:01.000Z INFO  dgg-capture            a-1: capturing",
+      "2026-11-24 10:00:02.000Z WARN  kick-capture one       a-1: one: dropped",
+      "2026-11-24 10:00:03.000Z INFO  dgg-capture destiny.gg a-2: capturing",
     ]
   );
-  // Every log has the channel's too.
+  // Every log has the channels' too.
   let every = ::deploy::status::logs(&report);
-  assert!(every.iter().any(|log| log.name == "kick-capture.one"));
+  for name in ["dgg-capture.destiny.gg", "kick-capture.one"] {
+    assert!(every.iter().any(|log| log.name == name), "{name}");
+  }
 }
