@@ -2,7 +2,7 @@
 //! with its deletion, if it was deleted), and the bans, timeouts and unbans
 //! on them, by their user id, which stays when they rename.
 //!
-//! It's read from Kick's index and from what the index hasn't reached yet:
+//! It's read from the channel's index and from what it hasn't reached yet:
 //! the channel's live files past its checkpoints, indexed in memory for
 //! the query (see [`recent`]). Both are read in one snapshot of the index,
 //! so a round finishing meanwhile can't count anything twice.
@@ -66,7 +66,7 @@ struct Happened {
   permanent: Option<bool>,
 }
 
-/// The history of `user_id` in channel `slug`, from Kick's index at
+/// The history of `user_id` in channel `slug`, from the channel's index at
 /// `index_path` (if there is one yet) and the journal directory `journal`,
 /// as JSON (see the [module docs](self)).
 pub fn user(

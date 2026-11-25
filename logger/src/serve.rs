@@ -163,8 +163,8 @@ impl Tokens {
 struct Shared {
   /// The journal directory, holding each service's.
   journal: PathBuf,
-  /// Kick's index, in the data directory.
-  kick_index: PathBuf,
+  /// The data directory, holding each channel's index.
+  data: PathBuf,
   tokens: Tokens,
   serving: Arc<Semaphore>,
   streams: Arc<Semaphore>,
@@ -178,8 +178,8 @@ enum Access {
   Control,
 }
 
-/// The routes, serving the journal directory `journal`, and Kick's index
-/// beside it, in its parent, the data directory.
+/// The routes, serving the journal directory `journal`, and each Kick
+/// channel's index beside it, in its parent, the data directory.
 ///
 /// # Panics
 ///
@@ -191,9 +191,8 @@ pub fn router(journal: PathBuf, tokens: Tokens) -> Router {
       && tokens.query.as_ref().is_none_or(|t| !t.is_empty()),
     "serve needs non-empty tokens"
   );
-  let data = journal.parent().unwrap_or(&journal);
   let shared = Arc::new(Shared {
-    kick_index: data.join(kick::index::FILE),
+    data: journal.parent().unwrap_or(&journal).to_owned(),
     journal,
     tokens,
     serving: Arc::new(Semaphore::new(CONCURRENT)),
@@ -495,7 +494,8 @@ async fn kick_user(
   let user_id: u64 = id.parse().map_err(|_| StatusCode::BAD_REQUEST)?;
   channel::<Kick>(&shared, &slug)?;
   let found = spawn_blocking(move || {
-    kick::history::user(&shared.kick_index, &shared.journal, &slug, user_id)
+    let index = shared.data.join(kick::index::file(&slug));
+    kick::history::user(&index, &shared.journal, &slug, user_id)
   })
   .await
   .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;

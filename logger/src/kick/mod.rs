@@ -72,13 +72,19 @@ impl Service for Kick {
     index::open(path)
   }
 
-  /// One, of every channel's, [`index::FILE`].
+  /// One per channel with a journal, `index-kick-<slug>.sqlite`.
   fn indexes(dir: &Path) -> io::Result<Vec<Indexed>> {
-    Ok(vec![Indexed {
-      name: Self::NAME.into(),
-      file: index::FILE.into(),
-      dir: dir.to_owned(),
-    }])
+    let slugs = channels::journaled(dir)?;
+    Ok(
+      slugs
+        .iter()
+        .map(|slug| Indexed {
+          name: format!("{} {slug}", Self::NAME),
+          file: index::file(slug),
+          dir: Self::channel_dir(dir, slug),
+        })
+        .collect(),
+    )
   }
 
   fn index(db: &mut Connection, dir: &Path) -> Result<index::Stats, Error> {

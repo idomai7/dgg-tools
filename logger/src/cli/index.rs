@@ -1,5 +1,6 @@
 //! Index each service's journals into SQLite: each dgg channel's into
-//! `index-dgg-<name>.sqlite`, Kick's into `index-kick.sqlite`.
+//! `index-dgg-<name>.sqlite`, each Kick channel's into
+//! `index-kick-<slug>.sqlite`.
 
 use {
   crate::{
@@ -20,8 +21,8 @@ use {
   },
 };
 
-/// Index the journal into SQLite: each dgg channel's into an index of its
-/// own, then every Kick channel's into Kick's.
+/// Index the journal into SQLite: each channel's into an index of its own,
+/// dgg's then Kick's.
 #[derive(Args)]
 pub struct Index {
   /// Delete every index and rebuild them from the whole journal.
@@ -31,14 +32,15 @@ pub struct Index {
   /// whole journal.
   #[arg(long)]
   rebuild_dgg: bool,
-  /// Delete Kick's index and rebuild it from Kick's whole journal.
+  /// Delete every Kick channel's index and rebuild it from the channel's
+  /// whole journal.
   #[arg(long)]
   rebuild_kick: bool,
   /// Keep running, indexing new journal records as they're written: a round
   /// once `--batch` records are waiting, no sooner than `--min-wait` after
   /// the last and no later than `--max-wait`. Each index follows on its
-  /// own, at the same pace, a new dgg channel's from the look it's first
-  /// seen at. Stopping it at any point is safe: an interrupted batch is
+  /// own, at the same pace, a new channel's from the look it's first seen
+  /// at. Stopping it at any point is safe: an interrupted batch is
   /// rolled back and redone.
   #[arg(long)]
   follow: bool,

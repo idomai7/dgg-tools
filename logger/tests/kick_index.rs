@@ -1,4 +1,5 @@
-//! Kick's index: every Kick channel's journal into `index-kick.sqlite`.
+//! Kick's index: a Kick channel's journal into
+//! `index-kick-<slug>.sqlite`.
 //! Ids and names are made up.
 
 use {
@@ -8,7 +9,7 @@ use {
     index::{Error, rebuild, user_version},
     kick::{
       Kick,
-      index::{SCHEMA_VERSION, index, open, waiting},
+      index::{SCHEMA_VERSION, file, index, open, waiting},
     },
     service::Root,
   },
@@ -28,7 +29,12 @@ fn journal(dir: &TempDir) -> PathBuf {
 }
 
 fn database(dir: &TempDir) -> PathBuf {
-  dir.path().join("index-kick.sqlite")
+  dir.path().join(file("c"))
+}
+
+/// Channel `c`'s directory, which its index is of.
+fn c(dir: &TempDir) -> PathBuf {
+  channel_root(&kick_root(&journal(dir)), "c")
 }
 
 /// A frame pushing Kick's event `event` (without its `App\Events\`) with
@@ -152,7 +158,7 @@ fn indexes_messages_deletions_and_bans() {
   let dir = TempDir::new("logger-kick-index");
   write_day(&dir);
   let mut db = open(&database(&dir)).unwrap();
-  let stats = index(&mut db, &kick_root(&journal(&dir))).unwrap();
+  let stats = index(&mut db, &c(&dir)).unwrap();
   assert_eq!(
     (
       stats.records,
@@ -246,7 +252,7 @@ fn indexes_messages_deletions_and_bans() {
   );
 
   // Nothing new: nothing indexed twice.
-  let again = index(&mut db, &kick_root(&journal(&dir))).unwrap();
+  let again = index(&mut db, &c(&dir)).unwrap();
   assert_eq!((again.records, again.messages), (0, 0));
 }
 
@@ -276,7 +282,7 @@ fn merges_what_several_captures_saw() {
     ],
   );
   let mut db = open(&database(&dir)).unwrap();
-  index(&mut db, &kick_root(&journal(&dir))).unwrap();
+  index(&mut db, &c(&dir)).unwrap();
   let row = |id: &str| -> (i64, String) {
     db.query_row(
       "SELECT received, source FROM messages WHERE id = ?1",
@@ -296,14 +302,13 @@ fn reads_archives_once() {
   let dir = TempDir::new("logger-kick-index");
   write_day(&dir);
   let mut db = open(&database(&dir)).unwrap();
-  index(&mut db, &kick_root(&journal(&dir))).unwrap();
-  let root = channel_root(&kick_root(&journal(&dir)), "c");
-  compact_day(&Root::at(&root), "1970-01-01", 3)
+  index(&mut db, &c(&dir)).unwrap();
+  compact_day(&Root::at(c(&dir)), "1970-01-01", 3)
     .unwrap()
     .unwrap();
   // The archive is read through, adding nothing, and the live file's
   // checkpoint goes with it.
-  let stats = index(&mut db, &kick_root(&journal(&dir))).unwrap();
+  let stats = index(&mut db, &c(&dir)).unwrap();
   assert_eq!((stats.records, stats.messages), (7, 0));
   let paths: Vec<String> = db
     .prepare("SELECT path FROM files")
@@ -312,13 +317,13 @@ fn reads_archives_once() {
     .unwrap()
     .map(Result::unwrap)
     .collect();
-  assert_eq!(paths, ["c/archive/1970/01/1970-01-01.journal.zst"]);
-  let again = index(&mut db, &kick_root(&journal(&dir))).unwrap();
+  assert_eq!(paths, ["archive/1970/01/1970-01-01.journal.zst"]);
+  let again = index(&mut db, &c(&dir)).unwrap();
   assert_eq!(again.records, 0);
   // Rebuilt from the archive alone, it's the same.
   drop(db);
   let mut fresh = rebuild::<Kick>(&database(&dir)).unwrap();
-  let stats = index(&mut fresh, &kick_root(&journal(&dir))).unwrap();
+  let stats = index(&mut fresh, &c(&dir)).unwrap();
   assert_eq!((stats.messages, stats.deletions, stats.bans), (2, 1, 2));
 }
 
@@ -326,11 +331,39 @@ fn reads_archives_once() {
 fn counts_what_is_waiting() {
   let dir = TempDir::new("logger-kick-index");
   write_day(&dir);
+  // Another channel's, which has an index of its own.
   write(&dir, "d", "k", vec![(10, Body::Open("wss://one".into()))]);
   let mut db = open(&database(&dir)).unwrap();
-  assert_eq!(waiting(&db, &kick_root(&journal(&dir)), 100).unwrap(), 8);
-  index(&mut db, &kick_root(&journal(&dir))).unwrap();
-  assert_eq!(waiting(&db, &kick_root(&journal(&dir)), 100).unwrap(), 0);
+  assert_eq!(waiting(&db, &c(&dir), 100).unwrap(), 7);
+  index(&mut db, &c(&dir)).unwrap();
+  assert_eq!(waiting(&db, &c(&dir), 100).unwrap(), 0);
+}
+
+#[test]
+fn keeps_each_channel_apart() {
+  let dir = TempDir::new("logger-kick-index");
+  write_day(&dir);
+  let seven = user(7, "Seven");
+  write(
+    &dir,
+    "d",
+    "k",
+    vec![(
+      9,
+      push("ChatMessageEvent", message("m9", seven, "elsewhere")),
+    )],
+  );
+  let mut db = open(&database(&dir)).unwrap();
+  let stats = index(&mut db, &c(&dir)).unwrap();
+  assert_eq!(stats.messages, 2);
+  let d = channel_root(&kick_root(&journal(&dir)), "d");
+  let mut other = open(&dir.path().join(file("d"))).unwrap();
+  assert_eq!(index(&mut other, &d).unwrap().messages, 1);
+  let channel: String = other
+    .query_row("SELECT channel FROM messages", [], |row| row.get(0))
+    .unwrap();
+  assert_eq!(channel, "d");
+  assert_eq!(count(&db, "SELECT count(*) FROM messages"), 2);
 }
 
 #[test]

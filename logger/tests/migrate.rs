@@ -135,7 +135,7 @@ fn says_each_kind_of_file() {
     "dgg destiny.gg backfill: 1 live file, journal dgg.0.3",
     "kick someone: 1 live file, journal kick.0.1",
     "index-dgg-destiny.gg.sqlite: none yet",
-    "index-kick.sqlite: none yet",
+    "index-kick-someone.sqlite: none yet",
   ] {
     assert!(said.contains(line), "{line:?} not in:\n{said}");
   }
@@ -270,4 +270,24 @@ fn says_what_is_left_of_the_old_layout() {
   );
   // Left as it was.
   assert!(journal.join("live/2026-11-24/a.journal").exists());
+}
+
+#[test]
+fn deletes_kicks_index_of_every_channel() {
+  let dir = TempDir::new("logger-migrate");
+  let old = dir.path().join(::logger::kick::index::OLD_FILE);
+  drop(::logger::kick::index::open(&old).unwrap());
+  put(&dir.path().join("index-kick.sqlite-wal"), "");
+
+  // A dry run says so, and changes nothing.
+  let report = run(dir.path(), true);
+  assert!(report.kick_index_removed);
+  assert!(old.exists());
+
+  let report = run(dir.path(), false);
+  assert_eq!(report.failed, Vec::<String>::new());
+  assert!(report.kick_index_removed);
+  assert!(!old.exists());
+  assert!(!dir.path().join("index-kick.sqlite-wal").exists());
+  assert!(!run(dir.path(), false).kick_index_removed);
 }

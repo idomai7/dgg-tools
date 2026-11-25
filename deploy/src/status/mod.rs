@@ -1,7 +1,7 @@
 //! What the logger is doing: its programs, each capture's health (each
-//! dgg channel's and each Kick channel's), each dgg channel's journal and
-//! index, Kick's channels' journals and its index, the peers it syncs
-//! from, free disk space and the ends of the logs.
+//! dgg channel's and each Kick channel's), each channel's journal and
+//! index, the peers it syncs from, free disk space and the ends of the
+//! logs.
 //!
 //! [`Watcher::gather`] takes a snapshot ([`Report`]); [`text`] prints one,
 //! and [`watch`] redraws one every second.
@@ -159,8 +159,6 @@ pub struct Report {
   /// before Kick's, each by channel, when that doesn't tell them apart.
   pub captures: Vec<Capture>,
   pub dgg: DggChannels,
-  /// Kick's index's size and last write (unix ms).
-  pub kick_index: Option<(u64, i64)>,
   /// Free space on the data directory's disk.
   pub free: Option<u64>,
   pub sync: Option<Sync>,
@@ -195,7 +193,7 @@ pub struct Kick {
   pub problem: Option<String>,
 }
 
-/// One Kick channel's journal today.
+/// One Kick channel's journal today, and its index.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct KickChannel {
   pub slug: String,
@@ -204,6 +202,8 @@ pub struct KickChannel {
   pub today_files: Files,
   /// Unix ms of the newest write today.
   pub last_write: Option<i64>,
+  /// Its index's size and last write (unix ms).
+  pub index: Option<(u64, i64)>,
 }
 
 /// The peers the install syncs from.
@@ -355,7 +355,6 @@ impl Watcher {
       programs: self.programs(&paths.bin()),
       captures,
       dgg,
-      kick_index: size_and_write(&paths.data.join(::logger::kick::index::FILE)),
       free: free_space(&paths.data),
       sync: sync(paths),
       kick,
@@ -677,11 +676,13 @@ fn kick(
         .collect();
     theirs.sort_by_key(|capture| capture.started);
     captures.extend(theirs);
+    let index = ::logger::kick::index::file(&slug);
     let mut channel = KickChannel {
       listed: listed.contains(&slug),
       slug,
       today_files: Files::default(),
       last_write: None,
+      index: size_and_write(&paths.data.join(index)),
     };
     for file in live_files(&root)? {
       if day_of(&file) == today
@@ -1053,8 +1054,8 @@ pub fn listening_width(report: &Report) -> usize {
   widest.unwrap_or(0)
 }
 
-/// Kick's channels' journals today, one line each, and the channel list's
-/// problem, if it has one.
+/// Kick's channels' journals today, a line each with one on its index
+/// indented under it, and the channel list's problem, if it has one.
 fn kick_lines(report: &Report) -> Vec<String> {
   let kick = &report.kick;
   let now = report.now;
@@ -1071,6 +1072,10 @@ fn kick_lines(report: &Report) -> Vec<String> {
       channel.today_files.count,
       format::size(channel.today_files.bytes as f64)
     ));
+    out.push(match channel.index {
+      Some(file) => format!("  {}", index_line("index", file, now)),
+      None => "  index  none yet".into(),
+    });
   }
   if let Some(problem) = &kick.problem {
     out.push(format!("kick channel list  {problem}"));
@@ -1149,8 +1154,8 @@ fn dgg_lines(channel: &DggChannel, now: i64) -> Vec<String> {
 }
 
 /// The journals and indexes: each dgg channel's (see [`dgg_lines`]), the
-/// dgg channel list's problem, if it has one, then Kick's channels' and
-/// its index, only if there's one; then the peers.
+/// dgg channel list's problem, if it has one, then Kick's channels' (see
+/// [`kick_lines`]); then the peers.
 pub fn journal_lines(report: &Report) -> Vec<String> {
   let now = report.now;
   let mut out = Vec::new();
@@ -1161,8 +1166,6 @@ pub fn journal_lines(report: &Report) -> Vec<String> {
     out.push(format!("dgg channel list  {problem}"));
   }
   out.extend(kick_lines(report));
-  let kick_index = report.kick_index;
-  out.extend(kick_index.map(|file| index_line("kick index", file, now)));
   if let Some(sync) = &report.sync {
     for peer in &sync.peers {
       let last = peer.last.as_deref().unwrap_or("no round yet");

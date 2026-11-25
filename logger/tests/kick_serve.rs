@@ -4,7 +4,7 @@
 use {
   ::common::temp_dir::TempDir,
   ::logger::{
-    kick::index::{FILE, index, open},
+    kick::index::{file, index, open},
     serve::{Tokens, router},
   },
   ::logger_journal::{
@@ -110,8 +110,8 @@ async fn a_users_history() {
       ),
     ],
   );
-  let mut db = open(&dir.path().join(FILE)).unwrap();
-  index(&mut db, &journal(&dir)).unwrap();
+  let mut db = open(&dir.path().join(file("c"))).unwrap();
+  index(&mut db, &channel_root(&kick_root(&journal(&dir)), "c")).unwrap();
   drop(db);
   // Not indexed yet: read from the live file.
   write(

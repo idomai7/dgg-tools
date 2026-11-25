@@ -13,8 +13,8 @@
 //! directory.
 //!
 //! A service has one or more indexes (see [`Service::indexes`]), each of
-//! the journals in one directory, its paths relative to it: dgg's, a
-//! channel's each; Kick's, one of the whole service's.
+//! the journals in one directory, its paths relative to it: a channel's
+//! each.
 
 use {
   crate::index::{Error, Tally},

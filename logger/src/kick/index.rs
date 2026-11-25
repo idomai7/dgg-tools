@@ -1,12 +1,12 @@
-//! Kick's index: every Kick channel's journal into SQLite,
-//! `index-kick.sqlite`, apart from dgg's index, with schema versions of its
-//! own. It's what a user's history in a channel is looked up in.
+//! Kick's index: a Kick channel's journal into SQLite,
+//! `index-kick-<slug>.sqlite` (see [`file`]), apart from dgg's indexes,
+//! with schema versions of its own. It's what a user's history in the
+//! channel is looked up in.
 //!
 //! As dgg's, it's derived data, rebuilt from the journal at will, and each
 //! file's progress is checkpointed in the same transaction as its rows.
-//! Channels are found as the journal roots in Kick's directory, `kick/`,
-//! archives through their manifests. Files are named by their paths in
-//! Kick's directory, `<slug>/live/...` and `<slug>/archive/...`.
+//! Archives are found through their manifests. Files are named by their
+//! paths in the channel's directory, `live/...` and `archive/...`.
 //!
 //! Rows are keyed by Kick's own ids, so the same message, deletion or ban
 //! seen by captures on several hosts is kept once, with the earliest
@@ -27,7 +27,7 @@ use {
       Error, Tally, checkpoint, open_at, open_read_only_at, relative,
       waiting_in,
     },
-    kick::{Kick, channels},
+    kick::Kick,
     service::Service,
   },
   ::kick_api::{
@@ -52,8 +52,15 @@ pub const SCHEMA_VERSION: Version = Version { major: 0, minor: 1 };
 /// [`SCHEMA_VERSION`]) rather than editing an old one.
 const SCHEMA: &str = include_str!("../../schemas/index-kick/v0.1.sql");
 
-/// Its file, in the data directory.
-pub const FILE: &str = "index-kick.sqlite";
+/// The file of channel `slug`'s index, in the data directory.
+pub fn file(slug: &str) -> String {
+  format!("index-kick-{slug}.sqlite")
+}
+
+/// The file of the index of every channel's, in the data directory, from
+/// before each channel had its own; [`migrate`](crate::migrate) deletes
+/// it.
+pub const OLD_FILE: &str = "index-kick.sqlite";
 
 /// Records are committed in batches of this many, with their checkpoint.
 const BATCH: usize = 10_000;
@@ -123,72 +130,66 @@ pub fn open_read_only(
   open_read_only_at(path, busy, Kick::NAME, SCHEMA_VERSION)
 }
 
-/// How many records in every channel's live files, in Kick's directory
-/// `dir`, aren't indexed yet, counting up to `at_most`.
+/// How many records in the live files of the channel in `dir` aren't
+/// indexed yet, counting up to `at_most`.
 pub fn waiting(
   db: &Connection,
   dir: &Path,
   at_most: u64,
 ) -> Result<u64, Error> {
-  let mut files = Vec::new();
-  for slug in channels::journaled(dir)? {
-    for file in live_files(&channel_root(dir, &slug))? {
-      files.push((relative(dir, &file), file));
-    }
-  }
-  waiting_in(db, files, at_most)
+  let files = live_files(dir)?;
+  let files = files.into_iter().map(|file| (relative(dir, &file), file));
+  waiting_in(db, files.collect(), at_most)
 }
 
-/// Indexes everything in every Kick channel's journal, in Kick's directory
-/// `dir`, that isn't indexed yet.
+/// Indexes everything in the journal of the channel in `dir`, named by
+/// its slug, that isn't indexed yet.
 pub fn index(db: &mut Connection, dir: &Path) -> Result<Stats, Error> {
   let mut stats = Stats::default();
   let mut live = Vec::new();
-  for slug in channels::journaled(dir)? {
-    let root = channel_root(dir, &slug);
-    for file in live_files(&root)? {
-      let path = relative(dir, &file);
-      let (offset, _) = checkpoint(db, &path)?;
-      live.push(path.clone());
-      let reader = match Reader::open(&file, offset) {
-        Ok(reader) => reader,
-        Err(ReadError::Io(e)) => return Err(e.into()),
-        Err(e) => {
-          stats.skipped.push((path, format!("{e:?}")));
-          continue;
-        }
-      };
-      let file = Origin {
-        channel: &slug,
-        path: &path,
-      };
-      index_file(db, &file, None, reader, &mut stats)?;
-    }
-    for archive in archive::all(&root)? {
-      let file = archive.path(&root);
-      let path = relative(dir, &file);
-      let (offset, digest) = checkpoint(db, &path)?;
-      let same = digest.as_deref() == Some(archive.sha256.as_str());
-      if same && offset >= archive.bytes {
+  let slug = dir.file_name().unwrap_or_default().to_string_lossy();
+  for file in live_files(dir)? {
+    let path = relative(dir, &file);
+    let (offset, _) = checkpoint(db, &path)?;
+    live.push(path.clone());
+    let reader = match Reader::open(&file, offset) {
+      Ok(reader) => reader,
+      Err(ReadError::Io(e)) => return Err(e.into()),
+      Err(e) => {
+        stats.skipped.push((path, format!("{e:?}")));
         continue;
       }
-      let offset = if same { offset } else { 0 };
-      let reader = match Reader::open(&file, offset) {
-        Ok(reader) => reader,
-        Err(ReadError::Io(e)) if e.kind() != io::ErrorKind::NotFound => {
-          return Err(e.into());
-        }
-        Err(e) => {
-          stats.skipped.push((path, format!("{e:?}")));
-          continue;
-        }
-      };
-      let origin = Origin {
-        channel: &slug,
-        path: &path,
-      };
-      index_file(db, &origin, Some(&archive.sha256), reader, &mut stats)?;
+    };
+    let file = Origin {
+      channel: &slug,
+      path: &path,
+    };
+    index_file(db, &file, None, reader, &mut stats)?;
+  }
+  for archive in archive::all(dir)? {
+    let file = archive.path(dir);
+    let path = relative(dir, &file);
+    let (offset, digest) = checkpoint(db, &path)?;
+    let same = digest.as_deref() == Some(archive.sha256.as_str());
+    if same && offset >= archive.bytes {
+      continue;
     }
+    let offset = if same { offset } else { 0 };
+    let reader = match Reader::open(&file, offset) {
+      Ok(reader) => reader,
+      Err(ReadError::Io(e)) if e.kind() != io::ErrorKind::NotFound => {
+        return Err(e.into());
+      }
+      Err(e) => {
+        stats.skipped.push((path, format!("{e:?}")));
+        continue;
+      }
+    };
+    let origin = Origin {
+      channel: &slug,
+      path: &path,
+    };
+    index_file(db, &origin, Some(&archive.sha256), reader, &mut stats)?;
   }
   forget_gone(db, &live)?;
   Ok(stats)
@@ -205,11 +206,10 @@ pub(crate) fn recent(
 ) -> Result<Connection, Error> {
   let mut recent = Connection::open_in_memory()?;
   recent.execute_batch(SCHEMA)?;
-  let dir = Kick::dir(journal);
-  let root = channel_root(&dir, slug);
+  let root = channel_root(&Kick::dir(journal), slug);
   let mut stats = Stats::default();
   for file in live_files(&root)? {
-    let path = relative(&dir, &file);
+    let path = relative(&root, &file);
     let offset = match db {
       Some(db) => checkpoint(db, &path)?.0,
       None => 0,
@@ -237,9 +237,9 @@ fn forget_gone(db: &mut Connection, live: &[String]) -> Result<(), Error> {
   let transaction = db.transaction()?;
   let stale: Vec<String> = transaction
     .prepare(
-      "SELECT path FROM files WHERE path GLOB '*/live/*'
+      "SELECT path FROM files WHERE path GLOB 'live/*'
        UNION
-       SELECT path FROM unparsed WHERE path GLOB '*/live/*'",
+       SELECT path FROM unparsed WHERE path GLOB 'live/*'",
     )?
     .query_map([], |row| row.get(0))?
     .collect::<Result<Vec<String>, _>>()?

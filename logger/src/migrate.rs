@@ -4,8 +4,10 @@
 //! Every host is on this build's formats (`journal dgg.0.3`, index schema
 //! 0.6), but dgg's journals move into a directory per channel, and its
 //! index to one per channel, while capture keeps running (see
-//! [`crate::dgg::migrate`]). It logs what an upgrade touches, so its log
-//! shows how one went:
+//! [`crate::dgg::migrate`]); and Kick's index of every channel,
+//! [`OLD_FILE`](kick_index::OLD_FILE), is deleted, each channel's index
+//! being rebuilt from its journal. It logs what an upgrade touches, so its
+//! log shows how one went:
 //!
 //! - first, the build, and the versions it writes;
 //! - anything left of the layout from before dgg's journals had a
@@ -18,9 +20,11 @@
 //!   version: live files, archive manifests, `synced-archives` and capture
 //!   statuses. A file at another version, which this build can't read, gets
 //!   a line of its own, and is left as it was;
+//! - Kick's old index, deleted;
 //! - each index's schema (see [`Service::indexes`]), which must be its
 //!   service's (or there's none yet): [`SCHEMA_VERSION`] for each dgg
-//!   channel's, [`SCHEMA_VERSION`](kick_index::SCHEMA_VERSION) for Kick's.
+//!   channel's, [`SCHEMA_VERSION`](kick_index::SCHEMA_VERSION) for each
+//!   Kick channel's.
 //!
 //! How the captures hand over is theirs to say, in their own logs.
 //!
@@ -33,7 +37,7 @@ use {
   crate::{
     BUILD, control,
     dgg::{self, Dgg, index::SCHEMA_VERSION},
-    index::schema_version,
+    index::{self, schema_version},
     kick::{Kick, index as kick_index},
     service::{Root, Service},
     taken,
@@ -78,6 +82,8 @@ pub struct Report {
   pub moved: u64,
   /// Live files left where they were, still being written.
   pub left: Vec<PathBuf>,
+  /// Whether Kick's old index was deleted (or with a dry run, would be).
+  pub kick_index_removed: bool,
   /// Each index there is, by its file, and its schema.
   pub indexes: Vec<(String, Version)>,
   /// Files at a version this build can't read, left as they were.
@@ -120,10 +126,47 @@ pub fn migrate(
   check_service::<Dgg>(&journal, &mut report, say)?;
   check_service::<Kick>(&journal, &mut report, say)?;
 
+  remove_old_kick_index(data, dry_run, &mut report, say);
   check_indexes::<Dgg>(data, SCHEMA_VERSION, &mut report, say)?;
   check_indexes::<Kick>(data, kick_index::SCHEMA_VERSION, &mut report, say)?;
 
   Ok(report)
+}
+
+/// Deletes Kick's index of every channel, in `data`, if it's there: each
+/// channel's has its own now, rebuilt from its journal.
+fn remove_old_kick_index(
+  data: &Path,
+  dry_run: bool,
+  report: &mut Report,
+  say: &mut dyn FnMut(Level, &str),
+) {
+  let name = kick_index::OLD_FILE;
+  let path = data.join(name);
+  if !path.exists() {
+    return;
+  }
+  let removed = match dry_run {
+    true => Ok(()),
+    false => index::remove(&path),
+  };
+  match removed {
+    Ok(()) => {
+      report.kick_index_removed = true;
+      say(
+        Level::Info,
+        &format!(
+          "{name}: deleted, as each Kick channel's index is its own now, \
+           rebuilt from its journal"
+        ),
+      );
+    }
+    Err(e) => {
+      let why = format!("{name}: can't delete it: {e}");
+      say(Level::Error, &why);
+      report.failed.push(why);
+    }
+  }
 }
 
 /// Checks each of `S`'s indexes, in `data`, is at `wanted`.

@@ -540,6 +540,8 @@ fn reports_kicks_captures_and_channels() {
      2 k-1 1 frame {}\u{1e}\n3 k-1 1 frame {}\u{1e}\n",
   );
   dir.write("data/journal/kick/gone/live/2026-01-01/k-0.journal", "1");
+  // Each channel's index is its own.
+  dir.write("data/index-kick-one.sqlite", "12345");
 
   let report = Watcher::new().unwrap().gather(&paths).unwrap();
   let captures: Vec<_> = report
@@ -567,13 +569,20 @@ fn reports_kicks_captures_and_channels() {
     .kick
     .channels
     .iter()
-    .map(|c| (c.slug.as_str(), c.listed, c.today_files.bytes))
+    .map(|c| {
+      let index = c.index.map(|(bytes, _)| bytes);
+      (c.slug.as_str(), c.listed, c.today_files.bytes, index)
+    })
     .collect();
   let one = channels[1].2;
   assert!(one > 0);
   assert_eq!(
     channels,
-    [("gone", false, 0), ("one", true, one), ("two", true, 0)]
+    [
+      ("gone", false, 0, None),
+      ("one", true, one, Some(5)),
+      ("two", true, 0, None)
+    ]
   );
   // Kick's captures with dgg's, its channels with the journal.
   let lines = text(&report);
@@ -592,6 +601,13 @@ fn reports_kicks_captures_and_channels() {
   assert!(line("gone").contains("(not listed)"));
   assert!(line("one").contains("last write"));
   assert!(line("two").contains("nothing today"));
+  // Each channel's index, under it.
+  let index = |slug: &str| {
+    let at = journal.iter().position(|l| l == line(slug)).unwrap();
+    journal[at + 1].clone()
+  };
+  assert!(index("one").starts_with("    index  5 B  last write"));
+  assert_eq!(index("two"), "    index  none yet");
   assert!(!lines.contains(&"KICK".to_owned()));
 
   dir.write(
