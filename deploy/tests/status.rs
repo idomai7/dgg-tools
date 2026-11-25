@@ -102,24 +102,28 @@ fn reports_captures_and_the_journal() {
     .map(|c| c.listening.as_deref())
     .collect();
   assert_eq!(listening, [Some("destiny.gg"); 3]);
-  let journal = &report.journal;
+  let journal = &report.dgg.channels[0].journal;
   assert_eq!(journal.today_files.count, 2);
   assert_eq!(journal.waiting, ["2026-01-02"]);
   assert_eq!(journal.archived.days, 2);
   assert_eq!(journal.archived.bytes, 150);
   assert_eq!(journal.backfill_waiting.count, 1);
   assert_eq!(journal.growth, None);
-  assert_eq!(report.index.map(|(bytes, _)| bytes), Some(1));
+  assert_eq!(
+    report.dgg.channels[0].index.map(|(bytes, _)| bytes),
+    Some(1)
+  );
 
   let lines = journal_lines(&report);
-  assert!(lines[0].starts_with(&format!("today (UTC {today})  2 files")));
+  let first = format!("dgg  destiny.gg{:10} today (UTC {today})  2 files", "");
+  assert!(lines[0].starts_with(&first), "{}", lines[0]);
   assert_eq!(
     lines[1],
-    "waiting for compact  1 days (UTC) from 2026-01-02  5 B"
+    "  waiting for compact  1 days (UTC) from 2026-01-02  5 B"
   );
   assert_eq!(
     lines[2],
-    "archived  2 days (UTC), 2026-01-01 to 2026-01-03  150 B"
+    "  archived  2 days (UTC), 2026-01-01 to 2026-01-03  150 B"
   );
   let all = text(&report).join("\n");
   assert!(all.contains("STALE: last heard 1m00s ago"), "{all}");
@@ -137,7 +141,8 @@ fn reports_captures_and_the_journal() {
      3 a-3 1 frame NAMES {}\u{1e}\n4 a-3 1 frame JOIN {}\u{1e}\n5 a-3 1 close bye\u{1e}\n",
   );
   let report = watcher.gather(&paths).unwrap();
-  assert!(report.journal.growth.is_some_and(|rate| rate > 0.0));
+  let journal = &report.dgg.channels[0].journal;
+  assert!(journal.growth.is_some_and(|rate| rate > 0.0));
   assert_eq!(report.captures[1].frames, 3);
   assert!(text(&report).join("\n").contains("3 frames"));
 }
@@ -389,7 +394,8 @@ fn tails_a_captures_frames() {
   let dir = TempDir::new("deploy-status-frames");
   let root = dir.path().join("journal");
   let a1 = Which {
-    kick: None,
+    kick: false,
+    channel: "destiny.gg".into(),
     instance: "a-1".into(),
   };
   assert!(capture_tail(&root, &a1, 10).unwrap().is_empty());
@@ -445,7 +451,8 @@ fn tails_a_captures_frames() {
     ),
   );
   let kick = Which {
-    kick: Some("one".into()),
+    kick: true,
+    channel: "one".into(),
     instance: "a-1".into(),
   };
   assert_eq!(
@@ -588,6 +595,91 @@ fn reports_kicks_captures_and_channels() {
   let report = Watcher::new().unwrap().gather(&paths).unwrap();
   let problem = report.kick.problem.as_deref().unwrap();
   assert!(problem.contains("line 1"), "{problem}");
+}
+
+#[test]
+fn reports_each_dgg_channel() {
+  let dir = TempDir::new("deploy-status-dgg-channels");
+  let now = now_ms();
+  let today = utc_day(now);
+  let paths = Paths::under(dir.to_path_buf());
+  dir.write(
+    "dgg-channels",
+    "two.dev wss://two.example/ws -\ndestiny.gg wss://x/ws -\n",
+  );
+  // A capture of each listed channel; one only journaled, not listed.
+  dir.write(
+    "data/journal/dgg/two.dev/control/a-1.status",
+    status("a-1", now - 60_000, now, Some(now - 50_000)),
+  );
+  dir.write(
+    "data/journal/dgg/destiny.gg/control/a-1.status",
+    status("a-1", now - 60_000, now - 500, Some(now - 50_000)),
+  );
+  dir.write(
+    format!("data/journal/dgg/two.dev/live/{today}/a-1.journal"),
+    "journal dgg.0.3\u{1e}\n1 a-1 1 open wss://two\u{1e}\n\
+     2 a-1 1 frame MSG {}\u{1e}\n3 a-1 1 frame MSG {}\u{1e}\n",
+  );
+  dir.write("data/journal/dgg/old.chat/live/2026-01-01/a-0.journal", "1");
+  dir.write("data/index-dgg-two.dev.sqlite", "12");
+  // The old layout's directories aren't channels.
+  dir.write("data/journal/dgg/live/2026-01-01/a-0.journal", "1");
+
+  let report = Watcher::new().unwrap().gather(&paths).unwrap();
+  let channels: Vec<_> = report
+    .dgg
+    .channels
+    .iter()
+    .map(|c| (c.name.as_str(), c.listed, c.index.map(|(bytes, _)| bytes)))
+    .collect();
+  assert_eq!(
+    channels,
+    [
+      ("two.dev", true, Some(2)),
+      ("destiny.gg", true, None),
+      ("old.chat", false, None),
+    ]
+  );
+  assert_eq!(report.dgg.problem, None);
+  // Each capture's frames are its own channel's.
+  let captures: Vec<_> = report
+    .captures
+    .iter()
+    .map(|c| (c.listening.as_deref(), c.frames))
+    .collect();
+  assert_eq!(captures, [(Some("two.dev"), 2), (Some("destiny.gg"), 0)]);
+  let which: Vec<Which> = report.captures.iter().map(|c| c.which()).collect();
+  assert_eq!(which[0].channel, "two.dev");
+  assert_ne!(which[0], which[1]);
+
+  let lines = journal_lines(&report);
+  let at = |name: &str| {
+    let start = format!("dgg  {name:<20} today");
+    lines
+      .iter()
+      .position(|line| line.starts_with(&start))
+      .unwrap()
+  };
+  let (two, destiny, old) = (at("two.dev"), at("destiny.gg"), at("old.chat"));
+  assert!(two < destiny && destiny < old, "{lines:#?}");
+  assert!(lines[two + 1].starts_with("  index  2 B  last write"));
+  assert_eq!(lines[destiny + 1], "  index  none yet");
+  assert!(lines[old].ends_with("  (not listed)"));
+  assert!(lines[old + 1].starts_with("  waiting for compact  1 days"));
+
+  dir.write("dgg-channels", "two.dev\n");
+  let report = Watcher::new().unwrap().gather(&paths).unwrap();
+  let problem = report.dgg.problem.as_deref().unwrap();
+  assert!(problem.contains("line 1"), "{problem}");
+  // Still each journaled channel, none listed.
+  assert!(report.dgg.channels.iter().all(|c| !c.listed));
+  let lines = journal_lines(&report);
+  assert!(
+    lines
+      .iter()
+      .any(|line| line.starts_with("dgg channel list  "))
+  );
 }
 
 #[test]

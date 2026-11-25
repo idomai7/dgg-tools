@@ -359,9 +359,9 @@ impl View {
 fn records_title(which: &Which, report: &Report) -> String {
   let capture = report.captures.iter().find(|c| c.which() == *which);
   let listening = capture.map_or("?", listening);
-  let what = match &which.kick {
-    Some(_) => format!("kick {}, channel {listening}", which.instance),
-    None => format!("dgg {}, {listening}", which.instance),
+  let what = match which.kick {
+    true => format!("kick {}, channel {listening}", which.instance),
+    false => format!("dgg {}, {listening}", which.instance),
   };
   format!("records: {what} (r again for the next capture)")
 }

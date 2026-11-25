@@ -1,7 +1,7 @@
-//! What the logger is doing: its programs, each capture's health (dgg's
-//! and each Kick channel's), the journal and index (Kick's channels'
-//! too), the peers it syncs from, free disk space and the ends of the
-//! logs.
+//! What the logger is doing: its programs, each capture's health (each
+//! dgg channel's and each Kick channel's), each dgg channel's journal and
+//! index, Kick's channels' journals and its index, the peers it syncs
+//! from, free disk space and the ends of the logs.
 //!
 //! [`Watcher::gather`] takes a snapshot ([`Report`]); [`text`] prints one,
 //! and [`watch`] redraws one every second.
@@ -21,7 +21,7 @@ use {
   ::common::{fs::MissingOk, log::Level},
   ::logger::{
     control,
-    dgg::{Dgg, channels::DESTINY, index},
+    dgg::{self, Dgg, index},
     kick::channels,
     service::{Root, Service},
   },
@@ -31,7 +31,7 @@ use {
     record::{kick, v0},
   },
   ::std::{
-    collections::{BTreeSet, HashMap, VecDeque},
+    collections::{BTreeSet, HashMap, HashSet, VecDeque},
     fs,
     io::{self, Read, Seek, SeekFrom},
     path::{Path, PathBuf},
@@ -156,17 +156,35 @@ pub struct Report {
   pub paths: Paths,
   pub programs: Vec<Program>,
   /// Unhealthy first (stale, then connecting), then the busiest; dgg's
-  /// before Kick's, by channel, when that doesn't tell them apart.
+  /// before Kick's, each by channel, when that doesn't tell them apart.
   pub captures: Vec<Capture>,
-  pub journal: Journal,
-  /// The index's size and last write (unix ms).
-  pub index: Option<(u64, i64)>,
-  /// Kick's index's, likewise.
+  pub dgg: DggChannels,
+  /// Kick's index's size and last write (unix ms).
   pub kick_index: Option<(u64, i64)>,
   /// Free space on the data directory's disk.
   pub free: Option<u64>,
   pub sync: Option<Sync>,
   pub kick: Kick,
+}
+
+/// dgg's channels, listed or journaled.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct DggChannels {
+  /// The list's, in its order, then any others journaled, by name.
+  pub channels: Vec<DggChannel>,
+  /// Why the channel list couldn't be read, if it couldn't.
+  pub problem: Option<String>,
+}
+
+/// One dgg channel's journal and index.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DggChannel {
+  pub name: String,
+  /// Whether it's in the channel list (or only journaled before).
+  pub listed: bool,
+  pub journal: Journal,
+  /// Its index's size and last write (unix ms).
+  pub index: Option<(u64, i64)>,
 }
 
 /// Kick's channels, listed or journaled.
@@ -206,28 +224,32 @@ pub struct Peer {
 }
 
 /// Takes snapshots, remembering what it needs from the last ones (CPU use,
-/// journal growth, how far it has counted each live file's frames, and
-/// each capture's frames over the last minute).
+/// each dgg channel's journal growth, how far it has counted each live
+/// file's frames, and each capture's frames over the last minute).
 pub struct Watcher {
   system: System,
-  previous: Option<(String, i64, u64)>,
+  /// Each dgg channel's day, snapshot (unix ms) and bytes written that
+  /// day.
+  previous: HashMap<String, (String, i64, u64)>,
   counted: HashMap<PathBuf, Counted>,
   /// Each capture's frames at each snapshot (unix ms).
   frames: HashMap<Which, VecDeque<(i64, u64)>>,
 }
 
-/// Which capture one is: its Kick channel (none for dgg's), then its
-/// instance. Kick's captures of different channels share instance names.
+/// Which capture one is: its service (dgg's first), its channel, then its
+/// instance. Captures of different channels share instance names.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Which {
-  pub kick: Option<String>,
+  pub kick: bool,
+  pub channel: String,
   pub instance: String,
 }
 
 impl Capture {
   pub fn which(&self) -> Which {
     Which {
-      kick: self.kick.then(|| self.listening.clone()).flatten(),
+      kick: self.kick,
+      channel: self.listening.clone().unwrap_or_default(),
       instance: self.instance.clone(),
     }
   }
@@ -278,7 +300,7 @@ impl Watcher {
       System::new().map_err(|e| io::Error::other(format!("processes: {e}")))?;
     Ok(Self {
       system,
-      previous: None,
+      previous: HashMap::new(),
       counted: HashMap::new(),
       frames: HashMap::new(),
     })
@@ -287,24 +309,40 @@ impl Watcher {
   pub fn gather(&mut self, paths: &Paths) -> io::Result<Report> {
     let now = now_ms();
     let journal_root = paths.data.join("journal");
-    let [dgg, backfill] = dgg_roots(&journal_root)?;
+    let (names, problem) = dgg_channels(paths, &journal_root)?;
     let (kick, kick_captures) = kick(paths, &journal_root, now)?;
-    let mut captures = captures(&journal_root, now)?;
+    let mut captures = Vec::new();
+    let mut files = Vec::new();
+    let mut dgg = DggChannels {
+      channels: Vec::new(),
+      problem,
+    };
+    for (name, listed) in names {
+      let [root, backfill] = dgg_roots(&journal_root, &name)?;
+      captures.extend(dgg_captures(&journal_root, &name, now)?);
+      let theirs = root.live_files()?.into_iter();
+      files.extend(theirs.map(|file| (file, false, name.clone())));
+      dgg.channels.push(DggChannel {
+        journal: self.journal(&name, &root, &backfill, now)?,
+        index: size_and_write(&paths.data.join(index::file(&name))),
+        name,
+        listed,
+      });
+    }
+    // Channels gone are forgotten.
+    self
+      .previous
+      .retain(|name, _| dgg.channels.iter().any(|c| c.name == *name));
     captures.extend(kick_captures);
-    let mut files: Vec<(PathBuf, Option<String>)> = dgg
-      .live_files()?
-      .into_iter()
-      .map(|file| (file, None))
-      .collect();
     let kick_root = kick_root(&journal_root);
     for channel in &kick.channels {
       let root = channel_root(&kick_root, &channel.slug);
       let theirs = live_files(&root)?.into_iter();
-      files.extend(theirs.map(|file| (file, Some(channel.slug.clone()))));
+      files.extend(theirs.map(|file| (file, true, channel.slug.clone())));
     }
     self.count_frames(&mut captures, files);
     self.rate(&mut captures, now);
-    // Stable: ties keep dgg's first, then Kick's by channel.
+    // Stable: ties keep dgg's first, then Kick's, each by channel.
     captures.sort_by(|a, b| {
       let per_minute = |c: &Capture| c.per_minute.unwrap_or(0.0);
       unhealthiest(a)
@@ -316,8 +354,7 @@ impl Watcher {
       paths: paths.clone(),
       programs: self.programs(&paths.bin()),
       captures,
-      journal: self.journal(&dgg, &backfill, now)?,
-      index: size_and_write(&paths.data.join(index::file(DESTINY))),
+      dgg,
       kick_index: size_and_write(&paths.data.join(::logger::kick::index::FILE)),
       free: free_space(&paths.data),
       sync: sync(paths),
@@ -345,8 +382,8 @@ impl Watcher {
         let exe = process.exe().map(Path::to_owned);
         let ours = exe.as_ref().is_some_and(|exe| exe.starts_with(bin));
         let mut name = processes::program(process);
-        if let Some(slug) = processes::kick_channel(process) {
-          name = format!("{name} {slug}");
+        if let Some(channel) = processes::capture_channel(process) {
+          name = format!("{name} {channel}");
         }
         // Any of the logger's programs, or anything run from the bin.
         (name.starts_with("dgg-") || ours).then(|| Program {
@@ -365,25 +402,25 @@ impl Watcher {
   }
 
   /// Adds to `captures` the frames in each one's live files, `files` (each
-  /// with its Kick channel, or none for dgg's), read from where the last
+  /// with whether it's Kick's, and its channel), read from where the last
   /// count left off.
   fn count_frames(
     &mut self,
     captures: &mut [Capture],
-    files: Vec<(PathBuf, Option<String>)>,
+    files: Vec<(PathBuf, bool, String)>,
   ) {
     // Compacted files are gone; so is their count.
     self
       .counted
-      .retain(|file, _| files.iter().any(|(live, _)| live == file));
-    for (file, slug) in files {
+      .retain(|file, _| files.iter().any(|(live, ..)| live == file));
+    for (file, kick, channel) in files {
       let Some((instance, _)) = live_file_instance(&file) else {
         continue;
       };
       let Some(capture) = captures.iter_mut().find(|capture| {
         capture.instance == instance
-          && capture.kick == slug.is_some()
-          && (slug.is_none() || capture.listening == slug)
+          && capture.kick == kick
+          && capture.listening.as_deref() == Some(channel.as_str())
       }) else {
         continue;
       };
@@ -438,8 +475,11 @@ impl Watcher {
     self.frames = frames;
   }
 
+  /// dgg channel `name`'s journal, at `root`, with its backfill journal at
+  /// `backfill`.
   fn journal(
     &mut self,
+    name: &str,
     root: &Root,
     backfill: &Root,
     now: i64,
@@ -473,14 +513,14 @@ impl Watcher {
     journal.backfill_archived = archived(&archive::all(&backfill.dir)?);
 
     let bytes = journal.today_files.bytes;
-    if let Some((day, at, before)) = &self.previous
+    if let Some((day, at, before)) = self.previous.get(name)
       && *day == today
       && now > *at
     {
       let grown = bytes.saturating_sub(*before) as f64;
       journal.growth = Some(grown * 1000.0 / (now - at) as f64);
     }
-    self.previous = Some((today, now, bytes));
+    self.previous.insert(name.to_owned(), (today, now, bytes));
     Ok(journal)
   }
 }
@@ -518,28 +558,58 @@ fn last_round(log: &[String], name: &str) -> Option<String> {
   })
 }
 
-/// destiny.gg's directory, in the journal directory `journal`: the one dgg
-/// channel captured for now.
-fn destiny(journal: &Path) -> PathBuf {
-  Dgg::channel_dir(&Dgg::dir(journal), DESTINY)
+/// Channels' names, each with whether it's listed.
+type Named = Vec<(String, bool)>;
+
+/// dgg's channels, each with whether it's listed: those in the install's
+/// list, in its order, then those with a directory in the journal
+/// directory `journal`, by name; and why the list couldn't be read, if it
+/// couldn't.
+fn dgg_channels(
+  paths: &Paths,
+  journal: &Path,
+) -> io::Result<(Named, Option<String>)> {
+  let (listed, problem) =
+    match dgg::channels::load(&paths.root.join(dgg::channels::FILE)) {
+      Ok(listed) => (listed.into_iter().map(|c| c.name).collect(), None),
+      Err(e) => (Vec::new(), Some(e)),
+    };
+  let seen: HashSet<String> = listed.iter().cloned().collect();
+  let mut names: Named = listed.into_iter().map(|name| (name, true)).collect();
+  let journaled = Dgg::channels(&Dgg::dir(journal))?.into_iter();
+  names.extend(
+    journaled
+      .filter(|name| !seen.contains(name))
+      .map(|name| (name, false)),
+  );
+  Ok((names, problem))
 }
 
-/// destiny.gg's journal roots, in the journal directory `journal`: its own,
-/// and the backfill journal's.
-fn dgg_roots(journal: &Path) -> io::Result<[Root; 2]> {
-  Dgg::channel_roots(&destiny(journal), DESTINY)
+/// dgg channel `name`'s directory, in the journal directory `journal`.
+fn dgg_channel_dir(journal: &Path, name: &str) -> PathBuf {
+  Dgg::channel_dir(&Dgg::dir(journal), name)
+}
+
+/// dgg channel `name`'s journal roots, in the journal directory `journal`:
+/// its own, and its backfill journal's.
+fn dgg_roots(journal: &Path, name: &str) -> io::Result<[Root; 2]> {
+  Dgg::channel_roots(&dgg_channel_dir(journal, name), name)
     .try_into()
     .map_err(|_| io::Error::other("a dgg channel has two journal roots"))
 }
 
-/// dgg's captures, from their statuses in destiny.gg's control directory,
-/// each listening to destiny.gg.
-fn captures(journal: &Path, now: i64) -> io::Result<Vec<Capture>> {
+/// dgg channel `name`'s captures, from their statuses in its control
+/// directory, each listening to it.
+fn dgg_captures(
+  journal: &Path,
+  name: &str,
+  now: i64,
+) -> io::Result<Vec<Capture>> {
   let mut captures: Vec<Capture> =
-    control::read_all(&control::dir(&destiny(journal)))?
+    control::read_all(&control::dir(&dgg_channel_dir(journal, name)))?
       .into_iter()
       .map(|status| Capture {
-        listening: Some(DESTINY.into()),
+        listening: Some(name.into()),
         ..capture(status, now)
       })
       .collect();
@@ -695,24 +765,31 @@ impl Log {
   }
 }
 
-/// Every log: the [`LOGS`], then each channel's capture's: destiny.gg's,
-/// then each Kick channel's.
+/// Every log: the [`LOGS`], then each channel's capture's: each dgg
+/// channel's, then each Kick channel's.
 pub fn logs(report: &Report) -> Vec<Log> {
   let mut logs: Vec<Log> = LOGS.iter().map(|name| Log::named(name)).collect();
-  logs.push(Log::dgg(DESTINY));
+  let dgg = report.dgg.channels.iter();
+  logs.extend(dgg.map(|channel| Log::dgg(&channel.name)));
   let channels = report.kick.channels.iter();
   logs.extend(channels.map(|channel| Log::kick(&channel.slug)));
   logs
 }
 
-/// The captures' logs: destiny.gg's, then the one dgg's wrote before each
-/// channel had its own, each Kick channel's, then the one Kick's shared
-/// before.
+/// The logs each service's captures wrote before each channel had its
+/// own: dgg's, then Kick's.
+pub const SHARED_CAPTURE_LOGS: [&str; 2] = ["dgg-capture", "kick-capture"];
+
+/// The captures' logs: each dgg channel's, then the one dgg's wrote before
+/// each channel had its own, each Kick channel's, then the one Kick's
+/// shared before (see [`SHARED_CAPTURE_LOGS`]).
 pub fn capture_logs(report: &Report) -> Vec<Log> {
-  let mut logs = vec![Log::dgg(DESTINY), Log::named("dgg-capture")];
+  let dgg = report.dgg.channels.iter();
+  let mut logs: Vec<Log> = dgg.map(|channel| Log::dgg(&channel.name)).collect();
+  logs.push(Log::named(SHARED_CAPTURE_LOGS[0]));
   let channels = report.kick.channels.iter();
   logs.extend(channels.map(|channel| Log::kick(&channel.slug)));
-  logs.push(Log::named("kick-capture"));
+  logs.push(Log::named(SHARED_CAPTURE_LOGS[1]));
   logs
 }
 
@@ -779,9 +856,9 @@ pub fn capture_tail(
   which: &Which,
   lines: usize,
 ) -> io::Result<Vec<String>> {
-  let files = match &which.kick {
-    Some(slug) => live_files(&channel_root(&kick_root(journal), slug))?,
-    None => dgg_roots(journal)?[0].live_files()?,
+  let files = match which.kick {
+    true => live_files(&channel_root(&kick_root(journal), &which.channel))?,
+    false => dgg_roots(journal, &which.channel)?[0].live_files()?,
   };
   let Some(file) = files.into_iter().rfind(|file| {
     live_file_instance(file).is_some_and(|(theirs, _)| theirs == which.instance)
@@ -1008,11 +1085,19 @@ fn size_and_write(path: &Path) -> Option<(u64, i64)> {
   Some((metadata.len(), modified_ms(&metadata)?))
 }
 
-/// The journal and indexes, one line each; Kick's index only if there's
-/// one.
-pub fn journal_lines(report: &Report) -> Vec<String> {
-  let journal = &report.journal;
-  let now = report.now;
+/// An index's line: its size and last write (unix ms), at `now`.
+fn index_line(label: &str, (bytes, at): (u64, i64), now: i64) -> String {
+  format!(
+    "{label}  {}  last write {} ago",
+    format::size(bytes as f64),
+    format::duration(now - at)
+  )
+}
+
+/// dgg channel `channel`'s journal and index, at `now`: a line on today,
+/// then one each on the rest, indented under it.
+fn dgg_lines(channel: &DggChannel, now: i64) -> Vec<String> {
+  let journal = &channel.journal;
   let mut out = Vec::new();
   let last = match journal.last_write {
     Some(at) => format!("last write {} ago", format::duration(now - at)),
@@ -1022,15 +1107,17 @@ pub fn journal_lines(report: &Report) -> Vec<String> {
     .growth
     .map(|rate| format!("  +{}/s", format::size(rate)))
     .unwrap_or_default();
+  let listed = if channel.listed { "" } else { "  (not listed)" };
   out.push(format!(
-    "today (UTC {})  {} files  {}  {last}{growth}",
+    "dgg  {:<20} today (UTC {})  {} files  {}  {last}{growth}{listed}",
+    channel.name,
     journal.today,
     journal.today_files.count,
     format::size(journal.today_files.bytes as f64)
   ));
   if let Some(first) = journal.waiting.first() {
     out.push(format!(
-      "waiting for compact  {} days (UTC) from {first}  {}",
+      "  waiting for compact  {} days (UTC) from {first}  {}",
       journal.waiting.len(),
       format::size(journal.waiting_files.bytes as f64)
     ));
@@ -1038,7 +1125,7 @@ pub fn journal_lines(report: &Report) -> Vec<String> {
   let archived = |label: &str, archived: &Archived| {
     archived.first.as_ref().map(|first| {
       format!(
-        "{label}  {} days (UTC), {first} to {}  {}",
+        "  {label}  {} days (UTC), {first} to {}  {}",
         archived.days,
         archived.last.as_deref().unwrap_or(first),
         format::size(archived.bytes as f64)
@@ -1048,25 +1135,34 @@ pub fn journal_lines(report: &Report) -> Vec<String> {
   out.extend(archived("archived", &journal.archived));
   if journal.backfill_waiting.count > 0 {
     out.push(format!(
-      "backfill waiting for compact  {} files  {}",
+      "  backfill waiting for compact  {} files  {}",
       journal.backfill_waiting.count,
       format::size(journal.backfill_waiting.bytes as f64)
     ));
   }
   out.extend(archived("backfill archived", &journal.backfill_archived));
-  out.extend(kick_lines(report));
-  let index = |label: &str, (bytes, at): (u64, i64)| {
-    format!(
-      "{label}  {}  last write {} ago",
-      format::size(bytes as f64),
-      format::duration(now - at)
-    )
-  };
-  out.push(match report.index {
-    Some(index_file) => index("index", index_file),
-    None => "index  none yet".into(),
+  out.push(match channel.index {
+    Some(file) => format!("  {}", index_line("index", file, now)),
+    None => "  index  none yet".into(),
   });
-  out.extend(report.kick_index.map(|file| index("kick index", file)));
+  out
+}
+
+/// The journals and indexes: each dgg channel's (see [`dgg_lines`]), the
+/// dgg channel list's problem, if it has one, then Kick's channels' and
+/// its index, only if there's one; then the peers.
+pub fn journal_lines(report: &Report) -> Vec<String> {
+  let now = report.now;
+  let mut out = Vec::new();
+  for channel in &report.dgg.channels {
+    out.extend(dgg_lines(channel, now));
+  }
+  if let Some(problem) = &report.dgg.problem {
+    out.push(format!("dgg channel list  {problem}"));
+  }
+  out.extend(kick_lines(report));
+  let kick_index = report.kick_index;
+  out.extend(kick_index.map(|file| index_line("kick index", file, now)));
   if let Some(sync) = &report.sync {
     for peer in &sync.peers {
       let last = peer.last.as_deref().unwrap_or("no round yet");

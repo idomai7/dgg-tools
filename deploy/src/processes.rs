@@ -44,10 +44,12 @@ pub fn program(process: &Process) -> String {
   }
 }
 
-/// The channel a `dgg-logger kick-capture` captures: its `--channel`.
-pub fn kick_channel(process: &Process) -> Option<String> {
+/// The channel a `dgg-logger dgg-capture` or `kick-capture` captures: its
+/// `--channel`.
+pub fn capture_channel(process: &Process) -> Option<String> {
   let args = process.cmd();
-  if args.get(1)?.to_string_lossy() != "kick-capture" {
+  let command = args.get(1)?.to_string_lossy();
+  if command != "dgg-capture" && command != "kick-capture" {
     return None;
   }
   let at = args.iter().position(|arg| arg == "--channel")?;
