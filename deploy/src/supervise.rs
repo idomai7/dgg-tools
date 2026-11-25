@@ -39,6 +39,8 @@
 //! - The captures' first starts are `stagger` apart, dgg's first, so an
 //!   upgrade's handoffs, which follow each start, are spread out too:
 //!   dgg's and Kick's servers don't see every channel reconnect at once.
+//! - Given the install's root, its channel lists are written at start if
+//!   they aren't there, as an install writes them (see [`crate::lists`]).
 //!
 //! Each program's stdout and stderr go, line by line, to `<name>.log` in the
 //! logs directory, each channel's capture to its own (see
@@ -47,7 +49,7 @@
 //! `first` once a run has lasted `reset_after`.
 
 use {
-  crate::{lifeline::Lifeline, log::Log, peer},
+  crate::{lifeline::Lifeline, lists, log::Log, peer},
   ::common::{config::Secret, log::Level},
   ::logger::{capture::REMOVED_EXIT, dgg, kick::channels},
   ::std::{
@@ -284,6 +286,22 @@ pub fn run(config: &Config, stop: &Stop) -> io::Result<Exit> {
       crate::BUILD
     ),
   );
+  // The install's channel lists, written if they aren't there yet.
+  if let Some(root) = &config.peers {
+    let written = lists::write_missing(root).map_err(io::Error::other);
+    let retired = written.and_then(|mut did| {
+      did.extend(lists::retire_plain(root)?);
+      Ok(did)
+    });
+    match retired {
+      Ok(did) => {
+        for line in did {
+          log_line(&supervisor, Level::Info, &line);
+        }
+      }
+      Err(e) => log_line(&supervisor, Level::Error, &format!("lists: {e}")),
+    }
+  }
 
   // Stops the programs: on request, or once a dgg capture hands off.
   let programs = Stop::new();

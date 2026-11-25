@@ -11,15 +11,15 @@ directory:
 | `dgg-gaps` | Lists when no dgg capture was connected | when you want |
 | `dgg-backfill` | Fetches missed dgg messages from public logs | after an outage |
 | `sync`, `serve` | Copy the journal between hosts | when moving hosts, or every 15 minutes from a peer |
-| `kick-ids` | Records Kick channels' ids in `kick-channels`, for `kick-capture` | when adding a channel |
-| `kick-capture` | Connects to one Kick channel's chat, from `kick-channels`, and writes everything to the journal | all the time, one for each channel in `kick-channels` |
+| `kick-ids` | Records Kick channels' ids in `kick-channels.jsonc`, for `kick-capture` | when adding a channel |
+| `kick-capture` | Connects to one Kick channel's chat, from `kick-channels.jsonc`, and writes everything to the journal | all the time, one for each channel in `kick-channels.jsonc` |
 | `install`, `uninstall`, `status`, `config`, `supervise` | Run, install and inspect the rest | when you want |
 
 `dgg-supervisor` keeps capture and index running (and serve, given its
 config), restarts them after failures, and runs compact (and sync, given a
 peer); it's `dgg-logger
 supervise` without a window, for the logon task and the service. It runs
-a `kick-capture` for each channel in `kick-channels` too, each on its own,
+a `kick-capture` for each channel in `kick-channels.jsonc` too, each on its own,
 so one failing leaves the others. It reads the list every minute: a
 channel added is captured from then on, and one removed stops; a
 channel's capture also notices if its ids change. In Task Manager, both
@@ -54,7 +54,9 @@ An install lives in one folder:
                            mesh's CA (`dgg-logger config` shows it without
                            its secrets)
   nodes                    the mesh's node list, if any
-  kick-channels            the Kick channels to capture, from `kick-ids`
+  dgg-channels.jsonc       the dgg channels to capture (destiny.gg's alone
+                           at first), edited by hand
+  kick-channels.jsonc      the Kick channels to capture, from `kick-ids`
 ```
 
 The journal is the record. The indexes can always be deleted and rebuilt with
@@ -118,8 +120,12 @@ time, and names each channel's healthy capture when it's done.
 
 The bridges start 5 seconds apart, dgg's first, and so do the new
 install's captures, so the handoffs are spread out and no chat server sees
-every channel reconnect at once. `dgg-channels` and `kick-channels` move
-with the install's folder.
+every channel reconnect at once. `dgg-channels.jsonc` and
+`kick-channels.jsonc` move with the install's folder. Either one that
+isn't there is written before the bridges start: from the plain
+`dgg-channels` or `kick-channels` of an install from before they were
+JSONC, if there's one, else new. The plain one is renamed `.old` once the
+old install has stopped.
 
 Running `install` with the other kind (with or without `--machine`)
 switches to it the same way, moving the data and logs to the new folder.

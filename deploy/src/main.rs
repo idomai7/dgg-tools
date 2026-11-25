@@ -25,7 +25,7 @@ enum Command {
   /// compacting every hour and (with `--peers`) syncing every 15
   /// minutes, until stopped (Ctrl-C) or until capture hands off to a newer
   /// instance. With `--peers`, `kick-capture` runs too, once the
-  /// `kick-channels` there has channels.
+  /// `kick-channels.jsonc` there has channels.
   Supervise {
     /// Data directory: the journal and the index.
     #[arg(long)]
@@ -512,6 +512,9 @@ fn install(options: &install::Options) -> ExitCode {
       eprintln!("  build    {}", done.build.display());
       eprintln!("  data     {}", done.paths.data.display());
       eprintln!("  logs     {}", done.paths.logs.display());
+      for line in &done.lists {
+        eprintln!("  lists    {line}");
+      }
       for (name, capture) in &done.dgg {
         eprintln!("  dgg      {name}: {capture} (healthy)");
       }

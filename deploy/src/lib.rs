@@ -8,6 +8,7 @@ pub const BUILD: &str = env!("DGG_TOOLS_BUILD");
 
 pub mod install;
 pub mod lifeline;
+pub mod lists;
 pub mod log;
 pub mod paths;
 pub mod peer;

@@ -35,8 +35,11 @@
 //! [`Options::peers`] changes them, in its config, `install.env.json`,
 //! which an older install's files are folded into. They move with the
 //! root, and in a machine install only administrators and the service can
-//! read the config. The channel lists, `kick-channels` and `dgg-channels`,
-//! move with the root too.
+//! read the config. The channel lists (see [`crate::lists`]) move with the
+//! root too. A list that isn't there is written before the bridges start:
+//! converted from the plain file it was before, if there's one, else new
+//! (dgg's with destiny.gg alone). The plain file is renamed `<name>.old`
+//! once what was installed has stopped, since it reads it.
 
 #[cfg(windows)]
 pub mod acl;
@@ -49,6 +52,7 @@ pub mod task;
 
 use {
   crate::{
+    lists,
     paths::{Paths, user_root},
     peer, processes,
     supervise::{STAGGER, dgg_capture_log, kick_capture_log},
@@ -75,9 +79,6 @@ use {
 
 /// What a build holds, both beside `dgg-logger` when it's run.
 pub const BINARIES: [&str; 2] = ["dgg-supervisor", "dgg-logger"];
-
-/// The channel lists in an install's root, which move with it.
-const CHANNEL_LISTS: [&str; 2] = [channels::FILE, dgg::channels::FILE];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Scope {
@@ -207,6 +208,8 @@ pub struct Done {
   /// What about its peers couldn't be read, or went wrong with Kick's
   /// capture.
   pub problems: Vec<String>,
+  /// What was done to the channel lists, a line each.
+  pub lists: Vec<String>,
 }
 
 /// `YYYYMMDD-HHMMSS-<build>` for a build made now (see [`crate::BUILD`]).
@@ -420,7 +423,7 @@ pub fn install(options: &Options) -> io::Result<Done> {
     allow_service(&paths)?;
   }
   // The channel lists move with the root.
-  for list in CHANNEL_LISTS {
+  for list in lists::FILES {
     let to = paths.root.join(list);
     if let Some(old) = &old
       && !same(&old.root, &paths.root)
@@ -432,6 +435,7 @@ pub fn install(options: &Options) -> io::Result<Done> {
       }
     }
   }
+  let mut lists_done = lists::write_missing(&paths.root).map_err(error)?;
   // Kick's channels, if Kick is captured.
   let kick_list = paths.root.join(channels::FILE);
   let kick_channels = channels::load(&kick_list).map_err(error)?;
@@ -547,7 +551,7 @@ pub fn install(options: &Options) -> io::Result<Done> {
       if options.scope == Scope::Machine {
         allow_service(&paths)?;
       }
-      for list in CHANNEL_LISTS {
+      for list in lists::FILES {
         fs::remove_file(old.root.join(list)).missing_ok()?;
       }
       remove_root(&old)?;
@@ -567,6 +571,8 @@ pub fn install(options: &Options) -> io::Result<Done> {
     Scope::Machine => acl::secret(file, &[&service::account(service::NAME)]),
     Scope::User => Ok(()),
   };
+  // Nothing installed before reads the plain lists now.
+  lists_done.extend(lists::retire_plain(&paths.root)?);
   problems.extend(peer::migrate(&paths.root, &secure)?);
   peer::apply(&paths.root, &options.peers, &secure)?;
 
@@ -645,6 +651,7 @@ pub fn install(options: &Options) -> io::Result<Done> {
     left,
     peers,
     problems: problems.into_iter().chain(found.problems).collect(),
+    lists: lists_done,
   })
 }
 

@@ -19,7 +19,8 @@ use {
 /// Keep capture and index running against a data directory, compacting
 /// and (given where its peers are) syncing on a schedule, until stopped or until
 /// capture hands off to a newer instance. Given where its peers are,
-/// `kick-capture` runs too, once the `kick-channels` there has channels.
+/// `kick-capture` runs too, once the `kick-channels.jsonc` there has
+/// channels.
 #[derive(Parser)]
 #[command(name = "dgg-supervisor", version = ::deploy::BUILD)]
 struct Args {
