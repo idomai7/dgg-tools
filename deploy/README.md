@@ -145,15 +145,19 @@ Build, then run `install` again, the same way. Nothing is missed: for each
 dgg channel, a capture from the new build starts first (the "bridge", its
 lines in the channel's `dgg-capture.<name>.log` marked `(bridge)`), the old
 install hands over to them and stops, and then the new install starts and
-takes over from the bridges. Every dgg channel's must be healthy in time,
-or the install stops there. Old builds are pruned, keeping three.
+takes over from the bridges. A capture is healthy once its chat has
+answered, busy or not. Old builds are pruned, keeping three.
 
 Each Kick channel's capture is bridged the same way, each bridge's lines
-in its channel's `kick-capture.<slug>.log`. If one isn't
-healthy in time, `install` warns that that channel may miss a few
-seconds, and carries on: dgg's captures come first. It waits for the new
-install's capture of each channel too, warning of any not healthy in
-time, and names each channel's healthy capture when it's done.
+in its channel's `kick-capture.<slug>.log`. A bridge that isn't healthy
+in time, dgg's or Kick's, is stopped, and `install` warns that its
+channel may miss a few minutes and carries on: once one dgg bridge has
+taken over, the old install stops everything it runs, so there's no going
+back. Only if no dgg bridge is healthy does `install` stop there, the old
+install running on. It waits for the new install's capture of each
+channel too, warning of any not healthy in time (its bridge is left
+capturing, to hand over once it is), and names each channel's healthy
+capture when it's done.
 
 The bridges start 5 seconds apart, dgg's first, and so do the new
 install's captures, so the handoffs are spread out and no chat server sees
