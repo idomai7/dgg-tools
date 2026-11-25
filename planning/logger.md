@@ -327,6 +327,9 @@ undocumented endpoints anonymously: no token, no login, no app. Planned
   - Slugs are lowercase letters, digits, `-` and `_`, so each is also a
     directory's name. Hand edits survive `kick-ids`: it changes only the
     channel's own line.
+  - JSONC since 2026-11-25, `kick-channels.jsonc`, as dgg's list is (see
+    [dgg channels](#dgg-channels)): `kick-ids` still edits in place,
+    replacing the channel's entry or adding one at the end of the array.
 - **Capture:** a Centrifugo connection per channel, each journaled as kick-mod
   does now. `kick-capture --channels <list>` takes the list's path. A session
   Kick stops for good is started again after a minute, its connections
@@ -588,6 +591,16 @@ WebSocket URL of its own. Each step a pause for review.
   way. With no list, it's this one line: a host that never
   writes one keeps capturing destiny.gg as now. `install` moves the list
   with the root, as `kick-channels`.
+  - JSONC, both lists, decided 2026-11-25 after step 5:
+    `dgg-channels.jsonc` and `kick-channels.jsonc`, each an object with a
+    `channels` array (`name`, `url`, `origin` or null; `slug`,
+    `channel_id`, `chatroom_id`), unknown fields refused. `install`
+    writes either if it isn't there, before the bridges start: converted
+    from the plain file, if there's one, else new (dgg's with destiny.gg
+    alone). The plain file stays until what was installed has stopped
+    (an old supervisor reads it, and would end its Kick captures without
+    it), then is renamed `.old`. The supervisor writes a missing one at
+    start too.
 - **Layout:** each channel's journals in `journal/dgg/<name>/`, laid out
   as dgg's directory is now: `live/`, `archive/`, `control/` (statuses
   and `synced-archives`), and its backfill journal in `backfill/`. Paths
