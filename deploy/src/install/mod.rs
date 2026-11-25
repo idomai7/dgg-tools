@@ -24,12 +24,16 @@
 //! 3. If the data directory changed, the old data and logs are
 //!    [moved](moving) in.
 //! 4. The new task or service starts. Its captures, the newest, take over
-//!    from the bridges, which exit. Each is waited on until it's healthy:
-//!    every dgg channel's must be; a Kick channel's that isn't is warned
-//!    of.
+//!    from the bridges, which exit. Each is waited on until it's healthy.
 //!
-//! dgg's captures come first: a Kick bridge that isn't healthy is only
-//! warned of, by its channel, and the install carries on without it.
+//! A bridge that isn't healthy in time is stopped and warned of, by its
+//! channel, and the install carries on without it: once any dgg bridge has
+//! taken over, what was installed stops everything it runs, so there's no
+//! going back. Only if no dgg bridge is healthy does the install stop
+//! there, what was installed running on (and any Kick bridge that took
+//! over left capturing, until the next install takes over from it). A new
+//! capture that isn't healthy in time is warned of too, its bridge left
+//! capturing, to hand off once it is.
 //!
 //! An install syncs from the peers in its root (see [`crate::peer`]):
 //! [`Options::peers`] changes them, in its config, `install.env.json`,
@@ -196,8 +200,8 @@ pub struct Done {
   /// What was installed before.
   pub replaced: Option<Installed>,
   /// Each dgg channel it captures, by its name, with its new capture
-  /// instance.
-  pub dgg: Vec<(String, String)>,
+  /// instance if that was healthy in time.
+  pub dgg: Vec<(String, Option<String>)>,
   /// Each Kick channel it captures, by its slug, with its new capture
   /// instance if that was healthy in time.
   pub kick: Vec<(String, Option<String>)>,
@@ -205,8 +209,8 @@ pub struct Done {
   pub left: Vec<PathBuf>,
   /// The peers it syncs from: `<name> (<URL>)`.
   pub peers: Vec<String>,
-  /// What about its peers couldn't be read, or went wrong with Kick's
-  /// capture.
+  /// What about its peers couldn't be read, or went wrong with a
+  /// channel's capture.
   pub problems: Vec<String>,
   /// What was done to the channel lists, a line each.
   pub lists: Vec<String>,
@@ -270,6 +274,40 @@ fn kill_bridges(bridges: &mut Vec<(String, Child)>) {
     let _ = child.kill();
     let _ = child.wait();
   }
+}
+
+/// Waits up to `patience` for each of `bridges` whose channel's new
+/// capture is healthy, as `captures` has it, to hand off to it, stopping
+/// it after that (see [`bridge::wait_gone`]). One whose channel's isn't is
+/// left capturing, to hand off once it is. What went wrong, a line each,
+/// each bridge called a `what` bridge, its log named by `log`.
+fn hand_off(
+  bridges: Vec<(String, Child)>,
+  captures: &[(String, Option<String>)],
+  patience: Duration,
+  what: &str,
+  log: fn(&str) -> String,
+) -> Vec<String> {
+  let mut problems = Vec::new();
+  for (channel, mut child) in bridges {
+    let healthy = captures
+      .iter()
+      .any(|(name, capture)| *name == channel && capture.is_some());
+    if !healthy {
+      problems.push(format!(
+        "{channel}: the {what}bridge is left capturing, to hand off once \
+         the new install's capture is healthy"
+      ));
+    } else if !bridge::wait_gone(&mut child, patience) {
+      problems.push(format!(
+        "{channel}: the {what}bridge didn't hand off within {}s, and was \
+         stopped; see {}.log",
+        patience.as_secs(),
+        log(&channel)
+      ));
+    }
+  }
+  problems
 }
 
 /// The log of dgg channel `name`'s capture, in `logs`.
@@ -478,23 +516,27 @@ pub fn install(options: &Options) -> io::Result<Done> {
       Err(e) => problems.push(format!("{slug}: no Kick bridge: {e}")),
     }
   }
-  // Each dgg bridge, waited on together: every one must be healthy.
+  // Each dgg bridge, waited on together: one that isn't healthy in time
+  // is warned of, as a Kick one is, since once any has taken over, what
+  // was installed stops everything it runs.
   let until = Instant::now() + options.healthy_within;
-  for (name, _) in &bridges {
+  let mut healthy = Vec::new();
+  for (name, mut child) in bridges {
     let left = until.saturating_duration_since(Instant::now());
-    if wait_healthy(&journal_root, name, since, left)?.is_none() {
-      let failed = format!(
-        "{name}: a capture from the new build wasn't healthy within {}s; \
-         see {}.log in {}. Nothing else was changed.",
-        options.healthy_within.as_secs(),
-        dgg_capture_log(name),
-        paths.logs.display()
-      );
-      kill_bridges(&mut bridges);
-      kill_bridges(&mut kick_bridges);
-      return Err(error(failed));
+    if wait_healthy(&journal_root, &name, since, left)?.is_some() {
+      healthy.push((name, child));
+      continue;
     }
+    let _ = child.kill();
+    let _ = child.wait();
+    problems.push(format!(
+      "{name}: a capture from the new build wasn't healthy within {}s \
+       (see {}.log): it may miss a few minutes",
+      options.healthy_within.as_secs(),
+      dgg_capture_log(&name)
+    ));
   }
+  let bridges = healthy;
   // Each Kick bridge, waited on together: one that isn't healthy in time
   // is only warned of, as dgg's captures come first.
   let kick_root = kick_root(&journal_root);
@@ -515,7 +557,31 @@ pub fn install(options: &Options) -> io::Result<Done> {
       kick_capture_log(&slug)
     ));
   }
-  let mut kick_bridges = healthy;
+  let kick_bridges = healthy;
+  // With no dgg bridge healthy, none has taken over, so what was installed
+  // runs on: the install stops here. A Kick bridge that has taken over is
+  // left capturing, or its channel would be captured by nothing.
+  if bridges.is_empty() && !dgg_channels.is_empty() {
+    let mut failed = format!(
+      "no dgg capture from the new build was healthy within {}s, so what \
+       was installed runs on; see the logs in {}",
+      options.healthy_within.as_secs(),
+      paths.logs.display()
+    );
+    if !kick_bridges.is_empty() {
+      let slugs: Vec<&str> =
+        kick_bridges.iter().map(|(slug, _)| slug.as_str()).collect();
+      failed += &format!(
+        ". The Kick bridges of {} are left capturing, until the next \
+         install takes over",
+        slugs.join(", ")
+      );
+    }
+    for problem in &problems {
+      failed += &format!("\n  {problem}");
+    }
+    return Err(error(failed));
+  }
 
   // 2. What was installed stops.
   if let Some(current) = &current {
@@ -585,27 +651,25 @@ pub fn install(options: &Options) -> io::Result<Done> {
     }
     Scope::Machine => service::start(service::NAME)?,
   }
-  // Each dgg channel's new capture, waited on together, the supervisor
-  // starting each a stagger after the last: every one must be healthy.
+  // Each channel's new capture, dgg's then Kick's, waited on together, the
+  // supervisor starting each a stagger after the last: one that isn't
+  // healthy in time is warned of.
   let spread = STAGGER * (dgg_channels.len() + kick_channels.len()) as u32;
   let until = Instant::now() + options.healthy_within + spread;
   let mut dgg = Vec::new();
   for name in &dgg_channels {
     let left = until.saturating_duration_since(Instant::now());
-    let Some(capture) = wait_healthy(&journal_root, name, since, left)? else {
-      return Err(error(format!(
+    let healthy = wait_healthy(&journal_root, name, since, left)?;
+    if healthy.is_none() {
+      problems.push(format!(
         "{name}: the new install's capture wasn't healthy within {}s; see \
-         supervisor.log and {}.log in {}. The bridge capture keeps \
-         capturing meanwhile.",
+         supervisor.log and {}.log",
         (options.healthy_within + spread).as_secs(),
-        dgg_capture_log(name),
-        paths.logs.display()
-      )));
-    };
-    dgg.push((name.clone(), capture));
+        dgg_capture_log(name)
+      ));
+    }
+    dgg.push((name.clone(), healthy));
   }
-  // Each Kick channel's new capture, waited on together: one that isn't
-  // healthy in time is only warned of.
   let mut kick = Vec::new();
   for channel in &kick_channels {
     let slug = &channel.slug;
@@ -621,19 +685,15 @@ pub fn install(options: &Options) -> io::Result<Done> {
     }
     kick.push((slug.clone(), healthy));
   }
-  for (_, child) in &mut bridges {
-    bridge::wait_gone(child, options.handoff_within);
-  }
-  for (slug, child) in &mut kick_bridges {
-    if !bridge::wait_gone(child, options.handoff_within) {
-      problems.push(format!(
-        "{slug}: the Kick bridge didn't hand off within {}s, and was \
-         stopped; see {}.log",
-        options.handoff_within.as_secs(),
-        kick_capture_log(slug)
-      ));
-    }
-  }
+  let patience = options.handoff_within;
+  problems.extend(hand_off(bridges, &dgg, patience, "", dgg_capture_log));
+  problems.extend(hand_off(
+    kick_bridges,
+    &kick,
+    patience,
+    "Kick ",
+    kick_capture_log,
+  ));
   let left = prune(&paths.bin(), options.keep)?;
   let found = peer::gather(&paths.root);
   let peers = found

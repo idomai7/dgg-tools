@@ -516,7 +516,10 @@ fn install(options: &install::Options) -> ExitCode {
         eprintln!("  lists    {line}");
       }
       for (name, capture) in &done.dgg {
-        eprintln!("  dgg      {name}: {capture} (healthy)");
+        match capture {
+          Some(capture) => eprintln!("  dgg      {name}: {capture} (healthy)"),
+          None => eprintln!("  dgg      {name}: not healthy yet"),
+        }
       }
       for (slug, capture) in &done.kick {
         match capture {
