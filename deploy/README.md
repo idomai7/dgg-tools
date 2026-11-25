@@ -6,7 +6,7 @@ directory:
 | Command | Job | Runs |
 |---|---|---|
 | `dgg-capture` | Connects to dgg chat and writes everything to the journal | all the time |
-| `index` | Reads each dgg channel's journal into `index-dgg-<name>.sqlite`, and Kick's into `index-kick.sqlite` | all the time, with `--follow`: once 500 records are waiting (at most once a minute), or every 10 minutes |
+| `index` | Reads each dgg channel's journal into `index-dgg-<name>.sqlite`, and each Kick channel's into `index-kick-<slug>.sqlite` | all the time, with `--follow`: once 500 records are waiting (at most once a minute), or every 10 minutes |
 | `compact` | Packs each finished day into one compressed archive, Kick's channels' too; with `--early`, also what stopped captures left on today | every hour; `--early` a minute after start |
 | `dgg-gaps` | Lists when no dgg capture was connected | when you want |
 | `dgg-backfill` | Fetches missed dgg messages from public logs | after an outage |
@@ -44,7 +44,7 @@ An install lives in one folder:
       kick\<slug>\         each Kick channel's journal, laid out the same
     index-dgg-<name>.sqlite  each dgg channel's searchable index; can be
                            rebuilt from the journal
-    index-kick.sqlite      Kick's, likewise
+    index-kick-<slug>.sqlite  each Kick channel's, likewise
   logs\                    index.log, compact.log, supervisor.log, sync.log,
                            migrate.log, a dgg-capture.<name>.log for each
                            dgg channel, and a kick-capture.<slug>.log for
@@ -172,7 +172,7 @@ It finds the installed logger and shows:
   yet compacted;
 - each dgg channel's journal (today's files and their last write, days
   waiting for compact, archives, backfill) and index, and each Kick
-  channel's journal today, and Kick's index;
+  channel's journal today and index;
 - free disk space, the peer it syncs from (and how the last round went),
   and the ends of the logs.
 
