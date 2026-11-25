@@ -1,5 +1,6 @@
-//! dgg: its chat, captured into the journal, indexed, and filled in from
-//! other archives where capture missed it.
+//! dgg: its chats, by channel (see [`channels`]), each captured into its
+//! journal, indexed, and filled in from other archives where capture
+//! missed it (destiny.gg's alone: see [`backfill`]).
 
 pub mod backfill;
 pub mod capture;
