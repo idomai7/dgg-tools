@@ -6,7 +6,7 @@ directory:
 | Command | Job | Runs |
 |---|---|---|
 | `dgg-capture` | Connects to dgg chat and writes everything to the journal | all the time |
-| `index` | Reads dgg's journal into `index-dgg.sqlite`, and Kick's into `index-kick.sqlite` | all the time, with `--follow`: once 500 records are waiting (at most once a minute), or every 10 minutes |
+| `index` | Reads each dgg channel's journal into `index-dgg-<name>.sqlite`, and Kick's into `index-kick.sqlite` | all the time, with `--follow`: once 500 records are waiting (at most once a minute), or every 10 minutes |
 | `compact` | Packs each finished day into one compressed archive, Kick's channels' too; with `--early`, also what stopped captures left on today | every hour; `--early` a minute after start |
 | `dgg-gaps` | Lists when no dgg capture was connected | when you want |
 | `dgg-backfill` | Fetches missed dgg messages from public logs | after an outage |
@@ -36,14 +36,14 @@ An install lives in one folder:
   bin\<time>-<version>+<commit>\  one build per install; older ones are pruned
   data\
     journal\
-      dgg\                 dgg's journal:
+      dgg\<name>\          each dgg channel's journal (destiny.gg's for now):
         live\              today's raw capture, one file per capture per day
         archive\           finished days, compressed
         backfill\          messages fetched from other logs, kept apart
         control\           each running capture's status
       kick\<slug>\         each Kick channel's journal, laid out the same
-    index-dgg.sqlite       dgg's searchable index; can be rebuilt from the
-                           journal
+    index-dgg-<name>.sqlite  each dgg channel's searchable index; can be
+                           rebuilt from the journal
     index-kick.sqlite      Kick's, likewise
   logs\                    dgg-capture.log, index.log, compact.log, supervisor.log,
                            sync.log, migrate.log, and a
@@ -122,11 +122,14 @@ Anything involving a machine install needs an administrator prompt.
 If anything goes wrong, `install` says what, and the capture that was
 running (or the bridge) keeps running.
 
-dgg's journal is in `journal\dgg\` and its index in `index-dgg.sqlite`.
-Builds `ed46061` to `52d088d` moved them there from `journal\` and
+dgg's journals are by channel, destiny.gg's in `journal\dgg\destiny.gg\`
+and its index in `index-dgg-destiny.gg.sqlite`. An install moves them
+there from `journal\dgg\` and `index-dgg.sqlite` as its supervisor starts;
+a live file still being written is moved at a later start, and
+`migrate.log` says what moved and what was left. Builds `ed46061` to
+`52d088d` moved dgg's journal into `journal\dgg\` from `journal\` and
 `index.sqlite`; later builds don't, so upgrading from a build older than
-`ed46061` goes through one of those first. `migrate.log` warns of
-anything left in the old places, which nothing reads.
+`ed46061` goes through one of those first.
 
 Builds from `b9651ea` name dgg's commands by service: `dgg-capture`,
 `dgg-backfill` and `dgg-gaps`, once `capture`, `backfill` and `gaps`.
