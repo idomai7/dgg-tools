@@ -1,5 +1,5 @@
 //! Kick's index: a Kick channel's journal into SQLite,
-//! `index-kick-<slug>.sqlite` (see [`file`]), apart from dgg's indexes,
+//! `index-kick-<slug>.sqlite` (see [`file()`]), apart from dgg's indexes,
 //! with schema versions of its own. It's what a user's history in the
 //! channel is looked up in.
 //!

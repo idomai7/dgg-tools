@@ -1,5 +1,5 @@
 //! dgg's index: a channel's journal into SQLite, `index-dgg-<name>.sqlite`
-//! (see [`file`]), for searching and for finding gaps. As every service's
+//! (see [`file()`]), for searching and for finding gaps. As every service's
 //! (see [`crate::index`]), it's derived data, and each file's progress is
 //! checkpointed with its rows. Its paths are relative to the channel's
 //! directory, so a channel's messages are deduplicated among themselves

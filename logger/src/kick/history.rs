@@ -4,7 +4,7 @@
 //!
 //! It's read from the channel's index and from what it hasn't reached yet:
 //! the channel's live files past its checkpoints, indexed in memory for
-//! the query (see [`recent`]). Both are read in one snapshot of the index,
+//! the query (see `index::recent`). Both are read in one snapshot of the index,
 //! so a round finishing meanwhile can't count anything twice.
 //!
 //! As JSON:

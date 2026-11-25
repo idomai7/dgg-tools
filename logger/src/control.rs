@@ -270,7 +270,7 @@ pub fn write_if_there(dir: &Path, status: &Status) -> io::Result<bool> {
   Ok(true)
 }
 
-/// [`write`], as `variant`'s capture.
+/// [`write()`], as `variant`'s capture.
 pub fn write_as(
   dir: &Path,
   status: &Status,
