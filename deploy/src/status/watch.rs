@@ -3,12 +3,14 @@
 //!
 //! The keys are grouped. First, with letters: `l` every log at once, in
 //! time order, the page it starts on; `r` the newest records a capture
-//! wrote, again for the next capture; `f` one capture's log, again for the
-//! next; Space redraws now, `e` opens the data folder, and `q` (or Esc, or
-//! Ctrl-C) quits. Then each program's log, with numbers: `1` the
-//! supervisor's, `2` migrate's, `3` every capture's, dgg's and Kick's, in
-//! time order, `4` compact's, `5` index's, `6` the gaps in capture, looked
-//! at again every 30 seconds, `7` sync's and `8` serve's. Last, the
+//! wrote, again for the next capture, round every channel's; `f` one
+//! channel's capture's log, again for the next; Space redraws now, `e`
+//! opens the data folder, and `q` (or Esc, or Ctrl-C) quits. Then each
+//! program's log, with numbers: `1` the supervisor's, `2` migrate's, `3`
+//! every capture's, dgg's and Kick's, in time order, `4` compact's, `5`
+//! index's, `6` the gaps in the first dgg channel's capture, looked at
+//! again every 30 seconds, again for the next channel's, `7` sync's and
+//! `8` serve's. Last, the
 //! boxes: Tab and Shift-Tab move the focus between them (the page at the
 //! bottom too), Up, Down, Page Up and Page Down scroll the focused one when
 //! it's over-tall, and `m` minimizes it to its title line, or restores it.
@@ -16,9 +18,9 @@
 
 use {
   super::{
-    Log, Report, Watcher, Which, capture_logs, capture_tail, gaps, health,
-    journal_lines, listening, listening_width, logged_at, logs, merge_logs,
-    per_minute, program_width, service, tail,
+    Log, Report, SHARED_CAPTURE_LOGS, Watcher, Which, capture_logs,
+    capture_tail, gaps, health, journal_lines, listening, listening_width,
+    logged_at, logs, merge_logs, per_minute, program_width, service, tail,
   },
   crate::paths::Paths,
   ::common::{
@@ -37,7 +39,7 @@ use {
   },
   ::std::{
     io,
-    path::{Path, PathBuf},
+    path::Path,
     process::Command,
     sync::mpsc::{self, Receiver},
     thread,
@@ -179,8 +181,10 @@ enum View {
   Gaps(Gaps),
 }
 
-/// The gaps page: what was found last, and the next look.
+/// The gaps page: the dgg channel's, what was found last, and the next
+/// look.
 struct Gaps {
+  channel: String,
   /// What was found last, if anything yet.
   pane: Option<Pane<'static>>,
   /// The look under way, on a thread of its own.
@@ -201,8 +205,9 @@ pub struct Pane<'a> {
 }
 
 impl Gaps {
-  fn new() -> Self {
+  fn new(channel: String) -> Self {
     Self {
+      channel,
       pane: None,
       looking: None,
       next: Instant::now(),
@@ -210,8 +215,9 @@ impl Gaps {
   }
 
   /// Takes what the look under way found, if it's done, and starts the next
-  /// look at the index at `index` when it's due.
-  fn refresh(&mut self, index: PathBuf) {
+  /// look at the channel's index, in the data directory `data`, when it's
+  /// due; `more` if there are other channels to go round to.
+  fn refresh(&mut self, data: &Path, more: bool) {
     if let Some(looking) = &self.looking
       && let Ok(pane) = looking.try_recv()
     {
@@ -220,15 +226,18 @@ impl Gaps {
       self.next = Instant::now() + GAPS_EVERY;
     }
     if self.looking.is_none() && Instant::now() >= self.next {
+      let index = data.join(dgg::index::file(&self.channel));
+      let channel = self.channel.clone();
       let (found, looking) = mpsc::channel();
-      thread::spawn(move || found.send(look_for_gaps(&index)));
+      thread::spawn(move || found.send(look_for_gaps(&index, &channel, more)));
       self.looking = Some(looking);
     }
   }
 }
 
-/// The gaps, as the index at `index` has them now.
-fn look_for_gaps(index: &Path) -> Pane<'static> {
+/// The gaps in dgg channel `channel`'s capture, as its index at `index`
+/// has them now; `more` if there are other channels to go round to.
+fn look_for_gaps(index: &Path, channel: &str, more: bool) -> Pane<'static> {
   let now = now_ms();
   let (header, lines, empty) = match gaps(index) {
     Ok(Some((summary, lines))) => (Some(summary), lines, "(no gaps)"),
@@ -237,9 +246,14 @@ fn look_for_gaps(index: &Path) -> Pane<'static> {
   };
   Pane {
     title: format!(
-      "gaps as of {} (again every {}s)",
+      "gaps in {channel} as of {} (again every {}s{})",
       utc_timestamp(now),
-      GAPS_EVERY.as_secs()
+      GAPS_EVERY.as_secs(),
+      if more {
+        "; 6 again for the next channel"
+      } else {
+        ""
+      }
     ),
     header,
     lines,
@@ -249,7 +263,8 @@ fn look_for_gaps(index: &Path) -> Pane<'static> {
 
 impl View {
   /// What shows `page`, its key pressed while this shows: records' key
-  /// again shows the next capture's records.
+  /// again shows the next capture's records, and the gaps' the next
+  /// channel's.
   fn show(self, page: Page, report: &Report) -> Self {
     match (page, self) {
       (Page::Logs, _) => Self::Logs,
@@ -257,8 +272,15 @@ impl View {
       (Page::Captures, _) => Self::Captures(None),
       (Page::Capture, current) => current.next_capture(report),
       (Page::Records, current) => current.next_records(report),
-      (Page::Gaps, gaps @ Self::Gaps(_)) => gaps,
-      (Page::Gaps, _) => Self::Gaps(Gaps::new()),
+      (Page::Gaps, Self::Gaps(gaps)) => {
+        let next = next_channel(report, Some(&gaps.channel));
+        match next == gaps.channel {
+          // The one channel: as it is, not looked at again.
+          true => Self::Gaps(gaps),
+          false => Self::Gaps(Gaps::new(next)),
+        }
+      }
+      (Page::Gaps, _) => Self::Gaps(Gaps::new(next_channel(report, None))),
     }
   }
 
@@ -311,8 +333,12 @@ impl View {
       Self::Gaps(Gaps {
         pane: Some(pane), ..
       }) => pane.clone(),
-      Self::Gaps(Gaps { pane: None, .. }) => Pane {
-        title: "gaps".into(),
+      Self::Gaps(Gaps {
+        channel,
+        pane: None,
+        ..
+      }) => Pane {
+        title: format!("gaps in {channel}"),
         header: None,
         lines: Vec::new(),
         empty: "(looking...)",
@@ -320,12 +346,15 @@ impl View {
     }
   }
 
-  /// The first capture's log, or if one's is shown, the next one's; after
-  /// the last, every capture's again. The log Kick's captures shared before
-  /// each channel had its own is only among every capture's.
+  /// The first channel's capture's log, or if one's is shown, the next
+  /// one's; after the last, every capture's again. The logs each service's
+  /// captures shared before each channel had its own are only among every
+  /// capture's.
   fn next_capture(&self, report: &Report) -> Self {
-    let mut logs: Vec<Log> = capture_logs(report);
-    logs.pop();
+    let logs: Vec<Log> = capture_logs(report)
+      .into_iter()
+      .filter(|log| !SHARED_CAPTURE_LOGS.contains(&log.name.as_str()))
+      .collect();
     let next = match self {
       Self::Captures(Some(current)) => logs
         .iter()
@@ -337,9 +366,9 @@ impl View {
   }
 
   /// The records of the capture at the top of the captures box, or if a
-  /// capture's are shown, the next one's: dgg's, then Kick's by channel,
-  /// each by instance, so that however the box is sorted, pressing on
-  /// comes round to every one.
+  /// capture's are shown, the next one's: dgg's, then Kick's, each by
+  /// channel, then by instance, so that however the box is sorted,
+  /// pressing on comes round to every one.
   fn next_records(&self, report: &Report) -> Self {
     let mut all: Vec<Which> = report
       .captures
@@ -353,6 +382,21 @@ impl View {
     let next = all.iter().find(|which| *which > current);
     Self::Records(next.or(all.first()).cloned())
   }
+}
+
+/// The dgg channel after `current` in `report` (its first, after the last
+/// or without one); destiny.gg's if it has none.
+fn next_channel(report: &Report, current: Option<&str>) -> String {
+  let names: Vec<&str> = report
+    .dgg
+    .channels
+    .iter()
+    .map(|c| c.name.as_str())
+    .collect();
+  let at = current.and_then(|current| names.iter().position(|n| *n == current));
+  let next = at.map_or(0, |at| at + 1);
+  let next = names.get(next).or(names.first());
+  next.map_or(DESTINY, |name| name).to_owned()
 }
 
 /// The records page's title: the capture, and what it listens to.
@@ -386,7 +430,7 @@ fn event_loop(
   loop {
     let report = watcher.gather(paths)?;
     if let View::Gaps(gaps) = &mut view {
-      gaps.refresh(paths.data.join(dgg::index::file(DESTINY)));
+      gaps.refresh(&paths.data, report.dgg.channels.len() > 1);
     }
     let pane = view.pane(paths, &report);
 

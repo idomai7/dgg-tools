@@ -164,26 +164,30 @@ It finds the installed logger and shows:
   WebSocket URL, or the Kick channel), its health (healthy, connecting,
   or STALE once its heartbeat stops), and the frames in its files not
   yet compacted;
-- the journal: today's files and their last write, days waiting for
-  compact, archives, backfill, and each Kick channel's journal today;
-- the index, free disk space, the peer it syncs from (and how the last
-  round went), and the ends of the logs.
+- each dgg channel's journal (today's files and their last write, days
+  waiting for compact, archives, backfill) and index, and each Kick
+  channel's journal today, and Kick's index;
+- free disk space, the peer it syncs from (and how the last round went),
+  and the ends of the logs.
 
 `--watch` keeps it open, redrawing every second (`--interval` to change)
-under a title naming its build, with how fast today's journal is growing and
-a page filling the rest of the window. The keys are grouped:
+under a title naming its build, with how fast each dgg channel's journal is
+growing today and a page filling the rest of the window. The keys are
+grouped:
 
 - `l` every log at once, in time order, each line naming its log (the page
   it starts on); `r` the latest records of the capture at the top of the
-  captures box (`r` again for the next capture), titled with what it
-  listens to; `f` one capture's log, dgg's or a Kick channel's (`f` again
-  for the next, and after the last, every capture's); Space redraws, `e`
+  captures box (`r` again for the next capture, round every channel's),
+  titled with what it listens to; `f` one channel's capture's log, dgg's
+  or Kick's (`f` again for the next, and after the last, every capture's);
+  Space redraws, `e`
   opens the data folder, `q` quits;
 - each program's log: `1` the supervisor's, `2` migrate's, `3` every
   capture's, dgg's and Kick's, in time order, `4` compact's, `5` index's,
-  `6` the gaps in capture as `dgg-gaps` reports them (looked at again every
-  30 seconds; it reads the index as `index` has brought it, without
-  updating it), `7` sync's, `8` serve's;
+  `6` the gaps in the first dgg channel's capture as `dgg-gaps` reports
+  them (looked at again every 30 seconds; it reads the index as `index`
+  has brought it, without updating it; `6` again for the next channel's),
+  `7` sync's, `8` serve's;
 - the boxes: Tab and Shift-Tab move the focus between them, the page at
   the bottom too (its border turns cyan); Up, Down, Page Up and Page Down
   scroll the focused one when it's over-tall (its title says which lines
