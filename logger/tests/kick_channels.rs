@@ -25,8 +25,14 @@ fn found(slug: &str) -> Result<channel::Channel, String> {
 
 #[test]
 fn reads_a_list() {
-  let text = "# <slug> <channel id> <chatroom id>\n\n\
-              some-channel 789 123  # the first\r\nother_2\t10 20\n";
+  let text = r#"// the channels
+    {
+      "channels": [
+        { "slug": "some-channel", "channel_id": 789, "chatroom_id": 123 },
+        /* the second */ { "slug": "other_2", "channel_id": 10,
+          "chatroom_id": 20 },
+      ],
+    }"#;
   assert_eq!(
     channels::parse(text).unwrap(),
     [
@@ -34,49 +40,106 @@ fn reads_a_list() {
       channel("other_2", 10, 20)
     ]
   );
-  assert_eq!(channels::parse("").unwrap(), []);
-  assert_eq!(
-    channels::parse("@bot 1 2\n").unwrap(),
-    [channel("@bot", 1, 2)]
-  );
+  assert_eq!(channels::parse(&channels::render(&[])).unwrap(), []);
+  let bot = [channel("@bot", 1, 2)];
+  assert_eq!(channels::parse(&channels::render(&bot)).unwrap(), bot);
 }
 
 #[test]
-fn says_whats_wrong_with_a_line() {
+fn says_whats_wrong_with_a_channel() {
+  let list = |entries: &str| format!(r#"{{ "channels": [{entries}] }}"#);
+  let entry = |slug: &str| {
+    format!(r#"{{ "slug": "{slug}", "channel_id": 1, "chatroom_id": 2 }}"#)
+  };
+  for (text, why) in [
+    (list(&entry("Some")), "channel 1: a slug is lowercase"),
+    (
+      list(&format!("{}, {}", entry("a"), entry("../a"))),
+      "channel 2: a slug is lowercase",
+    ),
+    (
+      list(&format!("{}, {}, {}", entry("a"), entry("b"), entry("a"))),
+      "channel 3: a listed twice",
+    ),
+    (
+      list(r#"{ "slug": "a", "channel_id": 1 }"#),
+      "missing field `chatroom_id`",
+    ),
+    (
+      list(r#"{ "slug": "a", "channel_id": "x", "chatroom_id": 2 }"#),
+      "a value of the wrong type",
+    ),
+  ] {
+    let e = channels::parse(&text).unwrap_err();
+    assert!(e.starts_with(why), "{text:?}: {e}");
+  }
+}
+
+#[test]
+fn converts_a_plain_list() {
+  let text = "# <slug> <channel id> <chatroom id>\n\n\
+              some-channel 789 123  # the first\r\nother_2\t10 20\n";
+  let all = [
+    channel("some-channel", 789, 123),
+    channel("other_2", 10, 20),
+  ];
+  assert_eq!(channels::parse_plain(text).unwrap(), all);
+  let converted = channels::convert_plain(text).unwrap();
+  assert_eq!(converted, channels::render(&all));
+  assert_eq!(channels::parse(&converted).unwrap(), all);
+  assert_eq!(channels::convert_plain("").unwrap(), channels::render(&[]));
   for (text, why) in [
     ("a 1\n", "line 1: not `<slug> <channel id> <chatroom id>`"),
     ("a 1 2 3\n", "line 1: not `<slug>"),
     ("# ok\nSome 1 2\n", "line 2: a slug is lowercase"),
-    ("../a 1 2\n", "line 1: a slug is lowercase"),
     ("a 1 x\n", "line 1: an id is a number"),
     ("a 1 2\nb 3 4\na 5 6\n", "line 3: listed twice"),
   ] {
-    let e = channels::parse(text).unwrap_err();
+    let e = channels::convert_plain(text).unwrap_err();
     assert!(e.starts_with(why), "{text:?}: {e}");
   }
 }
 
 #[test]
 fn records_a_channel_in_place() {
-  let text = "# channels\r\na 1 2 # kept\r\nb 3 4\r\n";
+  let text = "// channels\r\n{\r\n  \"channels\": [\r\n    \
+              { \"slug\": \"a\", \"channel_id\": 1, \"chatroom_id\": 2 }, \
+              // kept\r\n    \
+              { \"slug\": \"b\", \"channel_id\": 3, \"chatroom_id\": 4 }\r\n  \
+              ],\r\n}\r\n";
+  let entry = |slug: &str, ids: (u64, u64)| channel(slug, ids.0, ids.1).json();
+  // Its entry replaced, the comment after it kept.
   assert_eq!(
     channels::record(text, &channel("a", 5, 6)).unwrap(),
-    "# channels\r\na 5 6 # kept\r\nb 3 4\r\n"
+    text.replace(&entry("a", (1, 2)), &entry("a", (5, 6)))
   );
+  // A new one at the end, the last given its comma.
+  let added = channels::record(text, &channel("c", 7, 8)).unwrap();
   assert_eq!(
-    channels::record(text, &channel("c", 7, 8)).unwrap(),
-    "# channels\r\na 1 2 # kept\r\nb 3 4\r\nc 7 8\n"
+    added,
+    text.replace(
+      &format!("{}\r\n", entry("b", (3, 4))),
+      &format!("{},\r\n    {},\r\n", entry("b", (3, 4)), entry("c", (7, 8)))
+    )
   );
+  // Into an empty array, on a line of the key's, or of its own.
+  let empty = r#"{ "channels": [] }"#;
   assert_eq!(
-    channels::record("b 3 4", &channel("c", 7, 8)).unwrap(),
-    "b 3 4\nc 7 8\n"
+    channels::record(empty, &channel("c", 7, 8)).unwrap(),
+    format!("{{ \"channels\": [\n  {},\n] }}", entry("c", (7, 8)))
   );
+  let template = channels::render(&[]);
+  let recorded = channels::record(&template, &channel("c", 7, 8)).unwrap();
   assert_eq!(
-    channels::record("", &channel("c", 7, 8)).unwrap(),
-    "c 7 8\n"
+    recorded,
+    channels::render(&[])
+      .replace("  ],", &format!("    {},\n  ],", entry("c", (7, 8))))
   );
+  assert_eq!(channels::parse(&recorded).unwrap(), [channel("c", 7, 8)]);
   // A broken list is left for its owner to fix.
-  assert!(channels::record("a b\n", &channel("c", 7, 8)).is_err());
+  assert!(
+    channels::record("{ \"channels\": [1] }", &channel("c", 7, 8)).is_err()
+  );
 }
 
 #[test]
@@ -88,16 +151,26 @@ fn updates_the_file() {
   channels::update(&path, &channel("a", 1, 2)).unwrap();
   channels::update(&path, &channel("b", 3, 4)).unwrap();
   channels::update(&path, &channel("a", 5, 6)).unwrap();
-  assert_eq!(fs::read_to_string(&path).unwrap(), "a 5 6\nb 3 4\n");
-  assert_eq!(
-    channels::load(&path).unwrap(),
-    [channel("a", 5, 6), channel("b", 3, 4)]
+  let all = [channel("a", 5, 6), channel("b", 3, 4)];
+  assert_eq!(channels::load(&path).unwrap(), all);
+  // As if written whole, the example kept.
+  let written = fs::read_to_string(&path).unwrap();
+  assert!(
+    written.contains("// { \"slug\": \"somechannel\""),
+    "{written}"
+  );
+  assert!(
+    written.contains(&format!("    {},\n", all[1].json())),
+    "{written}"
   );
 
-  fs::write(&path, "a 5\n").unwrap();
+  fs::write(&path, "{ \"channels\": [ { \"slug\": \"a\" } ] }").unwrap();
   let e = channels::update(&path, &channel("b", 3, 4)).unwrap_err();
-  assert!(e.contains("line 1"), "{e}");
-  assert_eq!(fs::read_to_string(&path).unwrap(), "a 5\n");
+  assert!(e.contains("missing field"), "{e}");
+  assert_eq!(
+    fs::read_to_string(&path).unwrap(),
+    "{ \"channels\": [ { \"slug\": \"a\" } ] }"
+  );
 }
 
 #[::tokio::test]

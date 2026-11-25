@@ -239,11 +239,11 @@ fn runs_the_loggers_commands() {
   );
   assert_eq!(
     ::deploy::supervise::dgg_channels(Some(Path::new("root"))),
-    Some(Path::new("root").join("dgg-channels"))
+    Some(Path::new("root").join("dgg-channels.jsonc"))
   );
   assert_eq!(
     ::deploy::supervise::kick_channels(Some(Path::new("root"))),
-    Some(Path::new("root").join("kick-channels"))
+    Some(Path::new("root").join("kick-channels.jsonc"))
   );
 }
 
@@ -462,15 +462,26 @@ fn a_failed_migration_leaves_index_compact_and_sync_off() {
   assert!(!log(&dir, "supervisor").contains("compact: started"));
 }
 
-/// `config` with `kick` as Kick's capture, on a list holding `list`.
+/// The Kick list of `plain`, its channels as plain lines.
+fn kick_list(plain: &str) -> String {
+  ::logger::kick::channels::convert_plain(plain).unwrap()
+}
+
+/// The dgg list of `plain`, its channels as plain lines.
+fn dgg_list(plain: &str) -> String {
+  ::logger::dgg::channels::convert_plain(plain).unwrap()
+}
+
+/// `config` with `kick` as Kick's capture, on a list holding `list`, as
+/// plain lines.
 fn with_kick(
   dir: &TempDir,
   mut config: Config,
   kick: Program,
   list: &str,
 ) -> Config {
-  let path = dir.path().join("kick-channels");
-  fs::write(&path, list).unwrap();
+  let path = dir.path().join("kick-channels.jsonc");
+  fs::write(&path, kick_list(list)).unwrap();
   config.kick_capture = kick;
   config.kick_channels = Some(path);
   config.check_every = Duration::from_millis(100);
@@ -494,7 +505,7 @@ fn captures_kick_given_channels() {
   let started = Instant::now();
   assert_eq!(run(&config, &Stop::new()).unwrap(), Exit::HandedOff);
   assert!(started.elapsed() < Duration::from_secs(10));
-  let list = dir.path().join("kick-channels");
+  let list = dir.path().join("kick-channels.jsonc");
   let said =
     format!("kick-capture --channels {} --channel one", list.display());
   assert!(log(&dir, "kick-capture.one").contains(&said));
@@ -555,12 +566,12 @@ fn runs_a_kick_capture_per_channel() {
   );
   kick.args = vec!["kick-capture".into()];
   let config = with_kick(&dir, config(&dir, capture, index), kick, "one 2 1\n");
-  let list = dir.path().join("kick-channels");
+  let list = dir.path().join("kick-channels.jsonc");
   thread::scope(|scope| {
     // A channel added while it runs.
     scope.spawn(|| {
       thread::sleep(Duration::from_millis(500));
-      fs::write(&list, "one 2 1\ntwo 4 3\n").unwrap();
+      fs::write(&list, kick_list("one 2 1\ntwo 4 3\n")).unwrap();
     });
     assert_eq!(run(&config, &Stop::new()).unwrap(), Exit::HandedOff);
   });
@@ -584,13 +595,13 @@ fn starts_an_ended_kick_capture_once_its_channel_is_back() {
   let index = script(dir.path(), "index", &[Step::Sleep(20)]);
   let kick = script(dir.path(), "kick", &[Step::Exit(0)]);
   let config = with_kick(&dir, config(&dir, capture, index), kick, "a 2 1\n");
-  let list = dir.path().join("kick-channels");
+  let list = dir.path().join("kick-channels.jsonc");
   thread::scope(|scope| {
     scope.spawn(|| {
       thread::sleep(Duration::from_millis(1000));
-      fs::write(&list, "# none\n").unwrap();
+      fs::write(&list, kick_list("# none\n")).unwrap();
       thread::sleep(Duration::from_millis(500));
-      fs::write(&list, "a 2 1\n").unwrap();
+      fs::write(&list, kick_list("a 2 1\n")).unwrap();
     });
     assert_eq!(run(&config, &Stop::new()).unwrap(), Exit::HandedOff);
   });
@@ -600,10 +611,10 @@ fn starts_an_ended_kick_capture_once_its_channel_is_back() {
   assert_eq!(started, 2, "{supervisor}");
 }
 
-/// `config` with a dgg channel list holding `list`.
+/// `config` with a dgg channel list holding `list`, as plain lines.
 fn with_dgg_list(dir: &TempDir, mut config: Config, list: &str) -> Config {
-  let path = dir.path().join("dgg-channels");
-  fs::write(&path, list).unwrap();
+  let path = dir.path().join("dgg-channels.jsonc");
+  fs::write(&path, dgg_list(list)).unwrap();
   config.dgg_channels = Some(path);
   config.check_every = Duration::from_millis(100);
   config.handoff_wait = Duration::from_millis(300);
@@ -621,14 +632,14 @@ fn runs_a_dgg_capture_per_channel() {
   capture.args = vec!["dgg-capture".into()];
   let config = config(&dir, capture, script(dir.path(), "index", &[]));
   let config = with_dgg_list(&dir, config, "destiny.gg wss://a -\n");
-  let list = dir.path().join("dgg-channels");
+  let list = dir.path().join("dgg-channels.jsonc");
   let stop = Stop::new();
   thread::scope(|scope| {
     scope.spawn(|| {
       // A channel added while it runs.
       thread::sleep(Duration::from_millis(500));
-      fs::write(&list, "destiny.gg wss://a -\nomni.example wss://b -\n")
-        .unwrap();
+      let both = "destiny.gg wss://a -\nomni.example wss://b -\n";
+      fs::write(&list, dgg_list(both)).unwrap();
       thread::sleep(Duration::from_millis(1500));
       stop.request();
     });

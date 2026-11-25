@@ -15,7 +15,7 @@ use {
 /// HISTORY replays filled them. Brings the index up to date first.
 #[derive(Args)]
 pub struct Gaps {
-  /// The dgg channel, as `dgg-channels` names it.
+  /// The dgg channel, as `dgg-channels.jsonc` names it.
   #[arg(long, default_value = DESTINY)]
   channel: String,
   /// Only list gaps at least this many seconds long.

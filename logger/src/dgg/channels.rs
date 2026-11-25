@@ -1,24 +1,44 @@
-//! The dgg channels to capture: `dgg-channels` in the install's root, a
-//! line per channel, edited by hand. Each is a chat speaking dgg's protocol
-//! at a WebSocket URL of its own.
+//! The dgg channels to capture: `dgg-channels.jsonc` in the install's
+//! root, JSONC (see [`::common::config`]), edited by hand. Each is a chat
+//! speaking dgg's protocol at a WebSocket URL of its own.
 //!
-//! ```text
-//! # <name> <WebSocket URL> [<Origin header>, or - for none]
-//! destiny.gg wss://chat.destiny.gg/ws https://www.destiny.gg
+//! ```jsonc
+//! {
+//!   "channels": [
+//!     {
+//!       "name": "destiny.gg",
+//!       "url": "wss://chat.destiny.gg/ws",
+//!       "origin": "https://www.destiny.gg", // or null for none
+//!     },
+//!   ],
+//! }
 //! ```
 //!
-//! Blank lines and `#` comments are skipped. With no file, the list is
-//! [`Channel::destiny`] alone, so a host that never writes one captures
-//! destiny.gg.
+//! With no file, the list is [`Channel::destiny`] alone, so a host that
+//! never writes one captures destiny.gg; an install writes one (see
+//! [`render`]). Before it was JSONC, the list was [`PLAIN_FILE`], a line
+//! per channel, which [`convert_plain`] turns into this.
 
 use {
-  ::common::fs::MissingOk,
+  ::common::{config, fs::MissingOk},
   ::dgg_api::chat::{DEFAULT_ORIGIN, DEFAULT_URL},
+  ::serde::Deserialize,
+  ::serde_json::Value,
   ::std::{fs, path::Path},
 };
 
 /// The channel list, in an install's root.
-pub const FILE: &str = "dgg-channels";
+pub const FILE: &str = "dgg-channels.jsonc";
+
+/// The channel list before it was JSONC, a line per channel:
+///
+/// ```text
+/// # <name> <WebSocket URL> [<Origin header>, or - for none]
+/// destiny.gg wss://chat.destiny.gg/ws https://www.destiny.gg
+/// ```
+///
+/// Blank lines and `#` comments are skipped.
+pub const PLAIN_FILE: &str = "dgg-channels";
 
 /// destiny.gg's channel's name.
 pub const DESTINY: &str = "destiny.gg";
@@ -27,7 +47,8 @@ pub const DESTINY: &str = "destiny.gg";
 /// may be named, so one is never mistaken for the other.
 pub const RESERVED: [&str; 4] = ["live", "archive", "backfill", "control"];
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Channel {
   /// Its journal's directory, the site's domain by convention: see
   /// [`valid_name`].
@@ -48,11 +69,32 @@ impl Channel {
     }
   }
 
-  /// As a line of the list.
+  /// As an entry of the list, indented by `indent`, its fields a line
+  /// each.
+  pub fn json(&self, indent: &str) -> String {
+    let origin = match &self.origin {
+      Some(origin) => Value::from(origin.as_str()),
+      None => Value::Null,
+    };
+    format!(
+      "{indent}{{\n{indent}  \"name\": {},\n{indent}  \"url\": {},\n\
+       {indent}  \"origin\": {origin},\n{indent}}}",
+      Value::from(self.name.as_str()),
+      Value::from(self.url.as_str()),
+    )
+  }
+
+  /// As a line of the [`PLAIN_FILE`].
   pub fn line(&self) -> String {
     let origin = self.origin.as_deref().unwrap_or("-");
     format!("{} {} {origin}", self.name, self.url)
   }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct List {
+  channels: Vec<Channel>,
 }
 
 /// A name: lowercase letters, digits, `-`, `_` and `.`, not starting or
@@ -72,6 +114,63 @@ pub fn valid_name(name: &str) -> bool {
 
 /// A list's channels, each name once, at least one.
 pub fn parse(text: &str) -> Result<Vec<Channel>, String> {
+  let List { channels } = config::parse(text)?;
+  for (at, channel) in channels.iter().enumerate() {
+    let why = |why: &str| format!("channel {}: {why}", at + 1);
+    check(channel).map_err(why)?;
+    if channels[..at]
+      .iter()
+      .any(|known| known.name == channel.name)
+    {
+      return Err(why(&format!("{} listed twice", channel.name)));
+    }
+  }
+  if channels.is_empty() {
+    return Err("no channels listed".into());
+  }
+  Ok(channels)
+}
+
+/// What's wrong with `channel`, if anything.
+fn check(channel: &Channel) -> Result<(), &'static str> {
+  if !valid_name(&channel.name) {
+    return Err(
+      "a name is lowercase letters, digits, -, _ and ., and not live, \
+       archive, backfill or control",
+    );
+  }
+  let url = &channel.url;
+  if !url.starts_with("wss://") && !url.starts_with("ws://") {
+    return Err("a URL starts with wss:// or ws://");
+  }
+  if let Some(origin) = &channel.origin
+    && !origin.starts_with("https://")
+    && !origin.starts_with("http://")
+  {
+    return Err("an Origin starts with https:// or http://, or is null");
+  }
+  Ok(())
+}
+
+/// A list of `channels`, as an install writes it.
+pub fn render(channels: &[Channel]) -> String {
+  let mut out = String::from(
+    "// The dgg channels to capture, each a chat speaking dgg's protocol:\n\
+     // its name (its journal's directory), its WebSocket URL, and the\n\
+     // Origin header it's opened with (null for none). A running\n\
+     // supervisor picks a change up within a minute.\n\
+     {\n  \"channels\": [\n",
+  );
+  for channel in channels {
+    out.push_str(&channel.json("    "));
+    out.push_str(",\n");
+  }
+  out.push_str("  ],\n}\n");
+  out
+}
+
+/// A [`PLAIN_FILE`]'s channels, each name once, at least one.
+pub fn parse_plain(text: &str) -> Result<Vec<Channel>, String> {
   let mut channels: Vec<Channel> = Vec::new();
   for (number, line) in text.lines().enumerate() {
     let Some(channel) = parse_line(line)
@@ -90,7 +189,13 @@ pub fn parse(text: &str) -> Result<Vec<Channel>, String> {
   Ok(channels)
 }
 
-/// A line's channel: none for a blank line or a comment.
+/// A [`PLAIN_FILE`]'s text as the list's (see [`render`]). Its comments
+/// aren't kept.
+pub fn convert_plain(text: &str) -> Result<String, String> {
+  Ok(render(&parse_plain(text)?))
+}
+
+/// A plain line's channel: none for a blank line or a comment.
 fn parse_line(line: &str) -> Result<Option<Channel>, &'static str> {
   let line = line.split('#').next().unwrap_or_default().trim();
   if line.is_empty() {
@@ -102,26 +207,18 @@ fn parse_line(line: &str) -> Result<Option<Channel>, &'static str> {
     [name, url, origin] => (name, url, Some(origin)),
     _ => return Err("not `<name> <URL> [<Origin>|-]`"),
   };
-  if !valid_name(name) {
-    return Err(
-      "a name is lowercase letters, digits, -, _ and ., and not live, \
-       archive, backfill or control",
-    );
-  }
-  if !url.starts_with("wss://") && !url.starts_with("ws://") {
-    return Err("a URL starts with wss:// or ws://");
-  }
-  if let Some(origin) = origin
-    && !origin.starts_with("https://")
-    && !origin.starts_with("http://")
-  {
-    return Err("an Origin starts with https:// or http://, or is -");
-  }
-  Ok(Some(Channel {
+  let channel = Channel {
     name: name.to_owned(),
     url: url.to_owned(),
     origin: origin.map(str::to_owned),
-  }))
+  };
+  match check(&channel) {
+    Err(why) if why.starts_with("an Origin") => {
+      Err("an Origin starts with https:// or http://, or is -")
+    }
+    Err(why) => Err(why),
+    Ok(()) => Ok(Some(channel)),
+  }
 }
 
 /// The channels in `path`: [`Channel::destiny`] alone if there's no file.

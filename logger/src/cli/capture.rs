@@ -28,8 +28,8 @@ use {
 /// if the channel's removed, this capture stops, exiting 3.
 #[derive(Args)]
 pub struct Capture {
-  /// The channel list (`dgg-channels`): with none, or no file, destiny.gg's
-  /// alone.
+  /// The channel list (`dgg-channels.jsonc`): with none, or no file,
+  /// destiny.gg's alone.
   #[arg(long)]
   channels: Option<PathBuf>,
   /// The channel to capture, by its name: one in the list.

@@ -13,7 +13,7 @@ use {
     control::{self, Status},
     kick::{
       capture::{CHANGED, Config, Exit, REMOVED, control_dir, run},
-      channels::Channel,
+      channels::{self, Channel},
     },
   },
   ::logger_journal::{
@@ -349,10 +349,9 @@ async fn hands_off_to_a_newer_instance() {
 async fn follows_its_channel_in_the_list() {
   let centrifugo = Centrifugo::start().await;
   let lists = TempDir::new("logger-kick-capture-list");
-  let list = lists.path().join("kick-channels");
-  let write = |channels: &[Channel]| {
-    let text: String = channels.iter().map(|c| c.line() + "\n").collect();
-    ::std::fs::write(&list, text).unwrap();
+  let list = lists.path().join(channels::FILE);
+  let write = |listed: &[Channel]| {
+    ::std::fs::write(&list, channels::render(listed)).unwrap();
   };
   write(&[channel("one", 1000), channel("two", 2000)]);
   let running = start_following(

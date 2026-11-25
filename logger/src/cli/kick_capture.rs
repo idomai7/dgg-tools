@@ -27,7 +27,7 @@ use {
 /// with, and if the channel's removed, this capture stops.
 #[derive(Args)]
 pub struct KickCapture {
-  /// The channel list (`kick-channels`, see `kick-ids`).
+  /// The channel list (`kick-channels.jsonc`, see `kick-ids`).
   #[arg(long)]
   channels: PathBuf,
   /// The channel to capture, by its slug: one in the list.

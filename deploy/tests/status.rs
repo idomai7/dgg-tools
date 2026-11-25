@@ -505,7 +505,10 @@ fn reports_kicks_captures_and_channels() {
   let report = Watcher::new().unwrap().gather(&paths).unwrap();
   assert!(!text(&report).join("\n").contains("kick "));
 
-  dir.write("kick-channels", "one 2 1\ntwo 4 3\n");
+  dir.write(
+    "kick-channels.jsonc",
+    ::logger::kick::channels::convert_plain("one 2 1\ntwo 4 3\n").unwrap(),
+  );
   let kick_status = |instance: &str, heartbeat: i64| {
     let status = ::logger::control::Status {
       instance: instance.into(),
@@ -591,10 +594,13 @@ fn reports_kicks_captures_and_channels() {
   assert!(line("two").contains("nothing today"));
   assert!(!lines.contains(&"KICK".to_owned()));
 
-  dir.write("kick-channels", "one\n");
+  dir.write(
+    "kick-channels.jsonc",
+    r#"{ "channels": [{ "slug": "one" }] }"#,
+  );
   let report = Watcher::new().unwrap().gather(&paths).unwrap();
   let problem = report.kick.problem.as_deref().unwrap();
-  assert!(problem.contains("line 1"), "{problem}");
+  assert!(problem.contains("missing field"), "{problem}");
 }
 
 #[test]
@@ -604,8 +610,11 @@ fn reports_each_dgg_channel() {
   let today = utc_day(now);
   let paths = Paths::under(dir.to_path_buf());
   dir.write(
-    "dgg-channels",
-    "two.dev wss://two.example/ws -\ndestiny.gg wss://x/ws -\n",
+    "dgg-channels.jsonc",
+    ::logger::dgg::channels::convert_plain(
+      "two.dev wss://two.example/ws -\ndestiny.gg wss://x/ws -\n",
+    )
+    .unwrap(),
   );
   // A capture of each listed channel; one only journaled, not listed.
   dir.write(
@@ -668,10 +677,10 @@ fn reports_each_dgg_channel() {
   assert!(lines[old].ends_with("  (not listed)"));
   assert!(lines[old + 1].starts_with("  waiting for compact  1 days"));
 
-  dir.write("dgg-channels", "two.dev\n");
+  dir.write("dgg-channels.jsonc", r#"{ "channels": [{ "name": "a" }] }"#);
   let report = Watcher::new().unwrap().gather(&paths).unwrap();
   let problem = report.dgg.problem.as_deref().unwrap();
-  assert!(problem.contains("line 1"), "{problem}");
+  assert!(problem.contains("missing field"), "{problem}");
   // Still each journaled channel, none listed.
   assert!(report.dgg.channels.iter().all(|c| !c.listed));
   let lines = journal_lines(&report);
@@ -799,7 +808,10 @@ fn merges_the_logs_in_time_order() {
 #[test]
 fn merges_the_captures_logs() {
   let dir = TempDir::new("deploy-status-capture-logs");
-  dir.write("kick-channels", "one 2 1\n");
+  dir.write(
+    "kick-channels.jsonc",
+    ::logger::kick::channels::convert_plain("one 2 1\n").unwrap(),
+  );
   dir.write(
     "logs/dgg-capture.log",
     "2026-11-24 10:00:01.000Z INFO  a-1: capturing\n",

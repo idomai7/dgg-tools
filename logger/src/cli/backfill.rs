@@ -35,7 +35,8 @@ use {
 /// running it again picks up where it left off.
 #[derive(Args)]
 pub struct Backfill {
-  /// The dgg channel, as `dgg-channels` names it. Only destiny.gg's: the
+  /// The dgg channel, as `dgg-channels.jsonc` names it. Only destiny.gg's:
+  /// the
   /// sources hold no other chat.
   #[arg(long, default_value = DESTINY)]
   channel: String,

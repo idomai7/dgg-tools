@@ -1,25 +1,43 @@
-//! The Kick channels to capture: `kick-channels` in the install's root, a
-//! line per channel, written by `kick-ids` and editable by hand.
+//! The Kick channels to capture: `kick-channels.jsonc` in the install's
+//! root, JSONC (see [`::common::config`]), written by `kick-ids` and
+//! editable by hand.
 //!
-//! ```text
-//! # <slug> <channel id> <chatroom id>
-//! somechannel 789 123
+//! ```jsonc
+//! {
+//!   "channels": [
+//!     { "slug": "somechannel", "channel_id": 789, "chatroom_id": 123 },
+//!   ],
+//! }
 //! ```
 //!
-//! Blank lines and `#` comments are skipped. [`update`] changes only the
-//! channel's own line, keeping its comment, and adds a line for a new one,
-//! so the rest of the file stays as written.
+//! [`update`] changes only the channel's own entry, and adds an entry for a
+//! new one at the end, so the rest of the file, comments and all, stays as
+//! written. Before it was JSONC, the list was [`PLAIN_FILE`], a line per
+//! channel, which [`convert_plain`] turns into this.
 
 use {
-  ::common::{atomic_file, fs::MissingOk},
+  ::common::{atomic_file, config, fs::MissingOk},
   ::kick_api::channel,
+  ::serde::Deserialize,
+  ::serde_json::value::RawValue,
   ::std::{fs, io, path::Path},
 };
 
 /// The channel list, in an install's root.
-pub const FILE: &str = "kick-channels";
+pub const FILE: &str = "kick-channels.jsonc";
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// The channel list before it was JSONC, a line per channel:
+///
+/// ```text
+/// # <slug> <channel id> <chatroom id>
+/// somechannel 789 123
+/// ```
+///
+/// Blank lines and `#` comments are skipped.
+pub const PLAIN_FILE: &str = "kick-channels";
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Channel {
   /// Its name in its URL, and its journal's directory: see [`valid_slug`].
   pub slug: String,
@@ -30,10 +48,26 @@ pub struct Channel {
 }
 
 impl Channel {
-  /// As a line of the list.
+  /// As an entry of the list, on one line.
+  pub fn json(&self) -> String {
+    format!(
+      r#"{{ "slug": {}, "channel_id": {}, "chatroom_id": {} }}"#,
+      ::serde_json::Value::from(self.slug.as_str()),
+      self.channel_id,
+      self.chatroom_id
+    )
+  }
+
+  /// As a line of the [`PLAIN_FILE`].
   pub fn line(&self) -> String {
     format!("{} {} {}", self.slug, self.channel_id, self.chatroom_id)
   }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct List {
+  channels: Vec<Channel>,
 }
 
 /// A slug: lowercase letters, digits, `-`, `_` and `@` (an app's bot
@@ -67,6 +101,47 @@ pub fn journaled(dir: &Path) -> io::Result<Vec<String>> {
 
 /// A list's channels, each slug once.
 pub fn parse(text: &str) -> Result<Vec<Channel>, String> {
+  let List { channels } = config::parse(text)?;
+  for (at, channel) in channels.iter().enumerate() {
+    let n = at + 1;
+    if !valid_slug(&channel.slug) {
+      return Err(format!(
+        "channel {n}: a slug is lowercase letters, digits, -, _ and @"
+      ));
+    }
+    if channels[..at]
+      .iter()
+      .any(|known| known.slug == channel.slug)
+    {
+      return Err(format!("channel {n}: {} listed twice", channel.slug));
+    }
+  }
+  Ok(channels)
+}
+
+/// A list of `channels`, as [`update`] would write it from nothing.
+pub fn render(channels: &[Channel]) -> String {
+  let mut out = String::from(
+    "// The Kick channels to capture: `kick-ids <slug>` looks a channel's\n\
+     // ids up and adds it, or add one by hand. A running kick-capture picks\n\
+     // a change up within a minute.\n\
+     {\n  \"channels\": [\n",
+  );
+  if channels.is_empty() {
+    out.push_str(
+      "    // { \"slug\": \"somechannel\", \"channel_id\": 789, \
+       \"chatroom_id\": 123 },\n",
+    );
+  }
+  for channel in channels {
+    out.push_str(&format!("    {},\n", channel.json()));
+  }
+  out.push_str("  ],\n}\n");
+  out
+}
+
+/// A [`PLAIN_FILE`]'s channels, each slug once.
+pub fn parse_plain(text: &str) -> Result<Vec<Channel>, String> {
   let mut channels: Vec<Channel> = Vec::new();
   for (number, line) in text.lines().enumerate() {
     let Some(channel) = parse_line(line)
@@ -80,6 +155,12 @@ pub fn parse(text: &str) -> Result<Vec<Channel>, String> {
     channels.push(channel);
   }
   Ok(channels)
+}
+
+/// A [`PLAIN_FILE`]'s text as the list's (see [`render`]). Its comments
+/// aren't kept.
+pub fn convert_plain(text: &str) -> Result<String, String> {
+  Ok(render(&parse_plain(text)?))
 }
 
 /// A line's channel: none for a blank line or a comment.
@@ -137,48 +218,76 @@ pub fn load(path: &Path) -> Result<Vec<Channel>, String> {
   text.map_or(Ok(Vec::new()), |text| parse(&text).map_err(in_path))
 }
 
-/// `text` with `channel` recorded: its line replaced, keeping any comment
-/// on it, or added at the end. A list that doesn't parse isn't changed.
+/// Where the list's array of channels is in its text, and each entry, as
+/// byte ranges.
+#[derive(Deserialize)]
+struct Spans<'a> {
+  #[serde(borrow)]
+  channels: &'a RawValue,
+}
+
+/// `text` with `channel` recorded: its entry replaced, or one added at the
+/// end of the array, on a line of its own. The rest stays as written. A
+/// list that doesn't parse isn't changed.
 pub fn record(text: &str, channel: &Channel) -> Result<String, String> {
-  parse(text)?;
-  let mut out = String::with_capacity(text.len() + 64);
-  let mut found = false;
-  for line in text.split_inclusive('\n') {
-    let ours = matches!(
-      parse_line(line),
-      Ok(Some(known)) if known.slug == channel.slug
-    );
-    if !ours {
-      out.push_str(line);
-      continue;
+  let channels = parse(text)?;
+  let json = config::as_json(text);
+  let at = |part: &str| part.as_ptr() as usize - json.as_ptr() as usize;
+  let spans: Spans =
+    ::serde_json::from_str(&json).map_err(|e| e.to_string())?;
+  let array = spans.channels.get();
+  let entries: Vec<&RawValue> =
+    ::serde_json::from_str(array).map_err(|e| e.to_string())?;
+  let mut out = text.to_owned();
+  if let Some(found) = channels.iter().position(|c| c.slug == channel.slug) {
+    let entry = entries[found].get();
+    let start = at(entry);
+    out.replace_range(start..start + entry.len(), &channel.json());
+  } else {
+    let eol = if text.contains("\r\n") { "\r\n" } else { "\n" };
+    let close = at(array) + array.len() - 1;
+    let line_start = |at: usize| text[..at].rfind('\n').map_or(0, |n| n + 1);
+    let indent = |at: usize| {
+      let before = &text[line_start(at)..at];
+      let width = before.len() - before.trim_start().len();
+      before[..width].to_owned()
+    };
+    let entry_indent = match entries.last() {
+      Some(last) => indent(at(last.get())),
+      None => indent(close) + "  ",
+    };
+    let new = format!("{entry_indent}{},", channel.json());
+    // Inserted from the end, so what's before stays where it was.
+    match text[line_start(close)..close].trim().is_empty() {
+      // `]` on a line of its own: the entry goes on a line before it.
+      true => out.insert_str(line_start(close), &format!("{new}{eol}")),
+      false => {
+        let after = format!("{eol}{new}{eol}{}", indent(close));
+        out.insert_str(close, &after);
+      }
     }
-    found = true;
-    out.push_str(&channel.line());
-    let body = line.trim_end_matches(['\r', '\n']);
-    if let Some(comment) = body.find('#').map(|at| &body[at..]) {
-      out.push(' ');
-      out.push_str(comment);
+    // The last entry, followed by a comma if it isn't yet.
+    if let Some(last) = entries.last() {
+      let end = at(last.get()) + last.get().len();
+      if !text[end..close].trim_start().starts_with(',') {
+        out.insert(end, ',');
+      }
     }
-    out.push_str(&line[body.len()..]);
   }
-  if !found {
-    if !out.is_empty() && !out.ends_with('\n') {
-      out.push('\n');
-    }
-    out.push_str(&channel.line());
-    out.push('\n');
-  }
+  // Whatever was there, what's written must read back.
+  let broken = |e| format!("recording {} would break it: {e}", channel.slug);
+  parse(&out).map_err(broken)?;
   Ok(out)
 }
 
 /// Re-reads `path` and records `channel` in it, replacing the file whole
-/// (see [`atomic_file`]).
+/// (see [`atomic_file`]); with no file, starting from [`render`]'s.
 pub fn update(path: &Path, channel: &Channel) -> Result<(), String> {
   let in_path = |e: String| format!("{}: {e}", path.display());
   let text = fs::read_to_string(path)
     .missing_ok()
     .map_err(|e| in_path(e.to_string()))?
-    .unwrap_or_default();
+    .unwrap_or_else(|| render(&[]));
   let text = record(&text, channel).map_err(in_path)?;
   atomic_file::replace(path, text).map_err(|e| in_path(e.to_string()))
 }

@@ -8,7 +8,7 @@ use {
     dgg::{
       Dgg,
       capture::{CHANGED, Config, REMOVED, run},
-      channels::{Channel, DESTINY},
+      channels::{self, Channel, DESTINY},
     },
     service::Service,
   },
@@ -159,14 +159,10 @@ async fn journals_connections_and_shutdown() {
 async fn follows_the_channel_list() {
   let (url, server) = chat_server().await;
   let root = TempDir::new("logger-capture");
-  let list = root.path().join("dgg-channels");
+  let list = root.path().join(channels::FILE);
   let other = format!("{url}/other");
-  let line = |url: &str| {
-    format!(
-      "{DESTINY} {url} -
-"
-    )
-  };
+  // As the capture's channel has it.
+  let line = |url: &str| channels::render(&[channel(url)]);
   ::std::fs::write(&list, line(&url)).unwrap();
   let config = Config {
     channel: channel(&url),
@@ -187,8 +183,10 @@ async fn follows_the_channel_list() {
   ::tokio::time::sleep(Duration::from_millis(300)).await;
   ::std::fs::write(
     &list,
-    "other.example wss://x -
-",
+    channels::render(&[Channel {
+      name: "other.example".into(),
+      ..Channel::destiny()
+    }]),
   )
   .unwrap();
   let exit = ::tokio::time::timeout(Duration::from_secs(5), running)
