@@ -43,7 +43,10 @@
 use {
   crate::{lifeline::Lifeline, log::Log, peer},
   ::common::{config::Secret, log::Level},
-  ::logger::kick::channels,
+  ::logger::{
+    dgg::{self, channels::DESTINY},
+    kick::channels,
+  },
   ::std::{
     collections::HashSet,
     ffi::OsString,
@@ -99,7 +102,11 @@ impl Default for Backoff {
 
 #[derive(Clone, Debug)]
 pub struct Config {
+  /// `dgg-capture`, without its channel list or channel: they're added
+  /// from `dgg_channels`.
   pub dgg_capture: Program,
+  /// The dgg channel list, if there's one: without, destiny.gg's alone.
+  pub dgg_channels: Option<PathBuf>,
   pub migrate: Program,
   pub index: Program,
   pub compact: Program,
@@ -142,6 +149,7 @@ impl Config {
     };
     Self {
       dgg_capture: command(&["dgg-capture"]),
+      dgg_channels: None,
       migrate: command(&["migrate"]),
       index: command(&["index", "--follow"]),
       compact: command(&["compact"]),
@@ -164,6 +172,12 @@ impl Config {
       log_keep: 5,
     }
   }
+}
+
+/// The dgg channel list of the install whose root is `root`: none without
+/// one.
+pub fn dgg_channels(root: Option<&Path>) -> Option<PathBuf> {
+  Some(root?.join(dgg::channels::FILE))
 }
 
 /// The Kick channel list of the install whose root is `root`: none without
@@ -293,7 +307,7 @@ pub fn run(config: &Config, stop: &Stop) -> io::Result<Exit> {
     let [capture_log, migrate_log, index_log, compact_log] = &logs;
     scope.spawn(|| {
       let ended = keep_running(
-        &config.dgg_capture,
+        &dgg_capture(config, DESTINY),
         "dgg-capture",
         capture_log,
         &config.backoff,
@@ -580,6 +594,18 @@ fn capture_kick(
       }
     }
   });
+}
+
+/// `dgg-capture` for channel `name`, in the list if there's one.
+fn dgg_capture(config: &Config, name: &str) -> Program {
+  let mut program = config.dgg_capture.clone();
+  if let Some(list) = &config.dgg_channels {
+    program
+      .args
+      .extend(["--channels".into(), list.as_os_str().to_owned()]);
+  }
+  program.args.extend(["--channel".into(), name.into()]);
+  program
 }
 
 /// `kick-capture` for channel `slug` in `list`.

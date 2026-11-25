@@ -26,13 +26,25 @@ use {
   },
 };
 
-/// Starts `build`'s capture against `data`, appending its output to `log`.
-pub fn start(build: &Path, data: &Path, log: &Path) -> io::Result<Child> {
-  spawn(
-    build,
-    &["dgg-capture".as_ref(), "--data".as_ref(), data.as_ref()],
-    log,
-  )
+/// Starts `build`'s capture against `data`, of dgg channel `name` in
+/// `list`, appending its output to `log`.
+pub fn start(
+  build: &Path,
+  data: &Path,
+  list: &Path,
+  name: &str,
+  log: &Path,
+) -> io::Result<Child> {
+  let args: [&OsStr; 7] = [
+    "dgg-capture".as_ref(),
+    "--data".as_ref(),
+    data.as_ref(),
+    "--channels".as_ref(),
+    list.as_ref(),
+    "--channel".as_ref(),
+    name.as_ref(),
+  ];
+  spawn(build, &args, log)
 }
 
 /// Starts `build`'s Kick capture against `data`, of channel `slug` in

@@ -7,8 +7,8 @@ use {
     control,
     dgg::{
       Dgg,
-      capture::{Config, run},
-      channels::DESTINY,
+      capture::{CHANGED, Config, REMOVED, run},
+      channels::{Channel, DESTINY},
     },
     service::Service,
   },
@@ -25,6 +25,15 @@ use {
 /// destiny.gg's directory, in the journal directory `journal`.
 fn destiny(journal: &::std::path::Path) -> ::std::path::PathBuf {
   Dgg::channel_dir(&Dgg::dir(journal), DESTINY)
+}
+
+/// destiny.gg's channel, its chat at `url`.
+fn channel(url: &str) -> Channel {
+  Channel {
+    name: DESTINY.into(),
+    url: url.into(),
+    origin: None,
+  }
 }
 
 /// A chat server where every connection gets HISTORY, then a MSG every
@@ -87,8 +96,6 @@ async fn journals_connections_and_shutdown() {
 
   let root = TempDir::new("logger-capture");
   let chat = Options {
-    url: url.clone(),
-    origin: None,
     min_backoff: Duration::from_millis(10),
     ..Options::default()
   };
@@ -98,6 +105,9 @@ async fn journals_connections_and_shutdown() {
     ::tokio::time::sleep(Duration::from_millis(100)).await;
   };
   let config = Config {
+    channel: channel(&url),
+    list: None,
+    reread_every: Duration::from_secs(60),
     chat,
     journal_root: root.to_path_buf(),
     instance: "t".into(),
@@ -143,6 +153,77 @@ async fn journals_connections_and_shutdown() {
   assert_eq!(why, SHUTDOWN);
 }
 
+/// Following the list: a changed URL is connected to, its connections
+/// numbered on; removed from the list, the capture stops.
+#[::tokio::test]
+async fn follows_the_channel_list() {
+  let (url, server) = chat_server().await;
+  let root = TempDir::new("logger-capture");
+  let list = root.path().join("dgg-channels");
+  let other = format!("{url}/other");
+  let line = |url: &str| {
+    format!(
+      "{DESTINY} {url} -
+"
+    )
+  };
+  ::std::fs::write(&list, line(&url)).unwrap();
+  let config = Config {
+    channel: channel(&url),
+    list: Some(list.clone()),
+    reread_every: Duration::from_millis(100),
+    chat: Options::default(),
+    journal_root: destiny(root.path()),
+    instance: "a".into(),
+    started: 1,
+    handoff: quick_handoff(),
+    peer: None,
+    old_control: None,
+    bridge: false,
+  };
+  let running = ::tokio::spawn(run(config, ::std::future::pending()));
+  ::tokio::time::sleep(Duration::from_millis(300)).await;
+  ::std::fs::write(&list, line(&other)).unwrap();
+  ::tokio::time::sleep(Duration::from_millis(300)).await;
+  ::std::fs::write(
+    &list,
+    "other.example wss://x -
+",
+  )
+  .unwrap();
+  let exit = ::tokio::time::timeout(Duration::from_secs(5), running)
+    .await
+    .expect("capture didn't stop")
+    .unwrap()
+    .unwrap();
+  assert_eq!(exit, Exit::Removed);
+  server.abort();
+
+  let records: Vec<_> = live_files(&destiny(root.path()))
+    .unwrap()
+    .iter()
+    .flat_map(|file| Reader::open(file, 0).unwrap())
+    .filter_map(|entry| {
+      let Record::V0(record) = entry.unwrap().record else {
+        panic!("not dgg's")
+      };
+      match record.body {
+        Body::Frame(_) => None,
+        body => Some((record.connection, body)),
+      }
+    })
+    .collect();
+  assert_eq!(
+    records,
+    [
+      (1, Body::Open(url)),
+      (1, Body::Close(CHANGED.into())),
+      (2, Body::Open(other)),
+      (2, Body::Close(REMOVED.into())),
+    ]
+  );
+}
+
 /// Reads every v0 record body from `instance`'s live files in journal
 /// `root`.
 fn bodies(root: &Path, instance: &str) -> Vec<Body> {
@@ -168,11 +249,10 @@ async fn hands_off_to_a_newer_instance() {
 
   let root = TempDir::new("logger-capture");
   let config = |instance: &str, started| Config {
-    chat: Options {
-      url: url.clone(),
-      origin: None,
-      ..Options::default()
-    },
+    channel: channel(&url),
+    list: None,
+    reread_every: Duration::from_secs(60),
+    chat: Options::default(),
     journal_root: root.to_path_buf(),
     instance: instance.into(),
     started,
@@ -219,11 +299,10 @@ async fn hands_off_from_before_channels() {
   let dir = Dgg::dir(root.path());
   let old_control = control::dir(&dir);
   let config = |journal_root, instance: &str, started, old_control| Config {
-    chat: Options {
-      url: url.clone(),
-      origin: None,
-      ..Options::default()
-    },
+    channel: channel(&url),
+    list: None,
+    reread_every: Duration::from_secs(60),
+    chat: Options::default(),
     journal_root,
     instance: instance.into(),
     started,
@@ -288,11 +367,10 @@ async fn hands_off_to_an_instance_on_another_host() {
     ::tokio::spawn(async move { ::axum::serve(serve, router).await.unwrap() });
 
   let config = |root: &TempDir, instance: &str, started, peer| Config {
-    chat: Options {
-      url: url.clone(),
-      origin: None,
-      ..Options::default()
-    },
+    channel: channel(&url),
+    list: None,
+    reread_every: Duration::from_secs(60),
+    chat: Options::default(),
     journal_root: destiny(root.path()),
     instance: instance.into(),
     started,

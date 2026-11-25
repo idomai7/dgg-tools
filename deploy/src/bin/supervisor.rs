@@ -64,6 +64,7 @@ fn main() -> ExitCode {
   let mut config = Config::new(&bin_dir, &args.data, &args.logs);
   config.compact_every = Duration::from_secs(args.compact_every * 60);
   config.peers = ::deploy::peer::root(args.peers, args.peer_file);
+  config.dgg_channels = supervise::dgg_channels(config.peers.as_deref());
   config.kick_channels = supervise::kick_channels(config.peers.as_deref());
   config.sync_every = Duration::from_secs(args.sync_every * 60);
   if args.service {

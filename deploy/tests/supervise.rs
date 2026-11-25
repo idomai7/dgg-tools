@@ -226,7 +226,14 @@ fn runs_the_loggers_commands() {
   assert_eq!(args(&config.sync), "sync --data data");
   assert_eq!(args(&config.kick_capture), "kick-capture --data data");
   assert_eq!(config.peers, None);
-  assert_eq!(config.kick_channels, None);
+  assert_eq!(
+    (&config.dgg_channels, &config.kick_channels),
+    (&None, &None)
+  );
+  assert_eq!(
+    ::deploy::supervise::dgg_channels(Some(Path::new("root"))),
+    Some(Path::new("root").join("dgg-channels"))
+  );
   assert_eq!(
     ::deploy::supervise::kick_channels(Some(Path::new("root"))),
     Some(Path::new("root").join("kick-channels"))

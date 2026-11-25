@@ -420,14 +420,21 @@ pub fn install(options: &Options) -> io::Result<Done> {
   // Kick's channels, if Kick is captured.
   let kick_list = paths.root.join(channels::FILE);
   let kick_channels = channels::load(&kick_list).map_err(error)?;
-  // dgg's, not captured by yet, but a broken list is refused now.
-  dgg::channels::load(&paths.root.join(dgg::channels::FILE)).map_err(error)?;
+  // dgg's: destiny.gg's alone is captured yet, but a broken list is
+  // refused now.
+  let dgg_list = paths.root.join(dgg::channels::FILE);
+  dgg::channels::load(&dgg_list).map_err(error)?;
   let mut problems = Vec::new();
 
   let journal_root = paths.data.join("journal");
   let since = now_ms() - 1000;
-  let mut bridge =
-    bridge::start(&build, &paths.data, &paths.logs.join(DGG_CAPTURE_LOG))?;
+  let mut bridge = bridge::start(
+    &build,
+    &paths.data,
+    &dgg_list,
+    DESTINY,
+    &paths.logs.join(DGG_CAPTURE_LOG),
+  )?;
   // A bridge per Kick channel, by its slug.
   let mut kick_bridges = Vec::new();
   for channel in &kick_channels {

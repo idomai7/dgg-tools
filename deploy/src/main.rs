@@ -605,6 +605,7 @@ fn supervise(
   let mut config = Config::new(&bin_dir, &data, &logs);
   config.compact_every = Duration::from_secs(schedule.compact_every * 60);
   config.peers = schedule.peers;
+  config.dgg_channels = supervise::dgg_channels(config.peers.as_deref());
   config.kick_channels = supervise::kick_channels(config.peers.as_deref());
   config.sync_every = Duration::from_secs(schedule.sync_every * 60);
   let stop = Stop::new();

@@ -446,14 +446,14 @@ fn bridges_run_detached_into_their_log() {
     exe(dir.path(), "dgg-logger"),
   )
   .unwrap();
+  let (data, list) = (dir.path().join("data"), dir.path().join("list"));
   let log = dir.path().join("bridge.log");
   let mut child =
-    bridge::start(dir.path(), &dir.path().join("data"), &log).unwrap();
+    bridge::start(dir.path(), &data, &list, "destiny.gg", &log).unwrap();
   assert!(bridge::wait_gone(&mut child, Duration::from_secs(10)));
   assert!(!fs::read(&log).unwrap().is_empty());
 
   let log = dir.path().join("kick-bridge.log");
-  let (data, list) = (dir.path().join("data"), dir.path().join("list"));
   let mut child =
     bridge::start_kick(dir.path(), &data, &list, "one", &log).unwrap();
   assert!(bridge::wait_gone(&mut child, Duration::from_secs(10)));

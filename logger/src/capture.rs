@@ -133,4 +133,11 @@ pub enum Exit {
   Shutdown,
   /// Retired in favour of this instance.
   HandedOff(String),
+  /// Its channel was removed from the list.
+  Removed,
 }
+
+/// `dgg-capture`'s exit code when its channel was removed from the list:
+/// not 0, which tells the supervisor it handed off (an upgrade's under
+/// way), nor 1 (failed) or 2 (clap's, for bad arguments).
+pub const REMOVED_EXIT: u8 = 3;

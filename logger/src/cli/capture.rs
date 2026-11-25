@@ -1,20 +1,20 @@
-//! Capture dgg chat into the journal.
+//! Capture a dgg channel's chat into the journal.
 
 use {
   super::ConfigFrom,
   crate::{
-    capture::{Exit, Handoff, Peer, Say, instance_id},
+    capture::{Exit, Handoff, Peer, REMOVED_EXIT, Say, instance_id},
     control,
     dgg::{
       Dgg,
       capture::{Config, run},
-      channels::DESTINY,
+      channels::{self, Channel, DESTINY},
     },
     service::Service,
   },
   ::clap::Args,
   ::common::{config::Secret, time::now_ms},
-  ::dgg_api::chat::{DEFAULT_URL, Options},
+  ::dgg_api::chat::Options,
   ::serde::Deserialize,
   ::std::{
     path::{Path, PathBuf},
@@ -23,18 +23,21 @@ use {
   },
 };
 
-/// Capture dgg chat into the journal.
+/// Capture one dgg channel's chat into its journal, `dgg/<name>`. A list
+/// given is read again every minute: a changed URL or Origin is connected to, and
+/// if the channel's removed, this capture stops, exiting 3.
 #[derive(Args)]
 pub struct Capture {
+  /// The channel list (`dgg-channels`): with none, or no file, destiny.gg's
+  /// alone.
+  #[arg(long)]
+  channels: Option<PathBuf>,
+  /// The channel to capture, by its name: one in the list.
+  #[arg(long)]
+  channel: String,
   /// Host name used in the instance id (default: this machine's).
   #[arg(long)]
   host: Option<String>,
-  /// Chat socket URL.
-  #[arg(long, default_value = DEFAULT_URL)]
-  url: String,
-  /// Don't send an Origin header.
-  #[arg(long)]
-  no_origin: bool,
   /// Seconds a newer instance must be healthy before this one retires.
   #[arg(long, default_value_t = 30)]
   handoff_grace: u64,
@@ -67,7 +70,8 @@ pub struct PeerConfig {
 }
 
 impl Capture {
-  /// Captures into `<data>/journal` until stopped or handed off.
+  /// Captures into `<data>/journal/dgg/<name>` until stopped, handed off
+  /// or removed from the list.
   pub fn run(self, data: &Path) -> ExitCode {
     super::block_on(self.capture(data))
   }
@@ -78,20 +82,35 @@ impl Capture {
     });
     let started = now_ms();
     let instance = instance_id(&host, started);
-    let mut chat = Options {
-      url: self.url,
-      ..Options::default()
-    };
-    if self.no_origin {
-      chat.origin = None;
-    }
-    let dir = Dgg::dir(&data.join("journal"));
-    // destiny.gg's, the one channel captured for now.
-    let journal_root = Dgg::channel_dir(&dir, DESTINY);
     let say = Say {
       instance: instance.clone(),
       bridge: self.bridge,
     };
+    let listed = match &self.channels {
+      Some(list) => channels::load(list),
+      None => Ok(vec![Channel::destiny()]),
+    };
+    let listed = match listed {
+      Ok(listed) => listed,
+      Err(e) => {
+        say.error(e);
+        return ExitCode::FAILURE;
+      }
+    };
+    let Some(channel) = listed.into_iter().find(|c| c.name == self.channel)
+    else {
+      let list = match &self.channels {
+        Some(list) => list.display().to_string(),
+        None => "the channels (destiny.gg's alone, with no --channels)".into(),
+      };
+      say.error(format_args!("{} isn't in {list}", self.channel));
+      return ExitCode::FAILURE;
+    };
+    let dir = Dgg::dir(&data.join("journal"));
+    let journal_root = Dgg::channel_dir(&dir, &channel.name);
+    // destiny.gg's capture is the one there was before dgg's journals were
+    // by channel, whose old instances look in `dgg/control/`.
+    let old_control = (channel.name == DESTINY).then(|| control::dir(&dir));
     let peer = match self.peer {
       Some(url) => {
         let config = self.config.require::<PeerConfig>(r#"{"token": "..."}"#);
@@ -121,12 +140,16 @@ impl Capture {
       },
     };
     say.info(format_args!(
-      "capturing into {} (build {})",
+      "capturing {} into {} (build {})",
+      channel.name,
       journal_root.display(),
       crate::BUILD
     ));
     let config = Config {
-      chat,
+      channel,
+      list: self.channels.clone(),
+      reread_every: Duration::from_secs(60),
+      chat: Options::default(),
       journal_root,
       instance,
       started,
@@ -136,7 +159,7 @@ impl Capture {
         ..Handoff::default()
       },
       peer,
-      old_control: Some(control::dir(&dir)),
+      old_control,
       bridge: self.bridge,
     };
     match run(config, shutdown()).await {
@@ -147,6 +170,10 @@ impl Capture {
       Ok(Exit::HandedOff(successor)) => {
         say.info(format_args!("handed off to {successor}"));
         ExitCode::SUCCESS
+      }
+      Ok(Exit::Removed) => {
+        say.info(format_args!("stopped: {}", self.channel));
+        ExitCode::from(REMOVED_EXIT)
       }
       Err(e) => {
         say.error(format_args!("capture failed: {e}"));
