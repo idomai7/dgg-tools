@@ -673,6 +673,11 @@ WebSocket URL of its own. Each step a pause for review.
   channels' logs too; `r` goes round every channel's captures; the gaps
   page (`6`) shows the first channel's, and pressing again goes round the
   channels; the journal box's lines and the index's size are per channel.
+  Built (step 5): the list's channels in its order, then any only
+  journaled (marked not listed), each a line on today with the rest
+  indented under it, its index last; the list's problem, if any, a line
+  of its own. The programs box names a `dgg-capture`'s channel too. `f`
+  leaves both services' old shared logs to `3`.
 - **The move,** by `migrate` at the supervisor's start, under the index,
   compact and sync locks, as the move by service did: everything in
   `dgg/` that's of the old layout (`live/`, `archive/`, `backfill/`,
