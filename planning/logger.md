@@ -365,7 +365,8 @@ undocumented endpoints anonymously: no token, no login, no app. Planned
     `synced-archives kick.0.0`.
 - **Index:** `index-kick.sqlite`, separate from dgg's, with schema versions of
   its own (`logger/schemas/index-kick/`, from 0.1, since 0.0 would read as a
-  new database's `user_version`).
+  new database's `user_version`). One per channel since 2026-11-25,
+  `index-kick-<slug>.sqlite` (see [dgg channels](#dgg-channels)).
   - Rows are keyed by Kick's own ids (the uuids of messages, bans and
     deletions), so captures from several hosts and gap fills merge simply.
     Each keeps the earliest receive time.
@@ -619,6 +620,13 @@ WebSocket URL of its own. Each step a pause for review.
     nothing about them changes; each channel's is rebuilt from its
     journal once, and `index-kick.sqlite` deleted. Its own step, after
     dgg's (decided 2026-11-25).
+  - Built (step 6): the schema stays 0.1, its `channel` column too, since
+    the new files have nothing to mistake. `migrate` deletes
+    `index-kick.sqlite` (and its WAL files) at the supervisor's start, and
+    `index --follow` builds each channel's from its journal, as a new
+    channel's. Until a channel's is built, its history route reads its
+    live files alone. `status` shows each Kick channel's index under its
+    journal line, as dgg's.
 - **Routes,** both services alike, every channel's under `channels/` as
   Kick's queries are now:
   - `GET /<service>/v0/channels`: the channels with journals here, a
