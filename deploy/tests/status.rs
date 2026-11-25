@@ -67,7 +67,7 @@ fn reports_captures_and_the_journal() {
       "0".repeat(64)
     ),
   );
-  dir.write("data/index-dgg.sqlite", "x");
+  dir.write("data/index-dgg-destiny.gg.sqlite", "x");
 
   let paths = Paths::under(dir.to_path_buf());
   let mut watcher = Watcher::new().unwrap();
@@ -454,7 +454,7 @@ fn tails_a_captures_frames() {
 #[test]
 fn reports_gaps_without_writing_the_index() {
   let dir = TempDir::new("deploy-status-gaps");
-  let index = dir.path().join("index-dgg.sqlite");
+  let index = dir.path().join("index-dgg-destiny.gg.sqlite");
   assert_eq!(gaps(&index), Err("no index yet".into()));
   // Connected 1 s to 2 s, then again from 5 s: one 3 s gap, not filled.
   dir.write(
@@ -463,7 +463,8 @@ fn reports_gaps_without_writing_the_index() {
      5000 a 2 open wss://x\u{1e}\n6000 a 2 close shutdown\u{1e}\n",
   );
   let mut db = ::logger::dgg::index::open(&index).unwrap();
-  ::logger::dgg::index::index(&mut db, &dir.path().join("journal")).unwrap();
+  ::logger::dgg::index::index(&mut db, &dir.path().join("journal/dgg"))
+    .unwrap();
   drop(db);
   let (summary, lines) = gaps(&index).unwrap().unwrap();
   assert!(summary.ends_with("1 gaps, 3.0s in all; 1 not filled, 3.0s"));

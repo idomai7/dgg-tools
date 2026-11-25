@@ -7,14 +7,13 @@ use {
   crate::{
     capture::instance_id,
     dgg::{
-      Dgg,
       backfill::{
         Options, Source, linkers::Linkers, run, rustlesearch::Rustlesearch,
       },
+      channels::DESTINY,
       gaps::{coverage, unfetched},
       index::{index, open},
     },
-    service::Service,
   },
   ::clap::{Args, ValueEnum},
   ::common::{config::Secret, error, info, warn},
@@ -36,6 +35,10 @@ use {
 /// running it again picks up where it left off.
 #[derive(Args)]
 pub struct Backfill {
+  /// The dgg channel, as `dgg-channels` names it. Only destiny.gg's: the
+  /// sources hold no other chat.
+  #[arg(long, default_value = DESTINY)]
+  channel: String,
   /// Where to fetch from.
   #[arg(long, value_enum, default_value_t = SourceName::Rustlesearch)]
   source: SourceName,
@@ -129,7 +132,8 @@ pub struct Config {
 }
 
 impl Backfill {
-  /// Reads `<data>/index-dgg.sqlite` and writes dgg's backfill journal.
+  /// Reads the channel's index, `<data>/index-dgg-<channel>.sqlite`, and
+  /// writes its backfill journal.
   pub fn run(self, data: &Path) -> ExitCode {
     super::block_on(self.backfill(data))
   }
@@ -146,14 +150,24 @@ impl Backfill {
       .and_then(|config| config.linkers_session)
       .map(|session| session.expose().to_owned());
     let history = self.from.is_some();
-    let journal = data.join("journal");
+    if self.channel != DESTINY {
+      error!("no source has {}'s chat, only {DESTINY}'s", self.channel);
+      return ExitCode::FAILURE;
+    }
+    let (path, dir) = match super::dgg_channel(data, &self.channel) {
+      Ok(found) => found,
+      Err(e) => {
+        error!("backfill failed: {e}");
+        return ExitCode::FAILURE;
+      }
+    };
     let margin = (self.margin * 1000.0) as i64;
     if let Err(e) = ::std::fs::create_dir_all(data) {
       error!("backfill failed: {}: {e}", data.display());
       return ExitCode::FAILURE;
     }
-    let found = open(&data.join(Dgg::INDEX)).and_then(|mut db| {
-      index(&mut db, &journal)?;
+    let found = open(&path).and_then(|mut db| {
+      index(&mut db, &dir)?;
       let ranges = match self.from {
         Some(from) => {
           let to = self.to.unwrap_or_else(now_ms);
@@ -195,7 +209,7 @@ impl Backfill {
       (max_requests, delay, 3, None)
     };
     let options = Options {
-      journal_root: Dgg::dir(&journal),
+      journal_root: dir,
       instance: format!("backfill-{}", instance_id(&host, now_ms())),
       max_requests: self.max_requests.unwrap_or(max_requests),
       reserve: self.reserve.unwrap_or(reserve),

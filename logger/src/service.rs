@@ -5,13 +5,16 @@
 //!
 //! A service's journals are in a directory of its own under the journal
 //! directory, as one or more journal roots, each laid out as any (see
-//! [`layout`](::logger_journal::layout)). Paths in a service's index are
-//! relative to its directory.
+//! [`layout`](::logger_journal::layout)).
 //!
 //! A service's journals are by channel, each channel's in a directory of its
 //! own in the service's, holding one or more of its journal roots. Paths in
 //! a channel's manifest and its routes are relative to the channel's
 //! directory.
+//!
+//! A service has one or more indexes (see [`Service::indexes`]), each of
+//! the journals in one directory, its paths relative to it: dgg's, a
+//! channel's each; Kick's, one of the whole service's.
 
 use {
   crate::index::{Error, Tally},
@@ -34,9 +37,6 @@ pub trait Service: 'static {
   const API: &'static str;
   /// Its journals' variant.
   const VARIANT: Variant;
-  /// Its index's file, in the data directory.
-  const INDEX: &'static str;
-
   /// What an index round did.
   type Stats: Tally;
 
@@ -68,18 +68,30 @@ pub trait Service: 'static {
   /// Opens its index at `path`, creating it if needed.
   fn open_index(path: &Path) -> Result<Connection, Error>;
 
-  /// Indexes everything in its journals, under the journal directory
-  /// `journal`, that isn't indexed yet.
-  fn index(db: &mut Connection, journal: &Path) -> Result<Self::Stats, Error>;
+  /// Its indexes, of the journals in its directory `dir`.
+  fn indexes(dir: &Path) -> io::Result<Vec<Indexed>>;
 
-  /// How many records in its live files aren't indexed yet, counting up to
-  /// `at_most`. Archives aren't counted: a newly archived day is mostly
-  /// records already indexed from its live files.
-  fn waiting(
-    db: &Connection,
-    journal: &Path,
-    at_most: u64,
-  ) -> Result<u64, Error>;
+  /// Indexes everything in the journals in `dir`, one of its indexes'
+  /// (see [`Indexed::dir`]), that isn't indexed yet.
+  fn index(db: &mut Connection, dir: &Path) -> Result<Self::Stats, Error>;
+
+  /// How many records in the live files in `dir`, one of its indexes',
+  /// aren't indexed yet, counting up to `at_most`. Archives aren't counted:
+  /// a newly archived day is mostly records already indexed from its live
+  /// files.
+  fn waiting(db: &Connection, dir: &Path, at_most: u64) -> Result<u64, Error>;
+}
+
+/// One of a service's indexes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Indexed {
+  /// What it's called in what's logged: the service's name, then its
+  /// channel's, if it's one channel's.
+  pub name: String,
+  /// Its file, in the data directory.
+  pub file: String,
+  /// The directory whose journals it indexes, its paths relative to it.
+  pub dir: PathBuf,
 }
 
 /// Where `S`'s routes start: `/<name>/<api>`.

@@ -1,13 +1,10 @@
 //! Report gaps in what was captured.
 
 use {
-  crate::{
-    dgg::{
-      Dgg,
-      gaps::coverage,
-      index::{index, open},
-    },
-    service::Service,
+  crate::dgg::{
+    channels::DESTINY,
+    gaps::coverage,
+    index::{index, open},
   },
   ::clap::Args,
   ::common::format,
@@ -18,16 +15,27 @@ use {
 /// HISTORY replays filled them. Brings the index up to date first.
 #[derive(Args)]
 pub struct Gaps {
+  /// The dgg channel, as `dgg-channels` names it.
+  #[arg(long, default_value = DESTINY)]
+  channel: String,
   /// Only list gaps at least this many seconds long.
   #[arg(long, default_value_t = 0.0)]
   min: f64,
 }
 
 impl Gaps {
-  /// Reads `<data>/journal` and `<data>/index-dgg.sqlite`.
+  /// Reads the channel's journal, in `<data>/journal`, and its index,
+  /// `<data>/index-dgg-<channel>.sqlite`.
   pub fn run(self, data: &Path) -> ExitCode {
-    let result = open(&data.join(Dgg::INDEX)).and_then(|mut db| {
-      index(&mut db, &data.join("journal"))?;
+    let (path, dir) = match super::dgg_channel(data, &self.channel) {
+      Ok(found) => found,
+      Err(e) => {
+        eprintln!("gaps failed: {e}");
+        return ExitCode::FAILURE;
+      }
+    };
+    let result = open(&path).and_then(|mut db| {
+      index(&mut db, &dir)?;
       Ok(coverage(&db)?)
     });
     let coverage = match result {

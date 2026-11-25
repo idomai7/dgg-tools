@@ -87,6 +87,20 @@ fn peer_ca(pem: String, url: &str) -> Result<String, String> {
   Ok(pem)
 }
 
+/// dgg's channel `name`, in `<data>/journal`: its index's file and its
+/// directory.
+fn dgg_channel(
+  data: &::std::path::Path,
+  name: &str,
+) -> Result<(::std::path::PathBuf, ::std::path::PathBuf), String> {
+  use crate::{dgg::Dgg, service::Service};
+  if !Dgg::valid_channel(name) {
+    return Err(format!("{name:?} isn't a dgg channel's name"));
+  }
+  let dir = Dgg::channel_dir(&Dgg::dir(&data.join("journal")), name);
+  Ok((data.join(crate::dgg::index::file(name)), dir))
+}
+
 /// Runs an async command on a new runtime.
 fn block_on(
   future: impl ::std::future::Future<Output = ::std::process::ExitCode>,

@@ -123,33 +123,31 @@ pub fn open_read_only(
   open_read_only_at(path, busy, Kick::NAME, SCHEMA_VERSION)
 }
 
-/// How many records in every channel's live files aren't indexed yet,
-/// counting up to `at_most`.
+/// How many records in every channel's live files, in Kick's directory
+/// `dir`, aren't indexed yet, counting up to `at_most`.
 pub fn waiting(
   db: &Connection,
-  journal: &Path,
+  dir: &Path,
   at_most: u64,
 ) -> Result<u64, Error> {
-  let dir = Kick::dir(journal);
   let mut files = Vec::new();
-  for slug in channels::journaled(&dir)? {
-    for file in live_files(&channel_root(&dir, &slug))? {
-      files.push((relative(&dir, &file), file));
+  for slug in channels::journaled(dir)? {
+    for file in live_files(&channel_root(dir, &slug))? {
+      files.push((relative(dir, &file), file));
     }
   }
   waiting_in(db, files, at_most)
 }
 
-/// Indexes everything in every Kick channel's journal, in the journal
-/// directory `journal`, that isn't indexed yet.
-pub fn index(db: &mut Connection, journal: &Path) -> Result<Stats, Error> {
-  let dir = Kick::dir(journal);
+/// Indexes everything in every Kick channel's journal, in Kick's directory
+/// `dir`, that isn't indexed yet.
+pub fn index(db: &mut Connection, dir: &Path) -> Result<Stats, Error> {
   let mut stats = Stats::default();
   let mut live = Vec::new();
-  for slug in channels::journaled(&dir)? {
-    let root = channel_root(&dir, &slug);
+  for slug in channels::journaled(dir)? {
+    let root = channel_root(dir, &slug);
     for file in live_files(&root)? {
-      let path = relative(&dir, &file);
+      let path = relative(dir, &file);
       let (offset, _) = checkpoint(db, &path)?;
       live.push(path.clone());
       let reader = match Reader::open(&file, offset) {
@@ -168,7 +166,7 @@ pub fn index(db: &mut Connection, journal: &Path) -> Result<Stats, Error> {
     }
     for archive in archive::all(&root)? {
       let file = archive.path(&root);
-      let path = relative(&dir, &file);
+      let path = relative(dir, &file);
       let (offset, digest) = checkpoint(db, &path)?;
       let same = digest.as_deref() == Some(archive.sha256.as_str());
       if same && offset >= archive.bytes {

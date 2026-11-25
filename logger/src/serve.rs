@@ -192,7 +192,7 @@ pub fn router(journal: PathBuf, tokens: Tokens) -> Router {
   );
   let data = journal.parent().unwrap_or(&journal);
   let shared = Arc::new(Shared {
-    kick_index: data.join(Kick::INDEX),
+    kick_index: data.join(kick::index::FILE),
     journal,
     tokens,
     serving: Arc::new(Semaphore::new(CONCURRENT)),

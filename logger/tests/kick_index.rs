@@ -152,7 +152,7 @@ fn indexes_messages_deletions_and_bans() {
   let dir = TempDir::new("logger-kick-index");
   write_day(&dir);
   let mut db = open(&database(&dir)).unwrap();
-  let stats = index(&mut db, &journal(&dir)).unwrap();
+  let stats = index(&mut db, &kick_root(&journal(&dir))).unwrap();
   assert_eq!(
     (
       stats.records,
@@ -246,7 +246,7 @@ fn indexes_messages_deletions_and_bans() {
   );
 
   // Nothing new: nothing indexed twice.
-  let again = index(&mut db, &journal(&dir)).unwrap();
+  let again = index(&mut db, &kick_root(&journal(&dir))).unwrap();
   assert_eq!((again.records, again.messages), (0, 0));
 }
 
@@ -276,7 +276,7 @@ fn merges_what_several_captures_saw() {
     ],
   );
   let mut db = open(&database(&dir)).unwrap();
-  index(&mut db, &journal(&dir)).unwrap();
+  index(&mut db, &kick_root(&journal(&dir))).unwrap();
   let row = |id: &str| -> (i64, String) {
     db.query_row(
       "SELECT received, source FROM messages WHERE id = ?1",
@@ -296,14 +296,14 @@ fn reads_archives_once() {
   let dir = TempDir::new("logger-kick-index");
   write_day(&dir);
   let mut db = open(&database(&dir)).unwrap();
-  index(&mut db, &journal(&dir)).unwrap();
+  index(&mut db, &kick_root(&journal(&dir))).unwrap();
   let root = channel_root(&kick_root(&journal(&dir)), "c");
   compact_day(&Root::at(&root), "1970-01-01", 3)
     .unwrap()
     .unwrap();
   // The archive is read through, adding nothing, and the live file's
   // checkpoint goes with it.
-  let stats = index(&mut db, &journal(&dir)).unwrap();
+  let stats = index(&mut db, &kick_root(&journal(&dir))).unwrap();
   assert_eq!((stats.records, stats.messages), (7, 0));
   let paths: Vec<String> = db
     .prepare("SELECT path FROM files")
@@ -313,12 +313,12 @@ fn reads_archives_once() {
     .map(Result::unwrap)
     .collect();
   assert_eq!(paths, ["c/archive/1970/01/1970-01-01.journal.zst"]);
-  let again = index(&mut db, &journal(&dir)).unwrap();
+  let again = index(&mut db, &kick_root(&journal(&dir))).unwrap();
   assert_eq!(again.records, 0);
   // Rebuilt from the archive alone, it's the same.
   drop(db);
   let mut fresh = rebuild::<Kick>(&database(&dir)).unwrap();
-  let stats = index(&mut fresh, &journal(&dir)).unwrap();
+  let stats = index(&mut fresh, &kick_root(&journal(&dir))).unwrap();
   assert_eq!((stats.messages, stats.deletions, stats.bans), (2, 1, 2));
 }
 
@@ -328,9 +328,9 @@ fn counts_what_is_waiting() {
   write_day(&dir);
   write(&dir, "d", "k", vec![(10, Body::Open("wss://one".into()))]);
   let mut db = open(&database(&dir)).unwrap();
-  assert_eq!(waiting(&db, &journal(&dir), 100).unwrap(), 8);
-  index(&mut db, &journal(&dir)).unwrap();
-  assert_eq!(waiting(&db, &journal(&dir), 100).unwrap(), 0);
+  assert_eq!(waiting(&db, &kick_root(&journal(&dir)), 100).unwrap(), 8);
+  index(&mut db, &kick_root(&journal(&dir))).unwrap();
+  assert_eq!(waiting(&db, &kick_root(&journal(&dir)), 100).unwrap(), 0);
 }
 
 #[test]

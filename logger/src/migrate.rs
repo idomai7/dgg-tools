@@ -13,9 +13,9 @@
 //!   version: live files, archive manifests, `synced-archives` and capture
 //!   statuses. A file at another version, which this build can't read, gets
 //!   a line of its own, and is left as it was;
-//! - each index's schema, which must be its service's (or there's none
-//!   yet): [`SCHEMA_VERSION`] for dgg's,
-//!   [`SCHEMA_VERSION`](kick_index::SCHEMA_VERSION) for Kick's.
+//! - each index's schema (see [`Service::indexes`]), which must be its
+//!   service's (or there's none yet): [`SCHEMA_VERSION`] for each dgg
+//!   channel's, [`SCHEMA_VERSION`](kick_index::SCHEMA_VERSION) for Kick's.
 //!
 //! How the captures hand over is theirs to say, in their own logs.
 //!
@@ -69,10 +69,8 @@ pub struct Report {
   pub failed: Vec<String>,
   /// What's left of the [old layout](OLD_LAYOUT), which nothing reads now.
   pub old: Vec<PathBuf>,
-  /// dgg's index's schema, if there's an index.
-  pub index: Option<Version>,
-  /// Kick's index's schema, if there's one.
-  pub kick_index: Option<Version>,
+  /// Each index there is, by its file, and its schema.
+  pub indexes: Vec<(String, Version)>,
   /// Files at a version this build can't read, left as they were.
   pub unreadable: Vec<PathBuf>,
 }
@@ -109,22 +107,29 @@ pub fn migrate(
   check_service::<Dgg>(&journal, &mut report, say)?;
   check_service::<Kick>(&journal, &mut report, say)?;
 
-  report.index = check_index(
-    "dgg's index",
-    &data.join(Dgg::INDEX),
-    SCHEMA_VERSION,
-    &mut report.failed,
-    say,
-  )?;
-  report.kick_index = check_index(
-    "Kick's index",
-    &data.join(kick_index::FILE),
-    kick_index::SCHEMA_VERSION,
-    &mut report.failed,
-    say,
-  )?;
+  check_indexes::<Dgg>(data, SCHEMA_VERSION, &mut report, say)?;
+  check_indexes::<Kick>(data, kick_index::SCHEMA_VERSION, &mut report, say)?;
 
   Ok(report)
+}
+
+/// Checks each of `S`'s indexes, in `data`, is at `wanted`.
+fn check_indexes<S: Service>(
+  data: &Path,
+  wanted: Version,
+  report: &mut Report,
+  say: &mut dyn FnMut(Level, &str),
+) -> io::Result<()> {
+  for indexed in S::indexes(&S::dir(&data.join("journal")))? {
+    let path = data.join(&indexed.file);
+    let name = &indexed.file;
+    if let Some(version) =
+      check_index(name, &path, wanted, &mut report.failed, say)?
+    {
+      report.indexes.push((indexed.file, version));
+    }
+  }
+  Ok(())
 }
 
 /// What's left in `data` of the [old layout](OLD_LAYOUT), each said.

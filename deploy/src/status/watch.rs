@@ -26,7 +26,7 @@ use {
     log::Level,
     time::{now_ms, utc_timestamp},
   },
-  ::logger::{dgg::Dgg, service::Service},
+  ::logger::dgg::{self, channels::DESTINY},
   ::ratatui::{
     DefaultTerminal, Frame,
     crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
@@ -386,7 +386,7 @@ fn event_loop(
   loop {
     let report = watcher.gather(paths)?;
     if let View::Gaps(gaps) = &mut view {
-      gaps.refresh(paths.data.join(Dgg::INDEX));
+      gaps.refresh(paths.data.join(dgg::index::file(DESTINY)));
     }
     let pane = view.pane(paths, &report);
 

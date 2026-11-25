@@ -10,7 +10,7 @@ pub mod index;
 use {
   crate::{
     index::Error,
-    service::{Root, Service},
+    service::{Indexed, Root, Service},
   },
   ::logger_journal::Variant,
   ::rusqlite::Connection,
@@ -30,7 +30,6 @@ impl Service for Dgg {
   const NAME: &'static str = "dgg";
   const API: &'static str = "v0";
   const VARIANT: Variant = Variant::Dgg;
-  const INDEX: &'static str = index::FILE;
 
   type Stats = index::Stats;
 
@@ -75,15 +74,26 @@ impl Service for Dgg {
     index::open(path)
   }
 
-  fn index(db: &mut Connection, journal: &Path) -> Result<index::Stats, Error> {
-    index::index(db, journal)
+  /// One per channel, `index-dgg-<name>.sqlite`.
+  fn indexes(dir: &Path) -> io::Result<Vec<Indexed>> {
+    let channels = Self::channels(dir)?;
+    Ok(
+      channels
+        .iter()
+        .map(|name| Indexed {
+          name: format!("{} {name}", Self::NAME),
+          file: index::file(name),
+          dir: Self::channel_dir(dir, name),
+        })
+        .collect(),
+    )
   }
 
-  fn waiting(
-    db: &Connection,
-    journal: &Path,
-    at_most: u64,
-  ) -> Result<u64, Error> {
-    index::waiting(db, journal, at_most)
+  fn index(db: &mut Connection, dir: &Path) -> Result<index::Stats, Error> {
+    index::index(db, dir)
+  }
+
+  fn waiting(db: &Connection, dir: &Path, at_most: u64) -> Result<u64, Error> {
+    index::waiting(db, dir, at_most)
   }
 }

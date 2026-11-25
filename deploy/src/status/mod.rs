@@ -17,7 +17,7 @@ use {
   ::common::{fs::MissingOk, log::Level},
   ::logger::{
     control,
-    dgg::{Dgg, index},
+    dgg::{Dgg, channels::DESTINY, index},
     kick::channels,
     service::{Root, Service},
   },
@@ -315,7 +315,7 @@ impl Watcher {
       programs: self.programs(&paths.bin()),
       captures,
       journal: self.journal(&dgg, &backfill, now)?,
-      index: size_and_write(&paths.data.join(Dgg::INDEX)),
+      index: size_and_write(&paths.data.join(index::file(DESTINY))),
       kick_index: size_and_write(&paths.data.join(::logger::kick::index::FILE)),
       free: free_space(&paths.data),
       sync: sync(paths),

@@ -31,7 +31,7 @@ fn dgg(dir: &TempDir) -> PathBuf {
 }
 
 fn database(dir: &TempDir) -> PathBuf {
-  dir.path().join("index-dgg.sqlite")
+  dir.path().join("index-dgg-destiny.gg.sqlite")
 }
 
 fn message(timestamp: i64, nick: &str, data: &str) -> String {
@@ -122,7 +122,7 @@ fn indexes_and_deduplicates() {
   let root = TempDir::new("logger-index");
   write_journal(&root);
   let mut db = open(&database(&root)).unwrap();
-  let stats = index(&mut db, &journal(&root)).unwrap();
+  let stats = index(&mut db, &dgg(&root)).unwrap();
   assert_eq!((stats.records, stats.messages, stats.unparsed), (11, 3, 2));
   assert_eq!(stats.skipped, []);
   assert_eq!(
@@ -170,8 +170,8 @@ fn resumes_from_checkpoints() {
   let root = TempDir::new("logger-index");
   write_journal(&root);
   let mut db = open(&database(&root)).unwrap();
-  index(&mut db, &journal(&root)).unwrap();
-  let again = index(&mut db, &journal(&root)).unwrap();
+  index(&mut db, &dgg(&root)).unwrap();
+  let again = index(&mut db, &dgg(&root)).unwrap();
   assert_eq!((again.records, again.messages), (0, 0));
 
   // b keeps writing; only the new record is read.
@@ -179,7 +179,7 @@ fn resumes_from_checkpoints() {
   b.write(93, 1, frame(format!("MSG {}", message(40, "z", "third"))))
     .unwrap();
   drop(b);
-  let more = index(&mut db, &journal(&root)).unwrap();
+  let more = index(&mut db, &dgg(&root)).unwrap();
   assert_eq!((more.records, more.messages), (1, 1));
   assert_eq!(messages(&db).len(), 4);
 
@@ -187,7 +187,7 @@ fn resumes_from_checkpoints() {
   let incremental = messages(&db);
   drop(db);
   let mut db = rebuild::<Dgg>(&database(&root)).unwrap();
-  index(&mut db, &journal(&root)).unwrap();
+  index(&mut db, &dgg(&root)).unwrap();
   assert_eq!(messages(&db), incremental);
 }
 
@@ -215,7 +215,7 @@ fn refuses_other_schema_versions() {
 /// returns the messages it indexed.
 fn follower(root: &TempDir, pace: Pace) -> (Arc<AtomicBool>, JoinHandle<u64>) {
   let running = Arc::new(AtomicBool::new(true));
-  let (database, journal) = (database(root), journal(root));
+  let (database, journal) = (database(root), dgg(root));
   let flag = running.clone();
   let follower = ::std::thread::spawn(move || {
     let mut db = open(&database).unwrap();
@@ -279,14 +279,14 @@ fn counts_the_records_waiting() {
   let root = TempDir::new("logger-index");
   write_journal(&root);
   let mut db = open(&database(&root)).unwrap();
-  let all = waiting(&db, &journal(&root), 1000).unwrap();
+  let all = waiting(&db, &dgg(&root), 1000).unwrap();
   assert!(all > 3, "{all}");
-  assert_eq!(waiting(&db, &journal(&root), 2).unwrap(), 2);
-  index(&mut db, &journal(&root)).unwrap();
-  assert_eq!(waiting(&db, &journal(&root), 1000).unwrap(), 0);
+  assert_eq!(waiting(&db, &dgg(&root), 2).unwrap(), 2);
+  index(&mut db, &dgg(&root)).unwrap();
+  assert_eq!(waiting(&db, &dgg(&root), 1000).unwrap(), 0);
   write_message(&root, 40, "third");
   write_message(&root, 41, "fourth");
-  assert_eq!(waiting(&db, &journal(&root), 1000).unwrap(), 2);
+  assert_eq!(waiting(&db, &dgg(&root), 1000).unwrap(), 2);
 }
 
 #[test]
@@ -394,7 +394,7 @@ fn backfill_yields_to_native_messages() {
   drop(backfill);
 
   let mut db = open(&database(&root)).unwrap();
-  let stats = index(&mut db, &journal(&root)).unwrap();
+  let stats = index(&mut db, &dgg(&root)).unwrap();
   assert_eq!((stats.messages, stats.backfilled), (4, 3));
   let rows = |db: &Connection| -> Vec<(i64, String, String)> {
     messages(db)
@@ -420,7 +420,7 @@ fn backfill_yields_to_native_messages() {
   b.write(1001, 1, live("Bob", 300, "bob\nsays")).unwrap();
   b.write(1002, 1, live("Carol", 260, "yo")).unwrap();
   drop(b);
-  index(&mut db, &journal(&root)).unwrap();
+  index(&mut db, &dgg(&root)).unwrap();
   assert_eq!(
     rows(&db),
     [
@@ -448,7 +448,7 @@ fn backfill_yields_to_native_messages() {
   let incremental = messages(&db);
   drop(db);
   let mut db = rebuild::<Dgg>(&database(&root)).unwrap();
-  index(&mut db, &journal(&root)).unwrap();
+  index(&mut db, &dgg(&root)).unwrap();
   assert_eq!(messages(&db), incremental);
 }
 
@@ -487,7 +487,7 @@ fn truncated_timestamps_match_within_their_second() {
   drop(linkers);
 
   let mut db = open(&database(&root)).unwrap();
-  let stats = index(&mut db, &journal(&root)).unwrap();
+  let stats = index(&mut db, &dgg(&root)).unwrap();
   assert_eq!((stats.messages, stats.backfilled), (4, 3));
 
   // rustlesearch's precise copy of Bob's replaces linkers', taking the
@@ -505,7 +505,7 @@ fn truncated_timestamps_match_within_their_second() {
   b.write(1000, 1, Body::Open("wss://x".into())).unwrap();
   b.write(1001, 1, live("Carol", 8_999, "hi")).unwrap();
   drop(b);
-  index(&mut db, &journal(&root)).unwrap();
+  index(&mut db, &dgg(&root)).unwrap();
   let rows: Vec<(i64, String, String)> = messages(&db)
     .into_iter()
     .map(|(timestamp, nick, _, _, source)| (timestamp, nick, source))
@@ -530,7 +530,7 @@ fn truncated_timestamps_match_within_their_second() {
   let incremental = messages(&db);
   drop(db);
   let mut db = rebuild::<Dgg>(&database(&root)).unwrap();
-  index(&mut db, &journal(&root)).unwrap();
+  index(&mut db, &dgg(&root)).unwrap();
   assert_eq!(messages(&db), incremental);
 }
 
@@ -547,7 +547,7 @@ fn follows_files_into_archives() {
   a.write(102, 1, live("Bob", 102, "two")).unwrap();
   drop(a);
   let mut db = open(&database(&root)).unwrap();
-  index(&mut db, &journal(&root)).unwrap();
+  index(&mut db, &dgg(&root)).unwrap();
   assert_eq!(messages(&db).len(), 2);
 
   // Compacting moves the day into an archive: indexed once more (nothing
@@ -555,7 +555,7 @@ fn follows_files_into_archives() {
   compact_day(&Root::at(dgg(&root)), "1970-01-01", 3)
     .unwrap()
     .unwrap();
-  let archived = index(&mut db, &journal(&root)).unwrap();
+  let archived = index(&mut db, &dgg(&root)).unwrap();
   assert_eq!((archived.records, archived.messages), (3, 0));
   let paths = |db: &Connection| -> Vec<(String, bool)> {
     db.prepare("SELECT path, digest IS NOT NULL FROM files ORDER BY path")
@@ -567,7 +567,7 @@ fn follows_files_into_archives() {
   };
   let archive_path = "archive/1970/01/1970-01-01.journal.zst".to_owned();
   assert_eq!(paths(&db), [(archive_path.clone(), true)]);
-  let idle = index(&mut db, &journal(&root)).unwrap();
+  let idle = index(&mut db, &dgg(&root)).unwrap();
   assert_eq!(idle.records, 0);
 
   // A late file re-merges the archive: its digest changes, so it's read
@@ -579,7 +579,7 @@ fn follows_files_into_archives() {
   compact_day(&Root::at(dgg(&root)), "1970-01-01", 3)
     .unwrap()
     .unwrap();
-  let remerged = index(&mut db, &journal(&root)).unwrap();
+  let remerged = index(&mut db, &dgg(&root)).unwrap();
   assert_eq!((remerged.records, remerged.messages), (5, 1));
   assert_eq!(paths(&db), [(archive_path, true)]);
 
@@ -587,7 +587,7 @@ fn follows_files_into_archives() {
   let incremental = messages(&db);
   drop(db);
   let mut db = rebuild::<Dgg>(&database(&root)).unwrap();
-  index(&mut db, &journal(&root)).unwrap();
+  index(&mut db, &dgg(&root)).unwrap();
   assert_eq!(messages(&db), incremental);
   assert_eq!(incremental.len(), 3);
 }
@@ -601,7 +601,7 @@ fn forgets_compacted_files_unparsed_rows() {
   a.write(101, 1, frame("MSG not json".into())).unwrap();
   drop(a);
   let mut db = open(&database(&root)).unwrap();
-  index(&mut db, &journal(&root)).unwrap();
+  index(&mut db, &dgg(&root)).unwrap();
   let rows = |db: &Connection| -> Vec<String> {
     db.prepare("SELECT path FROM unparsed ORDER BY path")
       .unwrap()
@@ -622,6 +622,6 @@ fn forgets_compacted_files_unparsed_rows() {
   compact_day(&Root::at(dgg(&root)), "1970-01-01", 3)
     .unwrap()
     .unwrap();
-  index(&mut db, &journal(&root)).unwrap();
+  index(&mut db, &dgg(&root)).unwrap();
   assert_eq!(rows(&db), ["archive/1970/01/1970-01-01.journal.zst"]);
 }

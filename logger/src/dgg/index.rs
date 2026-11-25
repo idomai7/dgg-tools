@@ -1,6 +1,9 @@
-//! dgg's index: its journal into SQLite, `index-dgg.sqlite`, for searching
-//! and for finding gaps. As every service's (see [`crate::index`]), it's
-//! derived data, and each file's progress is checkpointed with its rows.
+//! dgg's index: a channel's journal into SQLite, `index-dgg-<name>.sqlite`
+//! (see [`file`]), for searching and for finding gaps. As every service's
+//! (see [`crate::index`]), it's derived data, and each file's progress is
+//! checkpointed with its rows. Its paths are relative to the channel's
+//! directory, so a channel's messages are deduplicated among themselves
+//! alone.
 //!
 //! Archives are found through the monthly manifests. An archive's
 //! checkpoint also records its SHA-256: a fully read archive is skipped
@@ -45,8 +48,10 @@ pub const SCHEMA_VERSION: Version = Version { major: 0, minor: 6 };
 /// an old one.
 const SCHEMA: &str = include_str!("../../schemas/index/v0.6.sql");
 
-/// Its file, in the data directory.
-pub const FILE: &str = "index-dgg.sqlite";
+/// The file of channel `name`'s index, in the data directory.
+pub fn file(name: &str) -> String {
+  format!("index-dgg-{name}.sqlite")
+}
 
 /// Records are committed in batches of this many, with their checkpoint.
 const BATCH: usize = 10_000;
@@ -104,15 +109,15 @@ pub fn open(path: &Path) -> Result<Connection, Error> {
   open_at(path, Dgg::NAME, SCHEMA, SCHEMA_VERSION)
 }
 
-/// How many records in the live and backfill files, in the journal
-/// directory `journal`, aren't indexed yet, counting up to `at_most`.
+/// How many records in the live and backfill files of the channel in
+/// `dir` aren't indexed yet, counting up to `at_most`.
 pub fn waiting(
   db: &Connection,
-  journal: &Path,
+  dir: &Path,
   at_most: u64,
 ) -> Result<u64, Error> {
   let mut files = Vec::new();
-  for root in Dgg::roots(&Dgg::dir(journal))? {
+  for root in Dgg::channel_roots(dir, "") {
     for file in root.live_files()? {
       files.push((root.path(&file), file));
     }
@@ -120,12 +125,11 @@ pub fn waiting(
   waiting_in(db, files, at_most)
 }
 
-/// Indexes everything in dgg's journals, in the journal directory
-/// `journal`, that isn't indexed yet: every root's live files, then their
-/// archives.
-pub fn index(db: &mut Connection, journal: &Path) -> Result<Stats, Error> {
+/// Indexes everything in the journals of the channel in `dir` that isn't
+/// indexed yet: every root's live files, then their archives.
+pub fn index(db: &mut Connection, dir: &Path) -> Result<Stats, Error> {
   let mut stats = Stats::default();
-  let roots = Dgg::roots(&Dgg::dir(journal))?;
+  let roots = Dgg::channel_roots(dir, "");
   let mut live = Vec::new();
   let mut files = Vec::new();
   for root in &roots {

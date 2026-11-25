@@ -213,9 +213,10 @@ pub struct Pace {
   pub max_wait: Duration,
 }
 
-/// Keeps `S`'s index up to date while `running()` is true: indexes at
-/// once, then as often as `pace` says, passing each round's stats to
-/// `report`.
+/// Keeps `S`'s index of the journals in `dir` (see
+/// [`Indexed::dir`](crate::service::Indexed::dir)) up to date while
+/// `running()` is true: indexes at once, then as often as `pace` says,
+/// passing each round's stats to `report`.
 ///
 /// Errors from a round are passed to `report` and retried next round (a
 /// file briefly locked by another process, say), except
@@ -223,7 +224,7 @@ pub struct Pace {
 /// returned.
 pub fn follow<S: Service>(
   db: &mut Connection,
-  journal_root: &Path,
+  dir: &Path,
   pace: Pace,
   running: impl Fn() -> bool,
   mut report: impl FnMut(Result<&S::Stats, &Error>),
@@ -236,14 +237,13 @@ pub fn follow<S: Service>(
       Some(since) if since >= pace.max_wait => true,
       Some(since) if since >= pace.min_wait => {
         // A failure to look is the round's to report.
-        S::waiting(db, journal_root, pace.batch)
-          .map_or(true, |n| n >= pace.batch)
+        S::waiting(db, dir, pace.batch).map_or(true, |n| n >= pace.batch)
       }
       Some(_) => false,
     };
     if due {
       last = Some(Instant::now());
-      match S::index(db, journal_root) {
+      match S::index(db, dir) {
         Ok(stats) => report(Ok(&stats)),
         Err(e) if e.fatal() => return Err(e),
         Err(e) => report(Err(&e)),

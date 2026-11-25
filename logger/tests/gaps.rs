@@ -54,7 +54,7 @@ fn finds_gaps_and_coverage() {
   drop(b);
 
   let mut db = open(&root.path().join("index.sqlite")).unwrap();
-  index(&mut db, &journal).unwrap();
+  index(&mut db, &Dgg::dir(&journal)).unwrap();
   let coverage = coverage(&db).unwrap().unwrap();
   assert_eq!((coverage.first, coverage.last), (1000, 4000));
   assert_eq!(
@@ -129,7 +129,7 @@ fn fetched_spans_fill_gaps() {
   drop(backfill);
 
   let mut db = open(&root.path().join("index.sqlite")).unwrap();
-  index(&mut db, &journal).unwrap();
+  index(&mut db, &Dgg::dir(&journal)).unwrap();
   let gaps = coverage(&db).unwrap().unwrap().gaps;
   let summary: Vec<_> = gaps
     .iter()
@@ -164,7 +164,7 @@ fn unfetched_ranges_resume_a_history_import() {
   drop(backfill);
 
   let mut db = open(&root.path().join("index.sqlite")).unwrap();
-  index(&mut db, &journal).unwrap();
+  index(&mut db, &Dgg::dir(&journal)).unwrap();
   // Only this source's spans count; what's left comes newest first.
   assert_eq!(
     unfetched(&db, "linkers", 1000, 8000).unwrap(),

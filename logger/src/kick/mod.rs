@@ -11,7 +11,7 @@ pub mod tail;
 use {
   crate::{
     index::Error,
-    service::{Root, Service},
+    service::{Indexed, Root, Service},
   },
   ::logger_journal::{Variant, layout::channel_root},
   ::rusqlite::Connection,
@@ -29,7 +29,6 @@ impl Service for Kick {
   const NAME: &'static str = "kick";
   const API: &'static str = "v0";
   const VARIANT: Variant = Variant::Kick;
-  const INDEX: &'static str = index::FILE;
 
   type Stats = index::Stats;
 
@@ -73,15 +72,20 @@ impl Service for Kick {
     index::open(path)
   }
 
-  fn index(db: &mut Connection, journal: &Path) -> Result<index::Stats, Error> {
-    index::index(db, journal)
+  /// One, of every channel's, [`index::FILE`].
+  fn indexes(dir: &Path) -> io::Result<Vec<Indexed>> {
+    Ok(vec![Indexed {
+      name: Self::NAME.into(),
+      file: index::FILE.into(),
+      dir: dir.to_owned(),
+    }])
   }
 
-  fn waiting(
-    db: &Connection,
-    journal: &Path,
-    at_most: u64,
-  ) -> Result<u64, Error> {
-    index::waiting(db, journal, at_most)
+  fn index(db: &mut Connection, dir: &Path) -> Result<index::Stats, Error> {
+    index::index(db, dir)
+  }
+
+  fn waiting(db: &Connection, dir: &Path, at_most: u64) -> Result<u64, Error> {
+    index::waiting(db, dir, at_most)
   }
 }

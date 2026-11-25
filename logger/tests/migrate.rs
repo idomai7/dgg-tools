@@ -7,7 +7,8 @@ use {
     BUILD, control,
     dgg::{
       Dgg,
-      index::{FILE, SCHEMA_VERSION, open},
+      channels::DESTINY,
+      index::{SCHEMA_VERSION, file, open},
     },
     index::user_version,
     migrate::{Report, migrate},
@@ -34,24 +35,24 @@ fn run(data: &Path, dry_run: bool) -> Report {
 fn nothing_to_migrate() {
   let dir = TempDir::new("logger-migrate");
   assert_eq!(run(dir.path(), false), Report::default());
-  drop(open(&dir.path().join(FILE)).unwrap());
+  drop(open(&dir.path().join(file(DESTINY))).unwrap());
   for dry_run in [false, true] {
     let report = run(dir.path(), dry_run);
     assert_eq!(report.failed, Vec::<String>::new());
-    assert_eq!(report.index, Some(SCHEMA_VERSION));
+    assert_eq!(report.indexes, [(file(DESTINY), SCHEMA_VERSION)]);
   }
 }
 
 #[test]
 fn an_index_at_another_schema_fails() {
   let dir = TempDir::new("logger-migrate");
-  let db = open(&dir.path().join(FILE)).unwrap();
+  let db = open(&dir.path().join(file(DESTINY))).unwrap();
   let old = Version { major: 0, minor: 5 };
   db.pragma_update(None, "user_version", user_version(old))
     .unwrap();
   drop(db);
   let report = run(dir.path(), false);
-  assert_eq!(report.index, Some(old));
+  assert_eq!(report.indexes, [(file(DESTINY), old)]);
   assert_eq!(report.failed.len(), 1);
 }
 
@@ -119,8 +120,8 @@ fn says_each_kind_of_file() {
     "dgg: 2 capture statuses, capture-status dgg.0.2",
     "dgg backfill: 1 live file, journal dgg.0.3",
     "kick someone: 1 live file, journal kick.0.1",
-    "dgg's index: none yet",
-    "Kick's index: none yet",
+    "index-dgg-destiny.gg.sqlite: none yet",
+    "index-kick.sqlite: none yet",
   ] {
     assert!(said.contains(line), "{line:?} not in:\n{said}");
   }
