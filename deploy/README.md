@@ -343,13 +343,15 @@ token the same way, as `{"token": "..."}`.
 - `serve` handles 8 requests at once and turns away the rest.
 - A third token, `tokens.query`, reads only Kick's history and live chat
   (`/kick/v0/channels/...`), for kick-mod.
-- Each service's routes start with its name and its API's version:
-  `/dgg/v0/manifest` and `/dgg/v0/files/...` for sync,
-  `/dgg/v0/control/...` for capture handoff, and likewise
-  `/kick/v0/manifest` and `/kick/v0/files/...`. `v0` may change
+- Each service's routes start with its name and its API's version, and
+  are by channel: `/dgg/v0/channels` lists dgg's channels, and
+  `/dgg/v0/channels/<name>/manifest` and `.../files/...` are a channel's
+  for sync, `/dgg/v0/channels/<name>/control/...` for its capture
+  handoff, and likewise `/kick/v0/channels/...`. `v0` may change
   incompatibly from one build to the next, so hosts that sync from each
   other should run the same build, until a stable `v1`. A host without a
-  service answers 404, which sync takes as nothing to pull.
+  service answers 404, which sync takes as nothing to pull; so does one
+  on a build from before channels, so upgrade both hosts together.
 
 ## Keeping the PC awake
 
