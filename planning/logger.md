@@ -135,7 +135,8 @@ The logger, codenamed ledgerline: `logger-journal` and `logger`, run as
   rarely changes.
   - **In-place upgrade:** start the new binary.
     - An instance is healthy once its current connection has delivered `HISTORY`
-      and a `MSG`.
+      (until 2026-11-25, and a `MSG` too, which a quiet chat such as
+      omniliberal.dev may not send for hours, failing its upgrades).
     - An older instance retires once a later-started one has a fresh heartbeat
       (under 5 s old) and has been healthy for the grace period
       (`--handoff-grace`, default 30 s). Its journal ends with

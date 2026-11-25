@@ -39,6 +39,12 @@ fn channel(url: &str) -> Channel {
 /// A chat server where every connection gets HISTORY, then a MSG every
 /// 10 ms, so instances become healthy at once.
 async fn chat_server() -> (String, ::tokio::task::JoinHandle<()>) {
+  serve_chat(false).await
+}
+
+/// A chat server where every connection gets HISTORY, then, if `quiet`,
+/// nothing: a chat no one is talking in.
+async fn serve_chat(quiet: bool) -> (String, ::tokio::task::JoinHandle<()>) {
   let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
   let url = format!("ws://{}", listener.local_addr().unwrap());
   let server = ::tokio::spawn(async move {
@@ -47,6 +53,11 @@ async fn chat_server() -> (String, ::tokio::task::JoinHandle<()>) {
       ::tokio::spawn(async move {
         let mut ws = ::tokio_tungstenite::accept_async(tcp).await.unwrap();
         ws.send(Message::text("HISTORY []")).await.unwrap();
+        if quiet {
+          // Read, so pings are answered, until the client goes.
+          while let Some(Ok(_)) = ws.next().await {}
+          return;
+        }
         while ws.send(Message::text("MSG {}")).await.is_ok() {
           ::tokio::time::sleep(Duration::from_millis(10)).await;
         }
@@ -243,7 +254,18 @@ fn bodies(root: &Path, instance: &str) -> Vec<Body> {
 /// grace period, and both leave the control directory clean.
 #[::tokio::test]
 async fn hands_off_to_a_newer_instance() {
-  let (url, server) = chat_server().await;
+  hands_off(false).await;
+}
+
+/// On a chat no one is talking in, too: HISTORY alone makes an instance
+/// healthy.
+#[::tokio::test]
+async fn hands_off_on_a_quiet_chat() {
+  hands_off(true).await;
+}
+
+async fn hands_off(quiet: bool) {
+  let (url, server) = serve_chat(quiet).await;
 
   let root = TempDir::new("logger-capture");
   let config = |instance: &str, started| Config {

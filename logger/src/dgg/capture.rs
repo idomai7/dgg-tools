@@ -63,22 +63,19 @@ pub struct Config {
   pub bridge: bool,
 }
 
-/// Whether the current connection has proven it's delivering chat.
+/// Whether the current connection has proven it's delivering chat: once
+/// it has delivered `HISTORY`, which the server sends once it has joined
+/// the chat. Not a `MSG` too, which a quiet chat may not send for hours.
+/// Staying healthy for a handoff's grace proves the rest: health is lost
+/// with the connection, and a connection that goes silent is dropped.
 #[derive(Default)]
 struct Health {
-  history: bool,
-  message: bool,
   since: Option<i64>,
 }
 
 impl Health {
   fn saw(&mut self, event: &str, now: i64) {
-    match event {
-      "HISTORY" => self.history = true,
-      "MSG" => self.message = true,
-      _ => return,
-    }
-    if self.history && self.message && self.since.is_none() {
+    if event == "HISTORY" && self.since.is_none() {
       self.since = Some(now);
     }
   }
