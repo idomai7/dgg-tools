@@ -95,13 +95,13 @@ fn reports_captures_and_the_journal() {
   );
   let frames: Vec<_> = report.captures.iter().map(|c| c.frames).collect();
   assert_eq!(frames, [0, 2, 0]);
-  // What each listens to, once its live file says.
+  // Each listens to the channel it's in.
   let listening: Vec<_> = report
     .captures
     .iter()
     .map(|c| c.listening.as_deref())
     .collect();
-  assert_eq!(listening, [None, Some("wss://x"), None]);
+  assert_eq!(listening, [Some("destiny.gg"); 3]);
   let journal = &report.journal;
   assert_eq!(journal.today_files.count, 2);
   assert_eq!(journal.waiting, ["2026-01-02"]);
@@ -201,7 +201,7 @@ fn draws_the_watch_screen() {
     " programs ",
     " captures ",
     "healthy for 50.0s",
-    "0 frames",
+    "a-1                            destiny.gg  up 1m00s",
     " journal ",
     " dgg-capture.log ",
     "capturing as a-1",
@@ -608,10 +608,11 @@ fn says_what_a_capture_listens_to() {
   );
   let paths = Paths::under(dir.to_path_buf());
   let report = Watcher::new().unwrap().gather(&paths).unwrap();
-  // From its status, with no live file to say.
+  // Its channel's name, not the URL its status says.
   let listening = report.captures[0].listening.as_deref();
-  assert_eq!(listening, Some("wss://chat.example/ws"));
-  assert!(text(&report).join("\n").contains("a-1"));
+  assert_eq!(listening, Some("destiny.gg"));
+  let text = text(&report).join("\n");
+  assert!(text.contains("a-1") && !text.contains("wss://"), "{text}");
 }
 
 #[test]

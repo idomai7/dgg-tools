@@ -94,9 +94,8 @@ pub struct Capture {
   pub build: Option<String>,
   /// Frames it has captured in its live files (those not yet compacted).
   pub frames: u64,
-  /// What it listens to: dgg's WebSocket URL, or the Kick channel's slug.
-  /// As its status says, or for a capture from before statuses said, as
-  /// its live files' last connection opened has it, once there is one.
+  /// What it listens to: its dgg channel's name, or the Kick channel's
+  /// slug.
   pub listening: Option<String>,
   /// Whether it's Kick's, not dgg's.
   pub kick: bool,
@@ -238,13 +237,11 @@ fn unhealthiest(capture: &Capture) -> u8 {
   }
 }
 
-/// A live file's frames, counted up to `offset`, and the URL its last
-/// connection opened to.
-#[derive(Clone, Default)]
+/// A live file's frames, counted up to `offset`.
+#[derive(Clone, Copy, Default)]
 struct Counted {
   offset: u64,
   frames: u64,
-  opened: Option<String>,
 }
 
 fn modified_ms(metadata: &fs::Metadata) -> Option<i64> {
@@ -364,7 +361,7 @@ impl Watcher {
 
   /// Adds to `captures` the frames in each one's live files, `files` (each
   /// with its Kick channel, or none for dgg's), read from where the last
-  /// count left off, and to dgg's what its last connection opened to.
+  /// count left off.
   fn count_frames(
     &mut self,
     captures: &mut [Capture],
@@ -390,30 +387,20 @@ impl Watcher {
       if let Ok(mut reader) = Reader::open(&file, counted.offset) {
         for entry in reader.by_ref() {
           let Ok(entry) = entry else { continue };
-          let (frame, opened) = match entry.record {
-            Record::V0(record) => match record.body {
-              v0::Body::Frame(_) | v0::Body::Binary(_) => (true, None),
-              v0::Body::Open(url) => (false, Some(url)),
-              _ => (false, None),
-            },
-            Record::Kick0(record) => match record.body {
-              kick::v0::Body::Frame(_) | kick::v0::Body::Binary(_) => {
-                (true, None)
-              }
-              kick::v0::Body::Open(url) => (false, Some(url)),
-              _ => (false, None),
-            },
+          let frame = match entry.record {
+            Record::V0(record) => {
+              matches!(record.body, v0::Body::Frame(_) | v0::Body::Binary(_))
+            }
+            Record::Kick0(record) => matches!(
+              record.body,
+              kick::v0::Body::Frame(_) | kick::v0::Body::Binary(_)
+            ),
           };
           counted.frames += u64::from(frame);
-          counted.opened = opened.or(counted.opened.take());
         }
         counted.offset = reader.offset();
       }
       capture.frames += counted.frames;
-      // From before captures said.
-      if capture.listening.is_none() {
-        capture.listening = counted.opened.clone();
-      }
     }
   }
 
@@ -540,12 +527,16 @@ fn dgg_roots(journal: &Path) -> io::Result<[Root; 2]> {
     .map_err(|_| io::Error::other("a dgg channel has two journal roots"))
 }
 
-/// dgg's captures, from their statuses in destiny.gg's control directory.
+/// dgg's captures, from their statuses in destiny.gg's control directory,
+/// each listening to destiny.gg.
 fn captures(journal: &Path, now: i64) -> io::Result<Vec<Capture>> {
   let mut captures: Vec<Capture> =
     control::read_all(&control::dir(&destiny(journal)))?
       .into_iter()
-      .map(|status| capture(status, now))
+      .map(|status| Capture {
+        listening: Some(DESTINY.into()),
+        ..capture(status, now)
+      })
       .collect();
   captures.sort_by_key(|capture| capture.started);
   Ok(captures)
