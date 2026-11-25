@@ -8,10 +8,10 @@ use {
 };
 
 /// Bring the journal and the indexes up to this build's layout and formats,
-/// in place; for now, they all are. It checks, saying the version of each
-/// kind of file and each index's schema, and anything left of an older
-/// layout. Waits for, and holds, the index, compact and sync locks, as a
-/// supervisor does.
+/// in place: dgg's journal and index into destiny.gg's channel's. It
+/// checks, saying the version of each kind of file and each index's schema,
+/// and anything left of an older layout. Waits for, and holds, the index,
+/// compact and sync locks, as a supervisor does.
 #[derive(Args)]
 pub struct Migrate {
   /// Check, but change nothing; take no locks.
