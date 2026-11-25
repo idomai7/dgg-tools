@@ -512,7 +512,9 @@ fn install(options: &install::Options) -> ExitCode {
       eprintln!("  build    {}", done.build.display());
       eprintln!("  data     {}", done.paths.data.display());
       eprintln!("  logs     {}", done.paths.logs.display());
-      eprintln!("  capture  {} (healthy)", done.capture);
+      for (name, capture) in &done.dgg {
+        eprintln!("  dgg      {name}: {capture} (healthy)");
+      }
       for (slug, capture) in &done.kick {
         match capture {
           Some(capture) => eprintln!("  kick     {slug}: {capture} (healthy)"),

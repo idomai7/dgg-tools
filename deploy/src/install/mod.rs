@@ -15,17 +15,20 @@
 //! missed:
 //!
 //! 1. The new build is copied in, and a [`bridge`] capture from it started
-//!    against the new data directory, and waited on until it's healthy.
-//!    So is a Kick one for each of the install's Kick channels.
+//!    against the new data directory for each of the install's dgg
+//!    channels, and waited on until it's healthy. So is a Kick one for each
+//!    of its Kick channels. They're started [`STAGGER`] apart, dgg's
+//!    first, so their handoffs are spread out too.
 //! 2. What was installed stops. If it shared the data directory, its
 //!    captures hand off to the bridges first.
 //! 3. If the data directory changed, the old data and logs are
 //!    [moved](moving) in.
 //! 4. The new task or service starts. Its captures, the newest, take over
 //!    from the bridges, which exit. Each is waited on until it's healthy:
-//!    dgg's must be; a Kick channel's that isn't is warned of.
+//!    every dgg channel's must be; a Kick channel's that isn't is warned
+//!    of.
 //!
-//! dgg's capture comes first: a Kick bridge that isn't healthy is only
+//! dgg's captures come first: a Kick bridge that isn't healthy is only
 //! warned of, by its channel, and the install carries on without it.
 //!
 //! An install syncs from the peers in its root (see [`crate::peer`]):
@@ -48,7 +51,7 @@ use {
   crate::{
     paths::{Paths, user_root},
     peer, processes,
-    supervise::kick_capture_log,
+    supervise::{STAGGER, dgg_capture_log, kick_capture_log},
   },
   ::common::{
     fs::{MissingOk, same},
@@ -56,7 +59,7 @@ use {
   },
   ::logger::{
     control,
-    dgg::{self, Dgg, channels::DESTINY},
+    dgg::{self, Dgg},
     kick::{capture::control_dir, channels},
     service::Service,
   },
@@ -64,6 +67,7 @@ use {
   ::std::{
     fs, io,
     path::{Path, PathBuf},
+    process::Child,
     thread,
     time::{Duration, Instant},
   },
@@ -74,9 +78,6 @@ pub const BINARIES: [&str; 2] = ["dgg-supervisor", "dgg-logger"];
 
 /// The channel lists in an install's root, which move with it.
 const CHANNEL_LISTS: [&str; 2] = [channels::FILE, dgg::channels::FILE];
-
-/// dgg's capture's log, `capture.log` before builds named it by service.
-const DGG_CAPTURE_LOG: &str = "dgg-capture.log";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Scope {
@@ -193,8 +194,9 @@ pub struct Done {
   pub build: PathBuf,
   /// What was installed before.
   pub replaced: Option<Installed>,
-  /// The new capture instance.
-  pub capture: String,
+  /// Each dgg channel it captures, by its name, with its new capture
+  /// instance.
+  pub dgg: Vec<(String, String)>,
   /// Each Kick channel it captures, by its slug, with its new capture
   /// instance if that was healthy in time.
   pub kick: Vec<(String, Option<String>)>,
@@ -246,17 +248,30 @@ fn exe(dir: &Path, name: &str) -> PathBuf {
   dir.join(format!("{name}{}", ::std::env::consts::EXE_SUFFIX))
 }
 
-/// Waits up to `patience` for a dgg capture started at or after `since`
-/// (unix ms) to be healthy, as its status in the journal directory
-/// `journal` has it (destiny.gg's, the one channel captured for now); its
-/// instance.
+/// Waits up to `patience` for a capture of dgg channel `name` started at
+/// or after `since` (unix ms) to be healthy, as its status in the journal
+/// directory `journal` has it; its instance.
 pub fn wait_healthy(
   journal: &Path,
+  name: &str,
   since: i64,
   patience: Duration,
 ) -> io::Result<Option<String>> {
-  let dir = control::dir(&Dgg::channel_dir(&Dgg::dir(journal), DESTINY));
+  let dir = control::dir(&Dgg::channel_dir(&Dgg::dir(journal), name));
   wait_healthy_in(&dir, Variant::Dgg, since, patience)
+}
+
+/// Stops `bridges`.
+fn kill_bridges(bridges: &mut Vec<(String, Child)>) {
+  for (_, mut child) in bridges.drain(..) {
+    let _ = child.kill();
+    let _ = child.wait();
+  }
+}
+
+/// The log of dgg channel `name`'s capture, in `logs`.
+fn dgg_log(logs: &Path, name: &str) -> PathBuf {
+  logs.join(format!("{}.log", dgg_capture_log(name)))
 }
 
 /// [`wait_healthy`], for channel `slug`'s Kick capture: as its journal
@@ -420,24 +435,36 @@ pub fn install(options: &Options) -> io::Result<Done> {
   // Kick's channels, if Kick is captured.
   let kick_list = paths.root.join(channels::FILE);
   let kick_channels = channels::load(&kick_list).map_err(error)?;
-  // dgg's: destiny.gg's alone is captured yet, but a broken list is
-  // refused now.
+  // dgg's, each of which must be captured.
   let dgg_list = paths.root.join(dgg::channels::FILE);
-  dgg::channels::load(&dgg_list).map_err(error)?;
+  let dgg_channels: Vec<String> = dgg::channels::load(&dgg_list)
+    .map_err(error)?
+    .into_iter()
+    .map(|channel| channel.name)
+    .collect();
   let mut problems = Vec::new();
 
   let journal_root = paths.data.join("journal");
   let since = now_ms() - 1000;
-  let mut bridge = bridge::start(
-    &build,
-    &paths.data,
-    &dgg_list,
-    DESTINY,
-    &paths.logs.join(DGG_CAPTURE_LOG),
-  )?;
-  // A bridge per Kick channel, by its slug.
+  // A bridge per dgg channel, by its name, then one per Kick channel, by
+  // its slug, each a stagger after the last.
+  let mut bridges = Vec::new();
+  for (n, name) in dgg_channels.iter().enumerate() {
+    if n > 0 {
+      thread::sleep(STAGGER);
+    }
+    let log = dgg_log(&paths.logs, name);
+    match bridge::start(&build, &paths.data, &dgg_list, name, &log) {
+      Ok(child) => bridges.push((name.clone(), child)),
+      Err(e) => {
+        kill_bridges(&mut bridges);
+        return Err(e);
+      }
+    }
+  }
   let mut kick_bridges = Vec::new();
   for channel in &kick_channels {
+    thread::sleep(STAGGER);
     let slug = &channel.slug;
     let log = paths.logs.join(format!("{}.log", kick_capture_log(slug)));
     let started =
@@ -447,20 +474,25 @@ pub fn install(options: &Options) -> io::Result<Done> {
       Err(e) => problems.push(format!("{slug}: no Kick bridge: {e}")),
     }
   }
-  if wait_healthy(&journal_root, since, options.healthy_within)?.is_none() {
-    let _ = bridge.kill();
-    for (_, child) in &mut kick_bridges {
-      let _ = child.kill();
+  // Each dgg bridge, waited on together: every one must be healthy.
+  let until = Instant::now() + options.healthy_within;
+  for (name, _) in &bridges {
+    let left = until.saturating_duration_since(Instant::now());
+    if wait_healthy(&journal_root, name, since, left)?.is_none() {
+      let failed = format!(
+        "{name}: a capture from the new build wasn't healthy within {}s; \
+         see {}.log in {}. Nothing else was changed.",
+        options.healthy_within.as_secs(),
+        dgg_capture_log(name),
+        paths.logs.display()
+      );
+      kill_bridges(&mut bridges);
+      kill_bridges(&mut kick_bridges);
+      return Err(error(failed));
     }
-    return Err(error(format!(
-      "a capture from the new build wasn't healthy within {}s; see \
-       dgg-capture.log in {}. Nothing else was changed.",
-      options.healthy_within.as_secs(),
-      paths.logs.display()
-    )));
   }
   // Each Kick bridge, waited on together: one that isn't healthy in time
-  // is only warned of, as dgg's capture comes first.
+  // is only warned of, as dgg's captures come first.
   let kick_root = kick_root(&journal_root);
   let until = Instant::now() + options.healthy_within;
   let mut healthy = Vec::new();
@@ -547,20 +579,27 @@ pub fn install(options: &Options) -> io::Result<Done> {
     }
     Scope::Machine => service::start(service::NAME)?,
   }
-  let Some(capture) =
-    wait_healthy(&journal_root, since, options.healthy_within)?
-  else {
-    return Err(error(format!(
-      "the new install's capture wasn't healthy within {}s; see \
-       supervisor.log and dgg-capture.log in {}. The bridge capture keeps \
-       capturing meanwhile.",
-      options.healthy_within.as_secs(),
-      paths.logs.display()
-    )));
-  };
+  // Each dgg channel's new capture, waited on together, the supervisor
+  // starting each a stagger after the last: every one must be healthy.
+  let spread = STAGGER * (dgg_channels.len() + kick_channels.len()) as u32;
+  let until = Instant::now() + options.healthy_within + spread;
+  let mut dgg = Vec::new();
+  for name in &dgg_channels {
+    let left = until.saturating_duration_since(Instant::now());
+    let Some(capture) = wait_healthy(&journal_root, name, since, left)? else {
+      return Err(error(format!(
+        "{name}: the new install's capture wasn't healthy within {}s; see \
+         supervisor.log and {}.log in {}. The bridge capture keeps \
+         capturing meanwhile.",
+        (options.healthy_within + spread).as_secs(),
+        dgg_capture_log(name),
+        paths.logs.display()
+      )));
+    };
+    dgg.push((name.clone(), capture));
+  }
   // Each Kick channel's new capture, waited on together: one that isn't
   // healthy in time is only warned of.
-  let until = Instant::now() + options.healthy_within;
   let mut kick = Vec::new();
   for channel in &kick_channels {
     let slug = &channel.slug;
@@ -576,7 +615,9 @@ pub fn install(options: &Options) -> io::Result<Done> {
     }
     kick.push((slug.clone(), healthy));
   }
-  bridge::wait_gone(&mut bridge, options.handoff_within);
+  for (_, child) in &mut bridges {
+    bridge::wait_gone(child, options.handoff_within);
+  }
   for (slug, child) in &mut kick_bridges {
     if !bridge::wait_gone(child, options.handoff_within) {
       problems.push(format!(
@@ -599,7 +640,7 @@ pub fn install(options: &Options) -> io::Result<Done> {
     paths,
     build,
     replaced: current,
-    capture,
+    dgg,
     kick,
     left,
     peers,

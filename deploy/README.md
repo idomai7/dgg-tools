@@ -102,18 +102,23 @@ install's data needs an administrator prompt.
 
 ### Upgrading and switching
 
-Build, then run `install` again, the same way. Nothing is missed: a capture
-from the new build starts first (the "bridge", its lines in `dgg-capture.log`
-marked `(bridge)`),
-the old install hands over to it and stops, and then the new install starts
-and takes over from the bridge. Old builds are pruned, keeping three.
+Build, then run `install` again, the same way. Nothing is missed: for each
+dgg channel, a capture from the new build starts first (the "bridge", its
+lines in the channel's `dgg-capture.<name>.log` marked `(bridge)`), the old
+install hands over to them and stops, and then the new install starts and
+takes over from the bridges. Every dgg channel's must be healthy in time,
+or the install stops there. Old builds are pruned, keeping three.
 
 Each Kick channel's capture is bridged the same way, each bridge's lines
 in its channel's `kick-capture.<slug>.log`. If one isn't
 healthy in time, `install` warns that that channel may miss a few
-seconds, and carries on: dgg's capture comes first. It waits for the new
+seconds, and carries on: dgg's captures come first. It waits for the new
 install's capture of each channel too, warning of any not healthy in
-time, and names each channel's healthy capture when it's done. `kick-channels` moves
+time, and names each channel's healthy capture when it's done.
+
+The bridges start 5 seconds apart, dgg's first, and so do the new
+install's captures, so the handoffs are spread out and no chat server sees
+every channel reconnect at once. `dgg-channels` and `kick-channels` move
 with the install's folder.
 
 Running `install` with the other kind (with or without `--machine`)

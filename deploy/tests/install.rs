@@ -92,10 +92,13 @@ fn waits_for_a_new_healthy_capture() {
   write("old-1", now - 600_000, true);
   write("new-2", now, false);
   let short = Duration::from_millis(600);
-  assert_eq!(wait_healthy(dir.path(), now - 1000, short).unwrap(), None);
+  assert_eq!(
+    wait_healthy(dir.path(), "destiny.gg", now - 1000, short).unwrap(),
+    None
+  );
   write("new-2", now, true);
   assert_eq!(
-    wait_healthy(dir.path(), now - 1000, short)
+    wait_healthy(dir.path(), "destiny.gg", now - 1000, short)
       .unwrap()
       .as_deref(),
     Some("new-2")

@@ -4,10 +4,12 @@
 //!
 //! It's an ordinary capture, so it hands off by itself: the old capture (if
 //! it shares the data directory) retires in its favour, and it retires in
-//! favour of the new install's capture, which starts after it. It runs
-//! detached, appending to `dgg-capture.log` (its lines timestamped and marked
-//! `(bridge)`), so it outlives the install if something goes wrong: capture
-//! carries on until someone looks.
+//! favour of the new install's capture, which starts after it. Each dgg
+//! channel's capture gets one, running detached, appending to the
+//! channel's log (its lines timestamped and marked `(bridge)`; see
+//! [`dgg_capture_log`](crate::supervise::dgg_capture_log)), so it outlives
+//! the install if something goes wrong: capture carries on until someone
+//! looks.
 //!
 //! Each Kick channel's capture gets a bridge of its own the same way,
 //! appending to the channel's log (see
