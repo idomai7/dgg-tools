@@ -633,7 +633,9 @@ WebSocket URL of its own. Each step a pause for review.
   `kick-capture`: it reads the list every minute; a changed URL or Origin
   reconnects it, its connections numbered on; removed, it exits as such.
   `--url` and `--no-origin` go (one code path); a channel's Origin is in
-  the list. Its status says what it listens to, as now.
+  the list. Its status says what it listens to, as now. Built (step 4):
+  without `--channels` (a supervisor with no install root), the list is
+  destiny.gg's alone; removed, it exits 3 (2 is clap's).
 - **Supervisor:** a `dgg-capture` per listed channel, as for Kick, each
   logging to `dgg-capture.<name>.log` (the name is what's between
   `dgg-capture.` and `.log`, dots and all), restarted on
@@ -655,6 +657,11 @@ WebSocket URL of its own. Each step a pause for review.
   connections, and the handoffs that follow each, are spaced the same
   way. Kick's history fills after a reconnect are spaced too. Exactly how
   is settled at step 4, and the install's wait grows to cover the spread.
+  Settled (step 4): a fixed 5 s between first starts, dgg's first, in the
+  install's bridges and the supervisor's captures alike (restarts keep
+  their backoff); the install's wait for the new captures grows by 5 s a
+  channel. Kick's history fills aren't spaced yet: a fill follows its
+  capture's connect, so the stagger spaces them too.
 - **Gaps and backfill:** `dgg-gaps --channel <name>` and `dgg-backfill
   --channel <name>`, each reading its channel's index and writing its
   backfill journal; `--channel` defaults to `destiny.gg` (not the list's
