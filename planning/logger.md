@@ -671,6 +671,15 @@ WebSocket URL of its own. Each step a pause for review.
 - **Install:** a bridge per dgg channel, as for Kick, each logging to its
   channel's log, all waited on together. Unlike Kick's, any dgg channel
   not healthy in time fails the install, as dgg's capture does now.
+  - Changed 2026-11-25, after omniliberal.dev's upgrades failed: a quiet
+    chat sent no `MSG`, so its bridge never got healthy, and by the time
+    the install failed and stopped its bridges, the old install had
+    stopped too (destiny.gg's bridge had taken over), leaving nothing
+    capturing. Now a dgg capture is healthy on `HISTORY` alone, and a dgg
+    bridge not healthy in time is stopped and warned of, as Kick's. Only
+    with no dgg bridge healthy does the install fail, leaving any Kick
+    bridge that took over capturing. A new capture not healthy in time is
+    warned of, its bridge left capturing to hand off once it is.
 - **Staggered handovers:** an upgrade's handovers are spread out, not
   all at once, so dgg's and Kick's servers don't see every channel
   reconnect together (decided 2026-11-25). The install's bridges, and the
