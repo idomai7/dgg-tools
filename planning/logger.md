@@ -616,7 +616,8 @@ WebSocket URL of its own. Each step a pause for review.
     now).
   - `PUT` and `DELETE /dgg/v0/channels/<name>/control/<instance>`, and
     `GET /dgg/v0/channels/<name>/control`: a channel's handoff between
-    hosts.
+    hosts, taken for any channel's name, journals here or not, since a
+    capture's first push may come before them.
   - `/<service>/v0/manifest`, `/files` and `/dgg/v0/control` go. A peer on
     the old build answers the new routes `404` (nothing there), and the
     new build answers the old ones `404`, so hosts on different builds
@@ -656,10 +657,10 @@ WebSocket URL of its own. Each step a pause for review.
   is settled at step 4, and the install's wait grows to cover the spread.
 - **Gaps and backfill:** `dgg-gaps --channel <name>` and `dgg-backfill
   --channel <name>`, each reading its channel's index and writing its
-  backfill journal; `--channel` defaults to the list's first. The sources,
-  rustlesearch (`Destinygg`) and linkers.ooo, hold destiny.gg's chat only:
-  backfill refuses a channel whose URL isn't destiny.gg's, saying no
-  source has it.
+  backfill journal; `--channel` defaults to `destiny.gg` (not the list's
+  first: they're given the data directory, not the install's root). The
+  sources, rustlesearch (`Destinygg`) and linkers.ooo, hold destiny.gg's
+  chat only: backfill refuses any other channel, saying no source has it.
 - **Status:** a dgg capture names its channel, as a Kick one does
   (`Which` becomes service, channel and instance); `f` cycles dgg's
   channels' logs too; `r` goes round every channel's captures; the gaps
