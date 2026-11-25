@@ -4,7 +4,7 @@ use {
     capture::Peer,
     cert,
     compact::compact_day,
-    dgg::Dgg,
+    dgg::{Dgg, channels::DESTINY},
     kick::Kick,
     manifest::{self, File, archive_path, live_path, valid_path},
     serve::{self, Tokens, router},
@@ -135,7 +135,7 @@ async fn file_endpoint() {
   let client = ::reqwest::Client::new();
   let get = |path: &str, range: Option<&str>| {
     let mut request = client
-      .get(format!("{base}/dgg/v0/files/{path}"))
+      .get(format!("{base}/dgg/v0/channels/destiny.gg/files/{path}"))
       .bearer_auth("secret");
     if let Some(range) = range {
       request = request.header("Range", range);
@@ -161,7 +161,7 @@ async fn file_endpoint() {
     assert_eq!(code(get(escape, None).await.unwrap()), 400, "{escape}");
   }
   let anonymous = client
-    .get(format!("{base}/dgg/v0/manifest"))
+    .get(format!("{base}/dgg/v0/channels/destiny.gg/manifest"))
     .send()
     .await
     .unwrap();
@@ -272,7 +272,7 @@ async fn pulls_only_what_is_missing() {
   let before = fs::read(dgg(&local).join(path)).unwrap();
   fs::write(dgg(&remote).join(path), "journal 0.1\n").unwrap();
   let rewritten = sync(&peer, local.path()).await.unwrap();
-  assert_eq!(rewritten.mismatched, [path]);
+  assert_eq!(rewritten.mismatched, [format!("dgg destiny.gg: {path}")]);
   assert_eq!(fs::read(dgg(&local).join(path)).unwrap(), before);
 }
 
@@ -501,18 +501,21 @@ async fn takes_no_more_than_the_manifest_says() {
     };
     sync(&peer, local.path()).await
   };
+  let at = "/dgg/v0/channels/destiny.gg";
   let manifest = |text: String| {
     // Each entry ends at RS LF.
     let text = format!(
       "journal-manifest dgg.0.2\u{1e}\n{}",
       text.replace('\n', "\u{1e}\n")
     );
-    ::axum::Router::new().route("/dgg/v0/manifest", get(move || async { text }))
+    ::axum::Router::new()
+      .route("/dgg/v0/channels", get(|| async { "destiny.gg\n" }))
+      .route(&format!("{at}/manifest"), get(move || async { text }))
   };
 
   // A file sent longer than listed: only what was listed is taken.
   let routes = manifest("live/2026-11-08/a.journal 5\n".into()).route(
-    "/dgg/v0/files/{*path}",
+    &format!("{at}/files/{{*path}}"),
     get(|| async { (StatusCode::PARTIAL_CONTENT, "x".repeat(100_000)) }),
   );
   let stats = sync_from(routes).await.unwrap();
@@ -532,7 +535,7 @@ async fn takes_no_more_than_the_manifest_says() {
   let sha = "ab".repeat(32);
   let routes =
     manifest(format!("archive/2026/11/2026-11-07.journal.zst 3 {sha}\n"))
-      .route("/dgg/v0/files/{*path}", get(|| async { "abc" }));
+      .route(&format!("{at}/files/{{*path}}"), get(|| async { "abc" }));
   let error = sync_from(routes).await.unwrap_err();
   assert!(error.contains("doesn't match"), "{error}");
   assert_eq!(
@@ -543,11 +546,83 @@ async fn takes_no_more_than_the_manifest_says() {
 
   // A redirect isn't followed: the token would go with it.
   let routes = ::axum::Router::new().route(
-    "/dgg/v0/manifest",
+    "/dgg/v0/channels",
     get(|| async { Redirect::temporary("/elsewhere") }),
   );
   let error = sync_from(routes).await.unwrap_err();
   assert!(error.contains("307"), "{error}");
+
+  // A channel's name that isn't one.
+  let routes = ::axum::Router::new()
+    .route("/dgg/v0/channels", get(|| async { "destiny.gg\n..\n" }));
+  let error = sync_from(routes).await.unwrap_err();
+  assert!(error.contains(r#""..""#), "{error}");
+}
+
+#[::tokio::test]
+async fn takes_nothing_from_a_build_before_channels() {
+  use ::axum::routing::get;
+  let local = TempDir::new("logger-sync");
+  // Its whole service's manifest, which this build never asks for.
+  let text =
+    "journal-manifest dgg.0.2\u{1e}\nlive/2026-11-08/a.journal 5\u{1e}\n";
+  let routes = ::axum::Router::new()
+    .route("/dgg/v0/manifest", get(move || async move { text }))
+    .route("/dgg/v0/files/{*path}", get(|| async { "xxxxx" }));
+  let peer = Peer {
+    url: serve_routes(routes).await,
+    token: "secret".into(),
+    ca: None,
+  };
+  let stats = sync(&peer, local.path()).await.unwrap();
+  assert_eq!((stats.files, stats.bytes), (0, 0));
+  assert!(!Dgg::dir(local.path()).exists());
+}
+
+#[::tokio::test]
+async fn lists_each_services_channels() {
+  let root = TempDir::new("logger-sync");
+  kick_records(
+    &root,
+    "b",
+    "k",
+    vec![(0, kick::v0::Body::Frame("{}".into()))],
+  );
+  kick_records(
+    &root,
+    "a",
+    "k",
+    vec![(0, kick::v0::Body::Frame("{}".into()))],
+  );
+  let base = serve(&root).await;
+  let client = ::reqwest::Client::new();
+  let get = |path: &str| {
+    client
+      .get(format!("{base}{path}"))
+      .bearer_auth("secret")
+      .send()
+  };
+  let text = |path: &'static str| async move {
+    let response = get(path).await.unwrap();
+    assert_eq!(response.status().as_u16(), 200, "{path}");
+    response.text().await.unwrap()
+  };
+  assert_eq!(text("/dgg/v0/channels").await, "destiny.gg\n");
+  assert_eq!(text("/kick/v0/channels").await, "a\nb\n");
+  // Not a channel with journals here, or not a channel's name.
+  for (path, expected) in [
+    ("/dgg/v0/channels/other.example/manifest", 404),
+    ("/dgg/v0/channels/other.example/control", 404),
+    ("/dgg/v0/channels/live/manifest", 400),
+    ("/kick/v0/channels/c/manifest", 404),
+    ("/kick/v0/channels/a.b/manifest", 400),
+    // The routes before channels.
+    ("/dgg/v0/manifest", 404),
+    ("/kick/v0/manifest", 404),
+  ] {
+    let response = get(path).await.unwrap();
+    assert_eq!(response.status().as_u16(), expected, "{path}");
+  }
 }
 
 #[test]
@@ -631,9 +706,9 @@ async fn pulls_kick_journals() {
   compact(&channel_root(&kick_root(remote.path()), "c"));
   kick_records(&remote, "c", "k", vec![(86_400_000, open())]);
 
-  // Its own manifest, every path under the channel's.
+  // The channel's own manifest, every path relative to it.
   let manifest = ::reqwest::Client::new()
-    .get(format!("{}/kick/v0/manifest", peer.url))
+    .get(format!("{}/kick/v0/channels/c/manifest", peer.url))
     .bearer_auth("secret")
     .send()
     .await
@@ -646,18 +721,22 @@ async fn pulls_kick_journals() {
   assert_eq!(
     paths,
     [
-      "c/live/1970-01-02/k.journal",
-      "c/archive/1970/01/1970-01-01.journal.zst"
+      "live/1970-01-02/k.journal",
+      "archive/1970/01/1970-01-01.journal.zst"
     ]
   );
   // Not in dgg's manifest.
-  assert_eq!(manifest::list::<Dgg>(remote.path()).unwrap(), []);
+  assert_eq!(
+    manifest::list::<Dgg>(&Dgg::dir(remote.path()), DESTINY).unwrap(),
+    []
+  );
 
   let stats = sync(&peer, local.path()).await.unwrap();
   assert_eq!((stats.files, stats.updated, stats.installed), (2, 1, 1));
   for path in &paths {
-    let read =
-      |root: &TempDir| fs::read(kick_root(root.path()).join(path)).unwrap();
+    let read = |root: &TempDir| {
+      fs::read(channel_root(&kick_root(root.path()), "c").join(path)).unwrap()
+    };
     assert_eq!(read(&local), read(&remote), "{path}");
   }
   let idle = sync(&peer, local.path()).await.unwrap();
@@ -700,15 +779,15 @@ async fn serves_only_kick_journal_paths() {
   let base = serve(&root).await;
   let client = ::reqwest::Client::new();
   for (path, expected) in [
-    ("c/live/1970-01-01/k.journal", 200),
-    ("C/live/1970-01-01/k.journal", 400),
-    ("c/backfill/live/1970-01-01/k.journal", 400),
-    ("c/control/k.status", 400),
-    ("live/1970-01-01/k.journal", 400),
-    ("d/live/1970-01-01/k.journal", 404),
+    ("c/files/live/1970-01-01/k.journal", 200),
+    ("C/files/live/1970-01-01/k.journal", 400),
+    ("c/files/backfill/live/1970-01-01/k.journal", 400),
+    ("c/files/control/k.status", 400),
+    ("c/files/c/live/1970-01-01/k.journal", 400),
+    ("d/files/live/1970-01-01/k.journal", 404),
   ] {
     let response = client
-      .get(format!("{base}/kick/v0/files/{path}"))
+      .get(format!("{base}/kick/v0/channels/{path}"))
       .bearer_auth("secret")
       .send()
       .await

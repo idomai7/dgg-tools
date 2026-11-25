@@ -20,6 +20,9 @@ use {
 /// The channel list, in an install's root.
 pub const FILE: &str = "dgg-channels";
 
+/// destiny.gg's channel's name.
+pub const DESTINY: &str = "destiny.gg";
+
 /// Directories of dgg's journal before it was by channel, which no channel
 /// may be named, so one is never mistaken for the other.
 pub const RESERVED: [&str; 4] = ["live", "archive", "backfill", "control"];
@@ -39,7 +42,7 @@ impl Channel {
   /// destiny.gg's chat, the list's one channel when there's no file.
   pub fn destiny() -> Self {
     Self {
-      name: "destiny.gg".into(),
+      name: DESTINY.into(),
       url: DEFAULT_URL.into(),
       origin: Some(DEFAULT_ORIGIN.into()),
     }

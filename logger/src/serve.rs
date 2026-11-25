@@ -2,28 +2,37 @@
 //! routes start with its name and its API's version, `/<service>/<api>`
 //! (see [`Service::API`]): `v0` for now, which may change incompatibly
 //! from one build to the next until a stable `v1` is decided on. A
-//! service's paths are relative to its directory.
+//! channel's are under `/<service>/<api>/channels/<name>/`, so no channel's
+//! name can be mistaken for another route, and its paths are relative to
+//! its directory. A channel without journals here is `404`.
 //!
 //! It carries journal sync between hosts, for every service:
 //!
-//! - `GET /<service>/<api>/manifest`: every live file and archive of the
-//!   service's, and its size ([`manifest`]).
-//! - `GET /<service>/<api>/files/<path>`: a file's bytes, `<path>` as the
-//!   manifest gives it (see [`valid_path`]); with `Range: bytes=<from>-`,
-//!   from that offset on (`206`).
+//! - `GET /<service>/<api>/channels`: the channels with journals here, a
+//!   line each.
+//! - `GET /<service>/<api>/channels/<name>/manifest`: every live file and
+//!   archive of the channel's, and its size ([`manifest`]).
+//! - `GET /<service>/<api>/channels/<name>/files/<path>`: a file's bytes,
+//!   `<path>` as the manifest gives it (see [`valid_path`]); with `Range:
+//!   bytes=<from>-`, from that offset on (`206`).
 //!
-//! And dgg's capture handoff between hosts:
+//! And dgg's capture handoff between hosts, a channel's at a time:
 //!
-//! - `PUT /dgg/v0/control/<instance>`: an instance on another host pushes its
-//!   status ([`control::push_body`]); it's written to this host's control
-//!   directory with its times shifted onto this host's clock, so local
-//!   instances can hand off to it.
-//! - `DELETE /dgg/v0/control/<instance>`: it's stopping.
-//! - `GET /dgg/v0/control`: `now <unix ms>`, a blank line, then every status
-//!   here, each followed by a blank line.
+//! - `PUT /dgg/v0/channels/<name>/control/<instance>`: an instance on
+//!   another host pushes its status ([`control::push_body`]); it's written
+//!   to the channel's control directory here with its times shifted onto
+//!   this host's clock, so local instances can hand off to it.
+//! - `DELETE /dgg/v0/channels/<name>/control/<instance>`: it's stopping.
+//! - `GET /dgg/v0/channels/<name>/control`: `now <unix ms>`, a blank line,
+//!   then every status of the channel's here, each followed by a blank
+//!   line.
 //!
-//! For kick-mod, Kick's history and live chat, under `/kick/v0/channels/`,
-//! so no channel's slug can be mistaken for another route:
+//! Builds before channels served a whole service's manifest and files at
+//! `/<service>/<api>/manifest` and `/files/<path>`, and dgg's handoff at
+//! `/dgg/v0/control`. Neither build answers the other's routes, so hosts on
+//! the two don't sync until both are upgraded.
+//!
+//! For kick-mod, Kick's history and live chat:
 //!
 //! - `GET /kick/v0/channels/<slug>/users/<id>`: a user's history in the
 //!   channel, as JSON (see [`history`](crate::kick::history)), from Kick's
@@ -56,7 +65,6 @@ use {
     dgg::Dgg,
     kick::{
       self, Kick,
-      channels::valid_slug,
       tail::{Tail, What, Written},
     },
     manifest::{self, valid_path},
@@ -76,7 +84,7 @@ use {
   ::common::time::now_ms,
   ::common::warn,
   ::futures_util::{Stream, stream::unfold},
-  ::logger_journal::{layout::channel_root, record::v0::valid_instance},
+  ::logger_journal::record::v0::valid_instance,
   ::rustls::ServerConfig,
   ::serde_json::{Value, json},
   ::std::{
@@ -154,8 +162,6 @@ impl Tokens {
 struct Shared {
   /// The journal directory, holding each service's.
   journal: PathBuf,
-  /// dgg's capture statuses.
-  control: PathBuf,
   /// Kick's index, in the data directory.
   kick_index: PathBuf,
   tokens: Tokens,
@@ -186,7 +192,6 @@ pub fn router(journal: PathBuf, tokens: Tokens) -> Router {
   );
   let data = journal.parent().unwrap_or(&journal);
   let shared = Arc::new(Shared {
-    control: control::dir(&Dgg::dir(&journal)),
     kick_index: data.join(Kick::INDEX),
     journal,
     tokens,
@@ -194,31 +199,30 @@ pub fn router(journal: PathBuf, tokens: Tokens) -> Router {
     streams: Arc::new(Semaphore::new(STREAMS)),
   });
   let (dgg, kick) = (routes::<Dgg>(), routes::<Kick>());
+  let control = format!("{dgg}/channels/{{channel}}/control");
   Router::new()
-    .route(&format!("{dgg}/control"), get(list))
-    .route(
-      &format!("{dgg}/control/{{instance}}"),
-      put(push).delete(remove),
-    )
+    .route(&control, get(list))
+    .route(&format!("{control}/{{instance}}"), put(push).delete(remove))
     .merge(journals::<Dgg>())
     .merge(journals::<Kick>())
     .route(
-      &format!("{kick}/channels/{{slug}}/users/{{id}}"),
+      &format!("{kick}/channels/{{channel}}/users/{{id}}"),
       get(kick_user),
     )
     .route(
-      &format!("{kick}/channels/{{slug}}/events"),
+      &format!("{kick}/channels/{{channel}}/events"),
       get(kick_events),
     )
     .with_state(shared)
 }
 
-/// `S`'s routes for sync: its manifest and its files.
+/// `S`'s routes for sync: its channels, and each one's manifest and files.
 fn journals<S: Service>() -> Router<Arc<Shared>> {
-  let at = routes::<S>();
+  let at = format!("{}/channels", routes::<S>());
   Router::new()
-    .route(&format!("{at}/manifest"), get(listing::<S>))
-    .route(&format!("{at}/files/{{*path}}"), get(file::<S>))
+    .route(&at, get(channels::<S>))
+    .route(&format!("{at}/{{channel}}/manifest"), get(listing::<S>))
+    .route(&format!("{at}/{{channel}}/files/{{*path}}"), get(file::<S>))
 }
 
 /// Serves `app` on `listener` until that fails: over TLS with `tls`, else
@@ -292,14 +296,34 @@ fn admit(
     .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)
 }
 
+/// The directory of `S`'s channel `name`, if it's one with journals here.
+fn channel<S: Service>(
+  shared: &Shared,
+  name: &str,
+) -> Result<PathBuf, StatusCode> {
+  if !S::valid_channel(name) {
+    return Err(StatusCode::BAD_REQUEST);
+  }
+  let dir = S::dir(&shared.journal);
+  let known = S::channels(&dir).map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+  match known.iter().any(|known| known == name) {
+    true => Ok(S::channel_dir(&dir, name)),
+    false => Err(StatusCode::NOT_FOUND),
+  }
+}
+
 async fn push(
   State(shared): State<Arc<Shared>>,
-  Path(instance): Path<String>,
+  Path((name, instance)): Path<(String, String)>,
   headers: HeaderMap,
   body: String,
 ) -> StatusCode {
   let _permit = match admit(&shared, &headers, Access::Control) {
     Ok(permit) => permit,
+    Err(status) => return status,
+  };
+  let dir = match channel::<Dgg>(&shared, &name) {
+    Ok(dir) => dir,
     Err(status) => return status,
   };
   let Some(status) = control::parse_push(&body, now_ms()) else {
@@ -308,7 +332,7 @@ async fn push(
   if status.instance != instance {
     return StatusCode::BAD_REQUEST;
   }
-  match control::write(&shared.control, &status) {
+  match control::write(&control::dir(&dir), &status) {
     Ok(()) => StatusCode::NO_CONTENT,
     Err(e) => {
       warn!("control: {e}");
@@ -319,17 +343,21 @@ async fn push(
 
 async fn remove(
   State(shared): State<Arc<Shared>>,
-  Path(instance): Path<String>,
+  Path((name, instance)): Path<(String, String)>,
   headers: HeaderMap,
 ) -> StatusCode {
   let _permit = match admit(&shared, &headers, Access::Control) {
     Ok(permit) => permit,
     Err(status) => return status,
   };
+  let dir = match channel::<Dgg>(&shared, &name) {
+    Ok(dir) => dir,
+    Err(status) => return status,
+  };
   if !valid_instance(&instance) {
     return StatusCode::BAD_REQUEST;
   }
-  match control::remove(&shared.control, &instance) {
+  match control::remove(&control::dir(&dir), &instance) {
     Ok(()) => StatusCode::NO_CONTENT,
     Err(e) => {
       warn!("control: {e}");
@@ -340,10 +368,12 @@ async fn remove(
 
 async fn list(
   State(shared): State<Arc<Shared>>,
+  Path(name): Path<String>,
   headers: HeaderMap,
 ) -> Result<String, StatusCode> {
   let _permit = admit(&shared, &headers, Access::Read)?;
-  let statuses = control::read_all(&shared.control)
+  let dir = channel::<Dgg>(&shared, &name)?;
+  let statuses = control::read_all(&control::dir(&dir))
     .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
   let mut body = format!("now {}\n\n", now_ms());
   for status in statuses {
@@ -353,29 +383,43 @@ async fn list(
   Ok(body)
 }
 
-/// `S`'s manifest.
-async fn listing<S: Service>(
+/// `S`'s channels with journals here, a line each.
+async fn channels<S: Service>(
   State(shared): State<Arc<Shared>>,
   headers: HeaderMap,
 ) -> Result<String, StatusCode> {
   let _permit = admit(&shared, &headers, Access::Read)?;
-  let files = manifest::list::<S>(&S::dir(&shared.journal))
+  let names = S::channels(&S::dir(&shared.journal))
+    .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+  Ok(names.iter().map(|name| format!("{name}\n")).collect())
+}
+
+/// The manifest of `S`'s channel.
+async fn listing<S: Service>(
+  State(shared): State<Arc<Shared>>,
+  Path(name): Path<String>,
+  headers: HeaderMap,
+) -> Result<String, StatusCode> {
+  let _permit = admit(&shared, &headers, Access::Read)?;
+  let dir = channel::<S>(&shared, &name)?;
+  let files = manifest::list::<S>(&dir, &name)
     .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
   Ok(manifest::encode::<S>(&files))
 }
 
-/// One of `S`'s live files' or archives' bytes, from the `Range:
-/// bytes=<from>-` offset if given, as far as the file went when it was
-/// opened.
+/// One of the live files' or archives' bytes of `S`'s channel, from the
+/// `Range: bytes=<from>-` offset if given, as far as the file went when it
+/// was opened.
 async fn file<S: Service>(
   State(shared): State<Arc<Shared>>,
-  Path(path): Path<String>,
+  Path((name, path)): Path<(String, String)>,
   headers: HeaderMap,
 ) -> Result<(StatusCode, [(HeaderName, u64); 1], Body), StatusCode> {
   let permit = admit(&shared, &headers, Access::Read)?;
   if !valid_path::<S>(&path) {
     return Err(StatusCode::BAD_REQUEST);
   }
+  let dir = channel::<S>(&shared, &name)?;
   let from = match headers.get(RANGE) {
     None => None,
     Some(range) => Some(
@@ -388,7 +432,7 @@ async fn file<S: Service>(
         .ok_or(StatusCode::RANGE_NOT_SATISFIABLE)?,
     ),
   };
-  let local = S::dir(&shared.journal).join(&path);
+  let local = dir.join(&path);
   let mut opened = ::tokio::fs::File::open(local)
     .await
     .map_err(|_| StatusCode::NOT_FOUND)?;
@@ -431,19 +475,6 @@ async fn file<S: Service>(
   ))
 }
 
-/// The journal root of Kick's channel `slug`, if it's one with a journal
-/// here.
-fn kick_channel(shared: &Shared, slug: &str) -> Result<PathBuf, StatusCode> {
-  if !valid_slug(slug) {
-    return Err(StatusCode::BAD_REQUEST);
-  }
-  let root = channel_root(&Kick::dir(&shared.journal), slug);
-  match root.is_dir() {
-    true => Ok(root),
-    false => Err(StatusCode::NOT_FOUND),
-  }
-}
-
 /// A user's history in a Kick channel.
 async fn kick_user(
   State(shared): State<Arc<Shared>>,
@@ -452,7 +483,7 @@ async fn kick_user(
 ) -> Result<Json<Value>, StatusCode> {
   let _permit = admit(&shared, &headers, Access::Query)?;
   let user_id: u64 = id.parse().map_err(|_| StatusCode::BAD_REQUEST)?;
-  kick_channel(&shared, &slug)?;
+  channel::<Kick>(&shared, &slug)?;
   let found = spawn_blocking(move || {
     kick::history::user(&shared.kick_index, &shared.journal, &slug, user_id)
   })
@@ -476,7 +507,7 @@ async fn kick_events(
 {
   // Held while the stream starts; the stream holds one of its own.
   let _permit = admit(&shared, &headers, Access::Query)?;
-  let root = kick_channel(&shared, &slug)?;
+  let root = channel::<Kick>(&shared, &slug)?;
   let permit = shared
     .streams
     .clone()

@@ -1,5 +1,5 @@
-//! The journal files a host has of a service's, for `sync` to compare
-//! against its own: `GET /<service>/manifest`.
+//! The journal files a host has of a service's channel, for `sync` to
+//! compare against its own: `GET /<service>/<api>/channels/<name>/manifest`.
 //!
 //! ```text
 //! journal-manifest <variant>.<major>.<minor><RS><LF>
@@ -10,13 +10,14 @@
 //! One entry per file after the header, each, the header too, ending at RS
 //! LF as the journal's records do, versioned like the journal's (see
 //! [`Header`]): the service's variant, and its version, optionally followed
-//! by informational fields. Then each of the service's journal roots (see
-//! [`Service::roots`]) in turn: its live files, then its archives, as their
-//! monthly manifests describe them. Paths are relative to the service's
-//! directory, `/`-separated, each starting with its root's prefix: dgg's
-//! journal has none and its backfill journal `backfill/`; a Kick channel's
-//! is `<slug>/`. They're checked with [`valid_path`]. (Older readers skip
-//! the entries with paths they don't accept.)
+//! by informational fields. Then each of the channel's journal roots (see
+//! [`Service::channel_roots`]) in turn: its live files, then its archives,
+//! as their monthly manifests describe them. Paths are relative to the
+//! channel's directory, `/`-separated, each starting with its root's
+//! prefix: a dgg channel's journal has none and its backfill journal
+//! `backfill/`; a Kick channel's has none. They're checked with
+//! [`valid_path`]. (Older readers skip the entries with paths they don't
+//! accept.)
 //!
 //! While the major is 0 (pre-release) any minor may break, so readers accept
 //! only the exact variant and version they write. From 1.0 on, readers will
@@ -27,6 +28,10 @@
 //! touch another's, and a new service's is just another manifest: a peer
 //! without it answers `404`, and an older one never asks for it.
 //!
+//! Before manifests were by channel, each was a whole service's, at `GET
+//! /<service>/<api>/manifest`, its paths relative to the service's
+//! directory.
+//!
 //! Versions of dgg's:
 //!
 //! - `0.0`: `journal-manifest 0.0`, naming no variant.
@@ -36,7 +41,8 @@
 //!
 //! Versions of Kick's:
 //!
-//! - `0.0`: the first.
+//! - `0.0`: the first, a whole service's: paths start with `<slug>/`.
+//! - `0.1`: a channel's: paths are relative to it.
 
 use {
   crate::service::{Root, Service},
@@ -57,7 +63,7 @@ pub const FORMAT: Format = Format {
 pub const VERSION: Version = Version { major: 0, minor: 2 };
 
 /// The version of Kick's manifest this crate writes and reads.
-pub const KICK_VERSION: Version = Version { major: 0, minor: 0 };
+pub const KICK_VERSION: Version = Version { major: 0, minor: 1 };
 
 /// The version of `variant`'s manifest this crate writes and reads.
 pub fn version(variant: Variant) -> Version {
@@ -70,7 +76,7 @@ pub fn version(variant: Variant) -> Version {
 /// One file and its size.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct File {
-  /// Relative to the service's directory, `/`-separated.
+  /// Relative to the channel's directory, `/`-separated.
   pub path: String,
   pub size: u64,
   /// For archives: the SHA-256 of the file, lowercase hex.
@@ -109,15 +115,15 @@ pub fn archive_path(path: &str) -> Option<&str> {
   (valid_day(day) && year == &day[..4] && month == &day[5..7]).then_some(day)
 }
 
-/// Whether `path`, relative to `S`'s directory, names one of its live files
-/// or archives, in a journal root it could have.
+/// Whether `path`, relative to a channel of `S`'s directory, names one of
+/// its live files or archives, in a journal root it could have.
 pub fn valid_path<S: Service>(path: &str) -> bool {
   S::split(path)
     .is_some_and(|(_, rest)| live_path(rest) || archive_path(rest).is_some())
 }
 
-/// The journal root, in `S`'s directory `dir`, holding the archive at
-/// `path`, relative to it, and its day, if `path` names one.
+/// The journal root, in the directory `dir` of a channel of `S`'s, holding
+/// the archive at `path`, relative to it, and its day, if `path` names one.
 pub fn archive_root<'a, S: Service>(
   dir: &Path,
   path: &'a str,
@@ -132,11 +138,11 @@ fn valid_sha256(text: &str) -> bool {
     && text.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
-/// Every file of `S`'s in its directory `dir`, with its size: each journal
-/// root's live files, then its archives.
-pub fn list<S: Service>(dir: &Path) -> io::Result<Vec<File>> {
+/// Every file of `S`'s channel `name`, in the channel's directory `dir`,
+/// with its size: each journal root's live files, then its archives.
+pub fn list<S: Service>(dir: &Path, name: &str) -> io::Result<Vec<File>> {
   let mut files = Vec::new();
-  for root in S::roots(dir)? {
+  for root in S::channel_roots(dir, name) {
     for path in root.live_files()? {
       let relative = root.path(&path);
       if valid_path::<S>(&relative) {

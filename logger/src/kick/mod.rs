@@ -13,7 +13,7 @@ use {
     index::Error,
     service::{Root, Service},
   },
-  ::logger_journal::Variant,
+  ::logger_journal::{Variant, layout::channel_root},
   ::rusqlite::Connection,
   ::std::{
     io,
@@ -48,9 +48,25 @@ impl Service for Kick {
     )
   }
 
+  fn valid_channel(slug: &str) -> bool {
+    channels::valid_slug(slug)
+  }
+
+  fn channels(dir: &Path) -> io::Result<Vec<String>> {
+    channels::journaled(dir)
+  }
+
+  fn channel_dir(dir: &Path, slug: &str) -> PathBuf {
+    channel_root(dir, slug)
+  }
+
+  /// One, the channel's directory itself.
+  fn channel_roots(dir: &Path, slug: &str) -> Vec<Root> {
+    vec![Root::new::<Self>(dir, "", slug)]
+  }
+
   fn split(path: &str) -> Option<(&str, &str)> {
-    let at = path.find('/')?;
-    channels::valid_slug(&path[..at]).then(|| (&path[..=at], &path[at + 1..]))
+    Some(("", path))
   }
 
   fn open_index(path: &Path) -> Result<Connection, Error> {

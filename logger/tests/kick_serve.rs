@@ -156,10 +156,13 @@ async fn a_users_history() {
   };
   // The read token reads it too; the query token reads nothing else.
   assert_eq!(code("/kick/v0/channels/c/users/7", READ).await, 200);
-  assert_eq!(code("/kick/v0/manifest", QUERY).await, 403);
-  assert_eq!(code("/dgg/v0/manifest", QUERY).await, 403);
+  assert_eq!(code("/kick/v0/channels/c/manifest", QUERY).await, 403);
   assert_eq!(
-    code("/kick/v0/files/c/live/1970-01-01/k.journal", QUERY).await,
+    code("/dgg/v0/channels/destiny.gg/manifest", QUERY).await,
+    403
+  );
+  assert_eq!(
+    code("/kick/v0/channels/c/files/live/1970-01-01/k.journal", QUERY).await,
     403
   );
   assert_eq!(code("/kick/v0/channels/c/users/7", "nobody").await, 401);

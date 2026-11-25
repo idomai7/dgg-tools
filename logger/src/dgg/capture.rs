@@ -6,7 +6,7 @@ use {
   crate::{
     capture::{Exit, HANDOFF, Handoff, Peer, SHUTDOWN, Say},
     control::{self, Status},
-    dgg::Dgg,
+    dgg::{Dgg, channels::DESTINY},
     service::routes,
   },
   ::common::time::now_ms,
@@ -174,10 +174,12 @@ fn peer_client(peer: &Peer) -> Result<::reqwest::Client, String> {
   peer.client(::reqwest::Client::builder().timeout(Duration::from_secs(5)))
 }
 
-/// Where `instance`'s status goes on `peer`.
+/// Where `instance`'s status goes on `peer`: destiny.gg's channel's, the
+/// one it captures.
 fn peer_url(peer: &Peer, instance: &str) -> String {
   let base = peer.url.trim_end_matches('/');
-  format!("{base}{}/control/{instance}", routes::<Dgg>())
+  let at = routes::<Dgg>();
+  format!("{base}{at}/channels/{DESTINY}/control/{instance}")
 }
 
 /// Pushes this instance's status file to `peer` every `interval`, until

@@ -1,10 +1,13 @@
 //! Sync: pull another host's journals, every service's, into this one's.
 //!
-//! Each service is pulled in turn, by the same rules: its [manifest](crate::
-//! manifest) from `GET /<service>/<api>/manifest`, its files from `GET
-//! /<service>/<api>/files/<path>`, each path relative to its directory
-//! there and here. A peer without a service, or without its API's version
-//! (see [`Service::API`]), answers `404`: it has none of its journals.
+//! Each service is pulled in turn, by the same rules: its channels from `GET
+//! /<service>/<api>/channels`, and each channel's [manifest](crate::
+//! manifest) from `GET /<service>/<api>/channels/<name>/manifest` and its
+//! files from `.../files/<path>`, each path relative to the channel's
+//! directory there and here. Every channel the peer has is pulled, listed
+//! here or not. A peer without a service, or without its API's version (see
+//! [`Service::API`]), answers `404`: it has none of its journals. So does
+//! one on a build before channels (see [`serve`](crate::serve)).
 //!
 //! Journal files are only ever appended to, so a local copy is always a
 //! prefix of the remote file. Each round fetches the manifest and, for
@@ -79,7 +82,8 @@ pub struct Stats {
   /// Archives written out as live files, for compaction to merge with what
   /// is here for their day.
   pub merging: u64,
-  /// Files shorter on the peer than here, which aren't touched.
+  /// Files shorter on the peer than here, which aren't touched, each as
+  /// `<service> <channel>: <path>`.
   pub mismatched: Vec<String>,
 }
 
@@ -124,12 +128,13 @@ pub async fn sync(peer: &Peer, journal: &Path) -> Result<Stats, String> {
   Ok(stats)
 }
 
-/// `peer`'s manifest of `S`'s journals: none if it doesn't have `S`.
-async fn fetch_manifest<S: Service>(
+/// The text at `path` on `peer`, up to [`MAX_MANIFEST`] bytes: none if
+/// it answers `404`.
+async fn fetch_text(
   client: &::reqwest::Client,
   peer: &Peer,
-) -> Result<Vec<manifest::File>, String> {
-  let path = format!("{}/manifest", routes::<S>());
+  path: &str,
+) -> Result<Option<String>, String> {
   let base = peer.url.trim_end_matches('/');
   let response = client
     .get(format!("{base}{path}"))
@@ -138,7 +143,7 @@ async fn fetch_manifest<S: Service>(
     .await
     .map_err(|e| e.to_string())?;
   if response.status() == ::reqwest::StatusCode::NOT_FOUND {
-    return Ok(Vec::new());
+    return Ok(None);
   }
   if !response.status().is_success() {
     return Err(format!("{path}: HTTP {}", response.status()));
@@ -153,9 +158,43 @@ async fn fetch_manifest<S: Service>(
   if more {
     return Err(format!("{path}: over {MAX_MANIFEST} bytes"));
   }
-  let files = String::from_utf8(text)
-    .ok()
-    .and_then(|text| manifest::decode::<S>(&text))
+  String::from_utf8(text)
+    .map(Some)
+    .map_err(|_| format!("{path} isn't text"))
+}
+
+/// `peer`'s channels of `S`'s: none if it doesn't have `S`.
+async fn fetch_channels<S: Service>(
+  client: &::reqwest::Client,
+  peer: &Peer,
+) -> Result<Vec<String>, String> {
+  let path = format!("{}/channels", routes::<S>());
+  let Some(text) = fetch_text(client, peer, &path).await? else {
+    return Ok(Vec::new());
+  };
+  let mut names: Vec<String> = Vec::new();
+  for name in text.lines().filter(|line| !line.is_empty()) {
+    if !S::valid_channel(name) {
+      return Err(format!("{path}: {name:?} isn't a channel's name"));
+    }
+    if !names.iter().any(|known| known == name) {
+      names.push(name.to_owned());
+    }
+  }
+  Ok(names)
+}
+
+/// `peer`'s manifest of `S`'s channel `name`: none if it doesn't have it.
+async fn fetch_manifest<S: Service>(
+  client: &::reqwest::Client,
+  peer: &Peer,
+  name: &str,
+) -> Result<Vec<manifest::File>, String> {
+  let path = format!("{}/channels/{name}/manifest", routes::<S>());
+  let Some(text) = fetch_text(client, peer, &path).await? else {
+    return Ok(Vec::new());
+  };
+  let files = manifest::decode::<S>(&text)
     .ok_or(format!("{path} isn't a readable manifest"))?;
   if let Some(file) = files.iter().find(|file| file.size > MAX_FILE) {
     return Err(format!("{}: listed as over {MAX_FILE} bytes", file.path));
@@ -163,21 +202,38 @@ async fn fetch_manifest<S: Service>(
   Ok(files)
 }
 
-/// Pulls each file in `peer`'s manifest of `S`'s journals that the
-/// journal directory `journal` doesn't have, adding what was done to
-/// `stats`.
+/// Pulls each of `peer`'s channels of `S`'s into the journal directory
+/// `journal`, adding what was done to `stats`.
 async fn pull<S: Service>(
   client: &::reqwest::Client,
   peer: &Peer,
   journal: &Path,
   stats: &mut Stats,
 ) -> Result<(), String> {
-  let files = fetch_manifest::<S>(client, peer).await?;
+  for name in fetch_channels::<S>(client, peer).await? {
+    pull_channel::<S>(client, peer, journal, &name, stats)
+      .await
+      .map_err(|e| format!("{} {name}: {e}", S::NAME))?;
+  }
+  Ok(())
+}
+
+/// Pulls each file in `peer`'s manifest of `S`'s channel `name` that the
+/// journal directory `journal` doesn't have, adding what was done to
+/// `stats`.
+async fn pull_channel<S: Service>(
+  client: &::reqwest::Client,
+  peer: &Peer,
+  journal: &Path,
+  name: &str,
+  stats: &mut Stats,
+) -> Result<(), String> {
+  let files = fetch_manifest::<S>(client, peer, name).await?;
   stats.files += files.len() as u64;
-  let dir = S::dir(journal);
+  let dir = S::channel_dir(&S::dir(journal), name);
   let variant = S::VARIANT;
   let base = peer.url.trim_end_matches('/');
-  let at = routes::<S>();
+  let at = format!("{}/channels/{name}", routes::<S>());
   let get = |path: &str| client.get(format!("{base}{at}/files/{path}"));
   for file in files {
     if let Some(sha256) = &file.sha256 {
@@ -218,7 +274,8 @@ async fn pull<S: Service>(
       .map_err(|e| format!("{}: {e}", file.path))?
       .map_or(0, |metadata| metadata.len());
     if file.size < have {
-      stats.mismatched.push(file.path);
+      let path = file.path;
+      stats.mismatched.push(format!("{} {name}: {path}", S::NAME));
       continue;
     }
     if file.size == have {

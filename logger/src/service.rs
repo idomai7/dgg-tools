@@ -5,8 +5,13 @@
 //!
 //! A service's journals are in a directory of its own under the journal
 //! directory, as one or more journal roots, each laid out as any (see
-//! [`layout`](::logger_journal::layout)). Paths in a service's manifest, its
-//! routes and its index are relative to its directory.
+//! [`layout`](::logger_journal::layout)). Paths in a service's index are
+//! relative to its directory.
+//!
+//! A service's journals are by channel, each channel's in a directory of its
+//! own in the service's, holding one or more of its journal roots. Paths in
+//! a channel's manifest and its routes are relative to the channel's
+//! directory.
 
 use {
   crate::index::{Error, Tally},
@@ -41,9 +46,23 @@ pub trait Service: 'static {
   /// Its journal roots, in its directory `dir`, in order.
   fn roots(dir: &Path) -> io::Result<Vec<Root>>;
 
-  /// The prefix of the journal root `path`, relative to its directory,
-  /// would be under (see [`Root::prefix`]), and the rest of it; `None` if
-  /// it can't be under any.
+  /// Whether `name` could name one of its channels: a directory's name,
+  /// and a route's segment.
+  fn valid_channel(name: &str) -> bool;
+
+  /// The channels with journals in its directory `dir`, sorted.
+  fn channels(dir: &Path) -> io::Result<Vec<String>>;
+
+  /// Channel `name`'s directory, in its directory `dir`.
+  fn channel_dir(dir: &Path, name: &str) -> PathBuf;
+
+  /// Channel `name`'s journal roots, in the channel's directory `dir`, in
+  /// order, their prefixes relative to it.
+  fn channel_roots(dir: &Path, name: &str) -> Vec<Root>;
+
+  /// The prefix of the journal root `path`, relative to a channel's
+  /// directory, would be under (see [`Root::prefix`]), and the rest of it;
+  /// `None` if it can't be under any.
   fn split(path: &str) -> Option<(&str, &str)>;
 
   /// Opens its index at `path`, creating it if needed.
@@ -74,10 +93,11 @@ pub struct Root {
   /// What it's called in what's logged: the service's name, then which
   /// root it is, if it has more than one kind.
   pub name: String,
-  /// How its files' paths, relative to the service's directory, start:
-  /// empty, or a directory's name and `/`.
+  /// How its files' paths, relative to the service's directory (or, for a
+  /// channel's root, the channel's), start: empty, or a directory's name
+  /// and `/`.
   pub prefix: String,
-  /// Its directory: the service's, joined with the prefix.
+  /// Its directory: the service's (or channel's), joined with the prefix.
   pub dir: PathBuf,
 }
 
@@ -113,8 +133,8 @@ impl Root {
     Ok(files)
   }
 
-  /// The path of `file`, in this root, relative to the service's
-  /// directory, `/`-separated.
+  /// The path of `file`, in this root, relative to the service's (or
+  /// channel's) directory, `/`-separated.
   pub fn path(&self, file: &Path) -> String {
     let relative = file.strip_prefix(&self.dir).unwrap_or(file);
     let relative = relative.to_string_lossy().replace('\\', "/");
