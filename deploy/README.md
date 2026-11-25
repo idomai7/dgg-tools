@@ -5,26 +5,25 @@ directory:
 
 | Command | Job | Runs |
 |---|---|---|
-| `dgg-capture` | Connects to dgg chat and writes everything to the journal | all the time |
+| `dgg-capture` | Connects to one dgg channel's chat, from `dgg-channels.jsonc`, and writes everything to the journal | all the time, one for each channel in `dgg-channels.jsonc` |
 | `index` | Reads each dgg channel's journal into `index-dgg-<name>.sqlite`, and each Kick channel's into `index-kick-<slug>.sqlite` | all the time, with `--follow`: once 500 records are waiting (at most once a minute), or every 10 minutes |
 | `compact` | Packs each finished day into one compressed archive, Kick's channels' too; with `--early`, also what stopped captures left on today | every hour; `--early` a minute after start |
-| `dgg-gaps` | Lists when no dgg capture was connected | when you want |
-| `dgg-backfill` | Fetches missed dgg messages from public logs | after an outage |
+| `dgg-gaps` | Lists when no capture of a dgg channel was connected | when you want |
+| `dgg-backfill` | Fetches destiny.gg's missed messages from public logs | after an outage |
 | `sync`, `serve` | Copy the journal between hosts | when moving hosts, or every 15 minutes from a peer |
 | `kick-ids` | Records Kick channels' ids in `kick-channels.jsonc`, for `kick-capture` | when adding a channel |
 | `kick-capture` | Connects to one Kick channel's chat, from `kick-channels.jsonc`, and writes everything to the journal | all the time, one for each channel in `kick-channels.jsonc` |
 | `install`, `uninstall`, `status`, `config`, `supervise` | Run, install and inspect the rest | when you want |
 
-`dgg-supervisor` keeps capture and index running (and serve, given its
-config), restarts them after failures, and runs compact (and sync, given a
-peer); it's `dgg-logger
-supervise` without a window, for the logon task and the service. It runs
-a `kick-capture` for each channel in `kick-channels.jsonc` too, each on its own,
-so one failing leaves the others. It reads the list every minute: a
-channel added is captured from then on, and one removed stops; a
-channel's capture also notices if its ids change. In Task Manager, both
-show as "dgg-tools: ..."; the Details tab's Command line column tells the
-commands apart.
+`dgg-supervisor` keeps the captures and index running (and serve, given
+its config), restarts them after failures, and runs compact (and sync,
+given a peer); it's `dgg-logger supervise` without a window, for the logon
+task and the service. It runs a `dgg-capture` for each channel in
+`dgg-channels.jsonc` and a `kick-capture` for each in
+`kick-channels.jsonc`, each on its own, so one failing leaves the others,
+and follows the lists as they change (see [Channels](#channels)). In Task
+Manager, both show as "dgg-tools: ..."; the Details tab's Command line
+column tells the commands apart.
 
 The commands that work on the data (`dgg-capture` to `serve`) take `--data`,
 which defaults to the installed logger's.
@@ -36,7 +35,7 @@ An install lives in one folder:
   bin\<time>-<version>+<commit>\  one build per install; older ones are pruned
   data\
     journal\
-      dgg\<name>\          each dgg channel's journal (destiny.gg's for now):
+      dgg\<name>\          each dgg channel's journal:
         live\              today's raw capture, one file per capture per day
         archive\           finished days, compressed
         backfill\          messages fetched from other logs, kept apart
@@ -61,7 +60,45 @@ An install lives in one folder:
 
 The journal is the record. The indexes can always be deleted and rebuilt with
 `dgg-logger index --rebuild`, or only dgg's with `--rebuild-dgg` and only
-Kick's with `--rebuild-kick`. Logs are timestamped and rotated at 10 MB, keeping 5.
+Kick's with `--rebuild-kick`. Logs are timestamped and rotated at 10 MB,
+keeping 5.
+
+## Channels
+
+Each service captures the channels in its list, in the install's folder.
+dgg's, `dgg-channels.jsonc`, is edited by hand: a chat speaking dgg's
+protocol, its WebSocket URL, and the Origin header to send (or `null` for
+none). Its name is the site's domain by convention, and names its journal,
+index and log:
+
+```jsonc
+{
+  "channels": [
+    {
+      "name": "destiny.gg",
+      "url": "wss://chat.destiny.gg/ws",
+      "origin": "https://www.destiny.gg",
+    },
+    {
+      "name": "example.org",
+      "url": "wss://chat.example.org/ws",
+      "origin": null,
+    },
+  ],
+}
+```
+
+Kick's, `kick-channels.jsonc`, holds each channel's slug and ids, which
+`dgg-logger kick-ids <slug>` looks up and adds.
+
+Both are read every minute: a channel added is captured within the
+minute, and one removed stops, its journal kept (and still synced,
+indexed and compacted). A changed URL or Origin, or changed ids,
+reconnects that channel's capture alone. A list that can't be read
+changes nothing; the supervisor's log and `status` say why. A channel a
+peer has and this host doesn't list is synced all the same. Only
+destiny.gg's chat has public logs, so `dgg-backfill` refuses the others,
+and their gaps stay gaps.
 
 ## Build
 
@@ -138,8 +175,12 @@ dgg's journals are by channel, destiny.gg's in `journal\dgg\destiny.gg\`
 and its index in `index-dgg-destiny.gg.sqlite`. An install moves them
 there from `journal\dgg\` and `index-dgg.sqlite` as its supervisor starts;
 a live file still being written is moved at a later start, and
-`migrate.log` says what moved and what was left. Builds `ed46061` to
-`52d088d` moved dgg's journal into `journal\dgg\` from `journal\` and
+`migrate.log` says what moved and what was left. Kick's index is by
+channel too, `index-kick-<slug>.sqlite`: an install deletes the old
+`index-kick.sqlite` as its supervisor starts, and `index` builds each
+channel's from its journal.
+
+Builds `ed46061` to `52d088d` moved dgg's journal into `journal\dgg\` from `journal\` and
 `index.sqlite`; later builds don't, so upgrading from a build older than
 `ed46061` goes through one of those first.
 
@@ -165,10 +206,10 @@ target\release\dgg-logger status --watch
 It finds the installed logger and shows:
 
 - the running programs: memory, CPU, and which build (each
-  `kick-capture` with its channel);
-- each capture, dgg's and each Kick channel's: what it listens to (dgg's
-  WebSocket URL, or the Kick channel), its health (healthy, connecting,
-  or STALE once its heartbeat stops), and the frames in its files not
+  capture with its channel);
+- each capture, each dgg and Kick channel's: what it listens to (the dgg
+  channel and its WebSocket URL, or the Kick channel), its health
+  (healthy, connecting, or STALE once its heartbeat stops), and the frames in its files not
   yet compacted;
 - each dgg channel's journal (today's files and their last write, days
   waiting for compact, archives, backfill) and index, and each Kick
@@ -234,7 +275,7 @@ over from it without a gap.
 ## After an outage
 
 If the PC was off or asleep, see what was missed and fill it from public
-logs:
+logs. Both take `--channel`, destiny.gg's by default:
 
 ```powershell
 target\release\dgg-logger dgg-gaps --min 60
@@ -243,9 +284,9 @@ target\release\dgg-logger dgg-backfill --source linkers
 ```
 
 Short gaps are often already covered by the chat history dgg sends on every
-reconnect; `dgg-gaps` says which ones were. Backfilled messages go in
-`journal\dgg\backfill\`, separate from what was captured, and never replace a
-captured message. `--source rustlesearch` is millisecond-accurate but
+reconnect; `dgg-gaps` says which ones were. Backfilled messages go in the
+channel's `backfill\`, separate from what was captured, and never replace
+a captured message. `--source rustlesearch` is millisecond-accurate but
 limited to 200 requests a day. linkers.ooo allows 60 requests a minute,
 unlimited with a logged-in session's `lk_session` cookie, given as
 `--config-file <file>` holding `{"linkers_session": "<the cookie>"}`.
