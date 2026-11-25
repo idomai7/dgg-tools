@@ -685,9 +685,9 @@ WebSocket URL of its own. Each step a pause for review.
     bridge too) also heartbeats into the old `dgg/control/` while it's
     there, as last time.
   - Tested locally with both builds: the current one capturing, the new
-    one installed over it; the handoff, what moved, the index against
-    one rebuilt from scratch, and sync between two data directories on
-    different builds (neither takes the other's files).
+    one installed over it; the handoff, what moved, and the index against
+    one rebuilt from scratch. Not sync across builds: the two hosts don't
+    sync with each other yet.
 - **Steps,** each a pause for review:
   1. The list: parsing, the default, and `install` moving it. Nothing
      reads it yet.
