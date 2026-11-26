@@ -17,6 +17,8 @@ decisions live in its own document here:
   moderation tools.
 - [community](community.md): vouching, a pastebin and file uploads, a
   betting ledger, reputation and karma (notes only).
+- [handoff](handoff.md): for a new session: how to work here, where things
+  stand, and what's open.
 
 Major components get codenames, by which they name themselves to others, as
 in a `User-Agent`: so far the logger's, ledgerline, kick-mod's, gavelgab, and
