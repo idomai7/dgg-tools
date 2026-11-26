@@ -343,6 +343,35 @@ fn scrolls_and_minimizes_the_watch_boxes() {
   assert_eq!(boxes.focus, 3);
   assert!(boxes.mouse(click(captures)));
   assert_eq!(boxes.focus, 1);
+
+  // The wheel scrolls the box under the cursor, focused or not, but not
+  // one minimized; the page's wheel-up goes back from its end.
+  let wheel = |up, row| {
+    let kind = match up {
+      true => MouseEventKind::ScrollUp,
+      false => MouseEventKind::ScrollDown,
+    };
+    mouse(kind, row)
+  };
+  assert!(!boxes.mouse(wheel(false, captures)));
+  boxes.minimized = [false; 4];
+  let (rows, _) = screen(&mut boxes);
+  let row_of = |title: &str| {
+    rows.iter().position(|row| row.contains(title)).unwrap() as u16
+  };
+  let (page, captures) = (row_of(" the page ("), row_of(" captures ("));
+  assert!(boxes.mouse(click(page)));
+  // The captures fit while the page was minimized: scrolled to the top.
+  assert_eq!(boxes.scroll[1], 0);
+  assert!(!boxes.mouse(wheel(true, captures + 1)));
+  assert!(boxes.mouse(wheel(false, captures + 1)));
+  assert!(boxes.scroll[1] > 0);
+  assert!(boxes.mouse(wheel(true, captures + 1)));
+  assert_eq!(boxes.scroll[1], 0);
+  assert_eq!(boxes.scroll[3], 5);
+  assert!(boxes.mouse(wheel(true, page + 1)));
+  assert_eq!(boxes.scroll[3], 8);
+  assert_eq!(boxes.focus, 3);
 }
 
 #[test]

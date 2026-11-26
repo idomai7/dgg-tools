@@ -14,7 +14,8 @@
 //! and `8` serve's. Last, the boxes: Tab and Shift-Tab move the focus
 //! between them (the page at the bottom too), and so does a click on one
 //! (the screen captures the mouse while it runs), Up, Down, Page Up and Page
-//! Down scroll the focused one when it's over-tall, `m` minimizes it to its
+//! Down scroll the focused one when it's over-tall, and the mouse wheel
+//! the one under the cursor, focused or not, `m` minimizes it to its
 //! title line, or restores it, and `s` sorts it by its next key, `S` the
 //! other way (see [`sort`]; the page keeps its order). On a narrow screen
 //! the keys take more than one line.
@@ -127,7 +128,10 @@ const KEYS: [&[(char, &str, Action)]; 3] = [
 ];
 
 /// The keys that aren't characters, before the boxes' group of [`KEYS`].
-const MOVING: &str = "tab/click focus  arrows/pgup/pgdn scroll";
+const MOVING: &str = "tab/click focus  arrows/pgup/pgdn/wheel scroll";
+
+/// How many lines a notch of the mouse wheel scrolls a box.
+const WHEEL: usize = 3;
 
 /// The boxes, in the order Tab moves through them: the page last.
 const PROGRAMS: usize = 0;
@@ -170,18 +174,26 @@ impl Default for Boxes {
 }
 
 impl Boxes {
-  /// Does what `mouse` asks: a left click on a box focuses it. Whether
-  /// anything changed, so the screen needs drawing again.
+  /// Does what `mouse` asks: a left click on a box focuses it, and the
+  /// wheel over one scrolls it, focused or not, [`WHEEL`] lines a notch,
+  /// unless it's minimized. Whether anything changed, so the screen needs
+  /// drawing again.
   pub fn mouse(&mut self, mouse: MouseEvent) -> bool {
     let at = Position::new(mouse.column, mouse.row);
-    let Some(clicked) = self.areas.iter().position(|area| area.contains(at))
+    let Some(under) = self.areas.iter().position(|area| area.contains(at))
     else {
       return false;
     };
     match mouse.kind {
-      MouseEventKind::Down(MouseButton::Left) if clicked != self.focus => {
-        self.focus = clicked;
+      MouseEventKind::Down(MouseButton::Left) if under != self.focus => {
+        self.focus = under;
         true
+      }
+      MouseEventKind::ScrollUp if !self.minimized[under] => {
+        self.scroll_box(under, true, Some(WHEEL))
+      }
+      MouseEventKind::ScrollDown if !self.minimized[under] => {
+        self.scroll_box(under, false, Some(WHEEL))
       }
       _ => false,
     }
@@ -198,15 +210,21 @@ impl Boxes {
   /// Scrolls the focused box `rows` lines (a page's worth, if none) up or
   /// down, as far as it goes.
   fn scroll(&mut self, up: bool, rows: Option<usize>) {
-    let at = self.focus;
+    self.scroll_box(self.focus, up, rows);
+  }
+
+  /// [`scroll`](Self::scroll), for the box `at`. Whether it moved.
+  fn scroll_box(&mut self, at: usize, up: bool, rows: Option<usize>) -> bool {
     let rows = rows.unwrap_or(self.rows[at].max(1));
     // The page counts back from its end.
     let toward_zero = up != (at == PAGE);
     let scroll = &mut self.scroll[at];
+    let was = *scroll;
     *scroll = match toward_zero {
       true => scroll.saturating_sub(rows),
       false => (*scroll + rows).min(self.most[at]),
     };
+    *scroll != was
   }
 
   fn minimize(&mut self) {
