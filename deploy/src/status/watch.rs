@@ -684,8 +684,11 @@ fn heading(title: &str, focused: bool) -> Block<'_> {
 /// lines each (the page, all that's left): each its lines and borders, or
 /// minimized, its title line alone. The page gets at least [`PAGE_LEAST`];
 /// if the rest don't fit, the tallest give up rows first, down to one
-/// line.
-fn heights(lines: [usize; 3], minimized: [bool; 4], room: u16) -> [u16; 4] {
+/// line. With any minimized, the rest share the room (see [`shared`]).
+pub fn heights(lines: [usize; 3], minimized: [bool; 4], room: u16) -> [u16; 4] {
+  if minimized.contains(&true) {
+    return shared(lines, minimized, room);
+  }
   let mut heights = [0; 4];
   for (at, lines) in lines.into_iter().enumerate() {
     heights[at] = match minimized[at] {
@@ -709,6 +712,55 @@ fn heights(lines: [usize; 3], minimized: [bool; 4], room: u16) -> [u16; 4] {
     true => 1,
     false => room.saturating_sub(top(&heights)).max(page),
   };
+  heights
+}
+
+/// [`heights`], with a box minimized: its title line alone, and the room
+/// left shared evenly between the rest. One wanting less than its share
+/// (its lines and borders; the page wants all it can get) takes only that,
+/// and the others share what's left, until each takes its share; once
+/// every one has all it wants, what's left goes to the shortest, evening
+/// them up.
+fn shared(lines: [usize; 3], minimized: [bool; 4], room: u16) -> [u16; 4] {
+  let wants = |at: usize| match at {
+    PAGE => u16::MAX,
+    at => u16::try_from(lines[at])
+      .unwrap_or(u16::MAX)
+      .saturating_add(2),
+  };
+  let open: Vec<usize> = (0..4).filter(|&at| !minimized[at]).collect();
+  let mut heights = [1; 4];
+  let mut left = room.saturating_sub((4 - open.len()) as u16);
+  // `rows` shared evenly between `among`, the first taking any left over.
+  let share = |heights: &mut [u16; 4], among: &[usize], rows: u16| {
+    let n = among.len() as u16;
+    for (k, &at) in among.iter().enumerate() {
+      heights[at] = rows / n + u16::from((k as u16) < rows % n);
+    }
+  };
+  let mut unmet = open.clone();
+  while !unmet.is_empty() {
+    let even = left / unmet.len() as u16;
+    let (met, rest): (Vec<usize>, Vec<usize>) =
+      unmet.iter().partition(|&&at| wants(at) <= even);
+    if met.is_empty() {
+      share(&mut heights, &unmet, left);
+      return heights;
+    }
+    for at in met {
+      heights[at] = wants(at);
+      left -= wants(at);
+    }
+    unmet = rest;
+  }
+  // Every one has all it wants: the shortest grow first, so they're as
+  // even as they can be.
+  for _ in 0..left {
+    let Some(&shortest) = open.iter().min_by_key(|&&at| heights[at]) else {
+      break;
+    };
+    heights[shortest] += 1;
+  }
   heights
 }
 

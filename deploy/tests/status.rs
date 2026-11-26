@@ -337,6 +337,34 @@ fn the_watch_keys_take_more_lines_when_narrow() {
 }
 
 #[test]
+fn shares_the_room_once_a_box_is_minimized() {
+  use ::deploy::status::watch::heights;
+
+  let none = [false; 4];
+  // Nothing minimized: each box its lines and borders, the page the rest.
+  assert_eq!(heights([1, 10, 6], none, 40), [3, 12, 8, 17]);
+  // Programs minimized: the rest share its room, the page as one of them;
+  // the journal wants less than its share.
+  assert_eq!(
+    heights([1, 30, 6], [true, false, false, false], 40),
+    [1, 16, 8, 15]
+  );
+  // The page minimized, and every box shown whole: they're evened up.
+  assert_eq!(
+    heights([1, 10, 6], [false, false, false, true], 40),
+    [13, 13, 13, 1]
+  );
+  // The page minimized, the captures over-tall: the rest whole, the
+  // captures the rest of the room.
+  assert_eq!(
+    heights([1, 40, 6], [false, false, false, true], 40),
+    [3, 28, 8, 1]
+  );
+  // Everything minimized: a title line each.
+  assert_eq!(heights([1, 10, 6], [true; 4], 40), [1, 1, 1, 1]);
+}
+
+#[test]
 fn goes_round_both_ways() {
   use ::deploy::status::watch::{cycle, next_after};
 
