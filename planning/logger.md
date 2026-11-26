@@ -831,9 +831,9 @@ WebSocket URL of its own. Each step a pause for review.
     `kick-capture --bridge`, and waits for the old one to hand off to it.
     A Kick bridge that isn't healthy in time is only warned of: dgg's
     capture comes first. `kick-channels` moves with the root.
-- **dgg channels:** steps 1 to 7 done, omniliberal.dev the second
-  channel (see [dgg channels](#dgg-channels)); step 8 waits for both
-  hosts to have moved.
+- **dgg channels:** done, omniliberal.dev the second channel (see
+  [dgg channels](#dgg-channels)); the move by channel is retired, its
+  skeleton kept for the next.
 - **By service:** done: dgg and Kick each a service, dgg's journals in
   `journal/dgg/` (see [By service](#by-service)), on both hosts.
 - **Cross-host handoff:** done. Tested live: the old instance retired about 38 s
