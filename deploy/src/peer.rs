@@ -466,7 +466,10 @@ pub fn apply(
       Change::Nodes(text) => {
         parse_nodes(text).map_err(invalid_input)?;
         fs::create_dir_all(root)?;
-        fs::write(root.join(NODES), text)?;
+        // Whole, as the supervisor may read it any time.
+        replace_with(&root.join(NODES), |file| {
+          file.write_all(text.as_bytes())
+        })?;
       }
       Change::Mesh(mesh) => {
         config.get_or_insert_with(Config::default).mesh = Some(mesh.clone())
