@@ -15,6 +15,7 @@ use {
   ::std::{
     path::{Path, PathBuf},
     process::ExitCode,
+    time::Duration,
   },
   ::tokio::net::TcpListener,
 };
@@ -109,7 +110,11 @@ async fn run(config: Source<'_>, files: Files) -> Result<(), String> {
   let known = channels::load(&channels)?;
   let listen = config.server.listen;
   let redirect = format!("http://localhost:{}/oauth/callback", listen.port());
-  let http = ::reqwest::Client::new();
+  // So a moderator's action that Kick never answers fails, in time.
+  let http = ::reqwest::Client::builder()
+    .timeout(Duration::from_secs(30))
+    .build()
+    .map_err(|e| format!("kick: {e}"))?;
   let account = Account::new(
     http.clone(),
     config.app(),
