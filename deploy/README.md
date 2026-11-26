@@ -213,8 +213,10 @@ It finds the installed logger and shows:
   capture with its channel);
 - each capture, each dgg and Kick channel's: what it listens to (the dgg
   channel and its WebSocket URL, or the Kick channel), its health
-  (healthy, connecting, or STALE once its heartbeat stops), and the frames in its files not
-  yet compacted;
+  (healthy, connecting, or STALE once its heartbeat stops), and the
+  frames in its files not yet compacted. A capture killed or crashed
+  leaves its status behind, shown as STALE; the channel's healthy capture
+  removes it once it's 10 minutes stale, saying so in its log;
 - each dgg channel's journal (today's files and their last write, days
   waiting for compact, archives, backfill) and index, and each Kick
   channel's journal today and index;
