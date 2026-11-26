@@ -3,7 +3,7 @@
 What a new session needs to pick up the work: how to work with the user,
 the project's shape, where things stand, and what's open. Update it at
 each handoff: replace what changed, keep what still holds. Last updated
-2026-11-26, at `40784b7`.
+2026-11-26.
 
 Read with it: this directory's [README](README.md) (the rules for every
 tool), each tool's document here, and `deploy/README.md` (operating the
@@ -121,7 +121,8 @@ hold the same working rules as below; they load on their own.
 
 ## The project
 A Cargo workspace of tools around destiny.gg's chat, and Kick's. The
-logger is the current focus. Each crate is a child of the root:
+logger is built and running; kick-mod is next. Each crate is a child of
+the root:
 - `common`: small shared modules (`config` with JSONC and `Secret`,
   `fs`, `log`, `time`, `atomic_file`, `random`, `temp_dir`, …).
 - `dgg-api`, `kick-api`, `rustlesearch-api`, `linkers-api`: each outside
@@ -193,9 +194,8 @@ Not started; the user picks what's next.
   - The page's missing parts: the user history panel (only
     `/api/history` exists) and showing `filled` messages.
   - Later: automod rules; a login and per-moderator config.
-- **Kick on a host:** the logger's Kick steps 4 to 6 (compact and sync,
-  the index, the query and live endpoints) haven't been checked on a
-  real host.
+- **Kick on the hosts:** capture, compaction and the index run;
+  `serve`'s Kick endpoints wait on kick-mod's live test, and sync isn't on.
 - **Left as they are by the audit:** see its entry in
   [logger](logger.md#open).
 - **Roadmap** ([README](README.md#roadmap)): the read-only viewer, the
@@ -216,9 +216,9 @@ Not started; the user picks what's next.
   every "s" with "x" across `~/.claude`. The user restored `~/.claude`
   from a Windows previous version of 2026-11-24 6:24 PM, so about 7.5
   hours of that session's transcript are lost (the damaged copy was
-  read for what mattered, then deleted 2026-11-26). All its work is in git: the
-  status page's log levels and merged logs, the index's pace, Kick steps
-  4 to 6, dgg and Kick as services with API v0, `compact --early`,
+  read for what mattered, then deleted 2026-11-26). All its work is in
+  git: the status page's log levels and merged logs, the index's pace,
+  Kick steps 4 to 6, dgg and Kick as services with API v0, `compact --early`,
   config and secrets as JSON (`install.env.json`), the supervisor running
   `serve`, the community notes, kick-mod's config as JSONC. What it
   taught is in the rules above: no secrets read even filtered, no bulk

@@ -16,12 +16,12 @@ built on [kick-api](kick-api.md) and the [logger](logger.md). See the
 
 ## Decisions
 - **Kick, only officially:** kick-mod talks to Kick only through its
-  official API, signed in. Live chat, history and channels' ids come from
-  the logger, which reads Kick's undocumented endpoints anonymously, so
-  nothing tied to the account or the app touches an undocumented
-  endpoint. (Until 2026-11-25 kick-mod had its own Centrifugo connection,
-  journal and gap filling; its old journals stay in
-  `data/kick-mod/journal/`, in the logger's format.)
+  official API, signed in (`add` too, for a channel's broadcaster id).
+  Live chat and history come from the logger, which reads Kick's
+  undocumented endpoints anonymously, so nothing tied to the account or
+  the app touches an undocumented endpoint. (Until 2026-11-25 kick-mod
+  had its own Centrifugo connection, journal and gap filling; its old
+  journals stay in `data/kick-mod/journal/`, in the logger's format.)
 - **Interface:** a local web UI, axum serving plain-JS pages with no build
   step. Server-sent events push to the page; actions are plain POSTs.
 - **Users:** one for now (me), with one Kick OAuth token, on the local PC.

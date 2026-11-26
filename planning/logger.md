@@ -331,8 +331,9 @@ going.
   fills it in.
 
 ## Open
-- Kick's compact, sync, index and serve endpoints haven't been checked on
-  a real host.
+- Kick's capture, compaction and index run on both hosts; `serve`'s Kick
+  endpoints are only exercised by kick-mod's live test, still to do, and
+  sync isn't on between the hosts yet.
 - `kick-capture` has no `--peer`, so Kick's capture can't move between
   hosts by handoff.
 - The newest messages, not yet indexed, could be searched directly (a

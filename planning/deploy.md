@@ -4,9 +4,9 @@ The mesh of nodes running the logger. See the [overall rules](README.md) for
 the deployment principles, and `deploy/README.md` for operating it.
 
 ## Decisions
-- **Nodes:** a DigitalOcean droplet, an Oracle Always Free VM and a
-  Raspberry Pi at home, each capturing, plus any added later. Two Windows
-  hosts run it today.
+- **Nodes, planned:** a DigitalOcean droplet, an Oracle Always Free VM and
+  a Raspberry Pi at home, each capturing, plus any added later. Today two
+  Windows hosts run it, not yet syncing.
 - **Sync:** every node syncs from every reachable node, from a node list
   (`nodes`) kept in the repo and the same on every node. Nodes behind NAT
   push their own captures.
