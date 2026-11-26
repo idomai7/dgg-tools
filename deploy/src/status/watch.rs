@@ -818,7 +818,8 @@ fn shared(lines: [usize; 3], minimized: [bool; 4], room: u16) -> [u16; 4] {
 
 /// Draws a box above the page: `lines` under `title`, scrolled as `boxes`
 /// has it, saying how it's sorted, and where it's scrolled to when they
-/// don't all fit: `captures (by health, 1-5 of 9)`.
+/// don't all fit: `captures (by health, 1-5 of 9)`; minimized, only that:
+/// `captures (minimized)`.
 fn draw_box(
   frame: &mut Frame,
   area: ::ratatui::layout::Rect,
@@ -840,7 +841,7 @@ fn draw_box(
   };
   let sorted = boxes.order[at].describe(keys);
   let title = if boxes.minimized[at] {
-    format!("{title} ({sorted}, minimized, {} lines)", lines.len())
+    format!("{title} (minimized)")
   } else if most > 0 {
     format!(
       "{title} ({sorted}, {}-{} of {})",

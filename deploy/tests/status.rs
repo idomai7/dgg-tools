@@ -307,14 +307,11 @@ fn scrolls_and_minimizes_the_watch_boxes() {
   assert!(all.contains(" the page (minimized) "), "{all}");
   assert!(shown(&rows) > fit, "{all}");
 
-  // Minimized captures: just their title line.
+  // Minimized captures: just their title line, saying only so.
   boxes.minimized[1] = true;
   let (rows, _) = screen(&mut boxes);
   let all = rows.join("\n");
-  assert!(
-    all.contains(" captures (by health, minimized, 10 lines) "),
-    "{all}"
-  );
+  assert!(all.contains(" captures (minimized) "), "{all}");
   assert_eq!(shown(&rows), 0, "{all}");
 }
 
