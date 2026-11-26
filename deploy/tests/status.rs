@@ -1064,3 +1064,64 @@ fn merges_the_captures_logs() {
     assert!(every.iter().any(|log| log.name == name), "{name}");
   }
 }
+
+#[test]
+fn shows_a_scrollbar_on_over_tall_boxes() {
+  use {
+    ::deploy::status::watch::{Boxes, Pane, draw},
+    ::ratatui::{Terminal, backend::TestBackend},
+  };
+
+  let dir = TempDir::new("deploy-status-scrollbar");
+  let now = now_ms();
+  for n in 0..10 {
+    dir.write(
+      format!("data/journal/dgg/destiny.gg/control/c-{n}.status"),
+      status(&format!("c-{n}"), now - 10_000 + n, now, Some(now - 5000)),
+    );
+  }
+  let mut report = Watcher::new()
+    .unwrap()
+    .gather(&Paths::under(dir.to_path_buf()))
+    .unwrap();
+  report.programs.clear();
+  let pane = Pane {
+    title: "the page".into(),
+    header: None,
+    lines: vec!["one line".into()],
+    empty: "(empty)",
+  };
+  let mut terminal = Terminal::new(TestBackend::new(100, 24)).unwrap();
+  // The right border's column, from the captures box's title down.
+  let mut bar = |boxes: &mut Boxes| {
+    terminal
+      .draw(|frame| draw(frame, &report, &pane, boxes))
+      .unwrap();
+    let buffer = terminal.backend().buffer().clone();
+    let rows: Vec<String> = buffer
+      .content()
+      .chunks(100)
+      .map(|row| row.iter().map(|cell| cell.symbol()).collect())
+      .collect();
+    let first = rows.iter().position(|r| r.contains(" captures (")).unwrap();
+    let last = first
+      + rows[first + 1..]
+        .iter()
+        .position(|r| r.starts_with('└'))
+        .unwrap()
+      + 1;
+    let right = |row: &String| row.chars().last().unwrap();
+    rows[first + 1..last].iter().map(right).collect::<String>()
+  };
+
+  // At the top: nothing above (hollow), more below.
+  let mut boxes = Boxes::default();
+  let at_top = bar(&mut boxes);
+  assert!(at_top.starts_with("△█"), "{at_top:?}");
+  assert!(at_top.ends_with('▼'), "{at_top:?}");
+  // Scrolled to the end: more above, nothing below.
+  boxes.scroll[1] = 100;
+  let at_end = bar(&mut boxes);
+  assert!(at_end.starts_with('▲'), "{at_end:?}");
+  assert!(at_end.ends_with("█▽"), "{at_end:?}");
+}

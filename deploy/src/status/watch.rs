@@ -40,7 +40,9 @@ use {
     layout::{Constraint, Layout},
     style::{Color, Modifier, Style, Stylize},
     text::{Line, Span},
-    widgets::{Block, Paragraph},
+    widgets::{
+      Block, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
+    },
   },
   ::std::{
     io,
@@ -669,6 +671,40 @@ fn log_line(line: &str) -> Line<'_> {
 }
 
 /// A box's border and title, highlighted if it has the focus.
+/// Draws a scrollbar on the right border of the box in `area`, if it has
+/// more lines than its `rows` show: `top` the first shown, of `most + 1`
+/// it could start at. Its ends say which way there's more (`▲`, `▼`).
+fn scrollbar(
+  frame: &mut Frame,
+  area: ::ratatui::layout::Rect,
+  top: usize,
+  most: usize,
+  rows: usize,
+  focused: bool,
+) {
+  if most == 0 || area.height < 4 {
+    return;
+  }
+  let style = match focused {
+    true => Style::new().fg(Color::Cyan),
+    false => Style::new(),
+  };
+  let bar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+    .begin_symbol(Some(if top > 0 { "▲" } else { "△" }))
+    .end_symbol(Some(if top < most { "▼" } else { "▽" }))
+    .track_symbol(Some("│"))
+    .thumb_symbol("█")
+    .style(style);
+  let mut state = ScrollbarState::new(most + 1)
+    .position(top)
+    .viewport_content_length(rows);
+  let inside = area.inner(::ratatui::layout::Margin {
+    vertical: 1,
+    horizontal: 0,
+  });
+  frame.render_stateful_widget(bar, inside, &mut state);
+}
+
 fn heading(title: &str, focused: bool) -> Block<'_> {
   let border = match focused {
     true => Style::new().fg(Color::Cyan),
@@ -800,6 +836,7 @@ fn draw_box(
     format!("{title} ({sorted})")
   };
   let focused = boxes.focus == at;
+  let top = scroll;
   let scroll = u16::try_from(scroll).unwrap_or(u16::MAX);
   frame.render_widget(
     Paragraph::new(lines)
@@ -807,6 +844,9 @@ fn draw_box(
       .block(heading(&title, focused)),
     area,
   );
+  if !boxes.minimized[at] {
+    scrollbar(frame, area, top, most, rows, focused);
+  }
 }
 
 /// Draws `report`, with `pane` below, the boxes as `boxes` has them.
@@ -977,4 +1017,7 @@ fn draw_page(
   let focused = boxes.focus == PAGE;
   frame
     .render_widget(Paragraph::new(body).block(heading(&title, focused)), area);
+  if !boxes.minimized[PAGE] {
+    scrollbar(frame, area, most - back, most, rows, focused);
+  }
 }
