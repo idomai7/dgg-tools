@@ -585,8 +585,9 @@ Planned 2026-11-25. Each step a pause for review.
    Built 2026-11-26: no service key for programs (their names sort them
    by it already) nor the journal (the list's order puts dgg's first).
    Each key sorts the most useful first (the biggest, the busiest, the
-   newest, a name's A to Z), ties keeping the order before; the title says
-   the key once it isn't the first. The list problems now follow every
+   newest, a name's A to Z), ties keeping the order before; the title
+   always says it, in parentheses with the rest (`captures (by health,
+   1-5 of 9)`). The list problems now follow every
    channel, not each its service's.
 
 ## dgg channels
