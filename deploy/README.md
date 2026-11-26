@@ -228,7 +228,8 @@ grouped:
 
 - `l` every log at once, in time order, each line naming its log (the page
   it starts on); `r` the latest records of the capture at the top of the
-  captures box (`r` again for the next capture, round every channel's),
+  captures box (`r` again for the next capture, round every channel's,
+  `R` the other way),
   titled with what it listens to; `f` one channel's capture's log, dgg's
   or Kick's (`f` again for the next, and after the last, every capture's;
   `F` goes round the other way);
@@ -238,7 +239,8 @@ grouped:
   capture's, dgg's and Kick's, in time order, `4` compact's, `5` index's,
   `6` the gaps in the first dgg channel's capture as `dgg-gaps` reports
   them (looked at again every 30 seconds; it reads the index as `index`
-  has brought it, without updating it; `6` again for the next channel's),
+  has brought it, without updating it; `6` again for the next channel's,
+  `^` (Shift-6) the one before, left off the keys shown for room),
   `7` sync's, `8` serve's;
 - the boxes: Tab and Shift-Tab move the focus between them, the page at
   the bottom too (its border turns cyan); Up, Down, Page Up and Page Down
