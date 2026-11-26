@@ -15,7 +15,7 @@
 //!   archive of the channel's, and its size ([`manifest`]).
 //! - `GET /<service>/<api>/channels/<name>/files/<path>`: a file's bytes,
 //!   `<path>` as the manifest gives it (see [`valid_path`]); with `Range:
-//!   bytes=<from>-`, from that offset on (`206`).
+//!   bytes=<from>-`, from that offset on (`206`, with a `Content-Range`).
 //!
 //! And dgg's capture handoff between hosts, a channel's at a time:
 //!
@@ -76,8 +76,8 @@ use {
     body::Body,
     extract::{Path, State},
     http::{
-      HeaderMap, HeaderName, StatusCode,
-      header::{AUTHORIZATION, CONTENT_LENGTH, RANGE},
+      HeaderMap, HeaderValue, StatusCode,
+      header::{AUTHORIZATION, CONTENT_LENGTH, CONTENT_RANGE, RANGE},
     },
     response::sse::{self, KeepAlive, Sse},
     routing::{get, put},
@@ -423,7 +423,7 @@ async fn file<S: Service>(
   State(shared): State<Arc<Shared>>,
   Path((name, path)): Path<(String, String)>,
   headers: HeaderMap,
-) -> Result<(StatusCode, [(HeaderName, u64); 1], Body), StatusCode> {
+) -> Result<(StatusCode, HeaderMap, Body), StatusCode> {
   let permit = admit(&shared, &headers, Access::Read)?;
   if !valid_path::<S>(&path) {
     return Err(StatusCode::BAD_REQUEST);
@@ -458,8 +458,19 @@ async fn file<S: Service>(
     .seek(SeekFrom::Start(from))
     .await
     .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+  let mut sent = HeaderMap::new();
+  sent.insert(CONTENT_LENGTH, HeaderValue::from(size - from));
   let status = match headers.contains_key(RANGE) {
-    true => StatusCode::PARTIAL_CONTENT,
+    true => {
+      // What's sent, so a client can check it's what it asked for. An
+      // empty range, from the end, has no first and last byte to give.
+      let range = match from < size {
+        true => format!("bytes {from}-{}/{size}", size - 1),
+        false => format!("bytes */{size}"),
+      };
+      sent.insert(CONTENT_RANGE, HeaderValue::try_from(range).unwrap());
+      StatusCode::PARTIAL_CONTENT
+    }
     false => StatusCode::OK,
   };
   // The permit goes with the body, held until it's all sent.
@@ -477,11 +488,7 @@ async fn file<S: Service>(
       }
     },
   );
-  Ok((
-    status,
-    [(CONTENT_LENGTH, size - from)],
-    Body::from_stream(chunks),
-  ))
+  Ok((status, sent, Body::from_stream(chunks)))
 }
 
 /// A user's history in a Kick channel.

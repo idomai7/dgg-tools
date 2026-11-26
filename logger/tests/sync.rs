@@ -517,12 +517,29 @@ async fn takes_no_more_than_the_manifest_says() {
   // A file sent longer than listed: only what was listed is taken.
   let routes = manifest("live/2026-11-08/a.journal 5\n".into()).route(
     &format!("{at}/files/{{*path}}"),
-    get(|| async { (StatusCode::PARTIAL_CONTENT, "x".repeat(100_000)) }),
+    get(|| async {
+      let range = [("content-range", "bytes 0-99999/100000")];
+      (StatusCode::PARTIAL_CONTENT, range, "x".repeat(100_000))
+    }),
   );
   let stats = sync_from(routes).await.unwrap();
   assert_eq!((stats.updated, stats.bytes), (1, 5));
   let path = dgg(&local).join("live/2026-11-08/a.journal");
-  assert_eq!(fs::read(path).unwrap(), b"xxxxx");
+  assert_eq!(fs::read(&path).unwrap(), b"xxxxx");
+
+  // A file sent from anywhere but where it was asked for: nothing's taken.
+  let routes = manifest(
+    "live/2026-11-08/a.journal 10
+"
+    .into(),
+  )
+  .route(
+    &format!("{at}/files/{{*path}}"),
+    get(|| async { (StatusCode::PARTIAL_CONTENT, "yyyyyyyyyy") }),
+  );
+  let error = sync_from(routes).await.unwrap_err();
+  assert!(error.contains("not sent from byte 5"), "{error}");
+  assert_eq!(fs::read(&path).unwrap(), b"xxxxx");
 
   // A file listed as too big to take.
   let huge = MAX_FILE + 1;

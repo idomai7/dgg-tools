@@ -12,8 +12,9 @@
 //! Journal files are only ever appended to, so a local copy is always a
 //! prefix of the remote file. Each round fetches the manifest and, for
 //! every remote file longer than its local copy, just the missing bytes,
-//! appended and fsynced. An interrupted round leaves a
-//! shorter prefix, which the next round extends. A record still being
+//! appended and fsynced, once the peer's `Content-Range` says they start
+//! where the local copy ends. An interrupted round leaves a shorter
+//! prefix, which the next round extends. A record still being
 //! written remotely is copied as far as it goes; readers wait for its end. A
 //! remote file shorter than its local copy has been rewritten, so it's
 //! reported and left alone.
@@ -290,6 +291,12 @@ async fn pull_channel<S: Service>(
     if response.status() != ::reqwest::StatusCode::PARTIAL_CONTENT {
       return Err(format!("{}: HTTP {}", file.path, response.status()));
     }
+    // Appended anywhere but at its end, what's here would stop being a
+    // prefix of the peer's file.
+    if !from_offset(&response, have) {
+      let why = format!("not sent from byte {have}");
+      return Err(format!("{}: {why}", file.path));
+    }
     let appended = append(&local, response, file.size - have)
       .await
       .map_err(|e| format!("{}: {e}", file.path))?;
@@ -297,6 +304,16 @@ async fn pull_channel<S: Service>(
     stats.bytes += appended;
   }
   Ok(())
+}
+
+/// Whether `response`, a `206`, says it starts at byte `from`, as asked.
+fn from_offset(response: &::reqwest::Response, from: u64) -> bool {
+  let range = response.headers().get(::reqwest::header::CONTENT_RANGE);
+  range
+    .and_then(|range| range.to_str().ok())
+    .and_then(|range| range.strip_prefix("bytes "))
+    .and_then(|range| range.split_once('-'))
+    .is_some_and(|(first, _)| first.parse() == Ok(from))
 }
 
 /// Appends up to `limit` bytes of `response` to `path`, as they arrive,

@@ -258,6 +258,50 @@ async fn serves_a_few_requests_at_once() {
   assert_eq!(get().await.unwrap().status().as_u16(), 200);
 }
 
+#[::tokio::test]
+async fn serves_a_file_from_an_offset() {
+  let root = TempDir::new("logger-serve");
+  let mut writer = Writer::new(destiny(root.path()), "a");
+  writer.write(0, 1, Body::Frame("x".into())).unwrap();
+  drop(writer);
+  let path = destiny(root.path()).join("live/1970-01-01/a.journal");
+  let whole = ::std::fs::read(path).unwrap();
+  let size = whole.len();
+  let tokens = Tokens {
+    read: "reader".into(),
+    control: None,
+    query: None,
+  };
+  let base = serve(&root, tokens).await;
+  let client = ::reqwest::Client::new();
+  let from = |range: String| {
+    client
+      .get(format!(
+        "{base}/dgg/v0/channels/destiny.gg/files/live/1970-01-01/a.journal"
+      ))
+      .bearer_auth("reader")
+      .header("Range", range)
+      .send()
+  };
+  let range = |response: &::reqwest::Response| {
+    let range = response.headers().get("content-range").unwrap();
+    range.to_str().unwrap().to_owned()
+  };
+  let response = from("bytes=2-".into()).await.unwrap();
+  assert_eq!(response.status().as_u16(), 206);
+  assert_eq!(range(&response), format!("bytes 2-{}/{size}", size - 1));
+  assert_eq!(response.bytes().await.unwrap(), whole[2..]);
+  // From its end: nothing, and no bytes to name.
+  let response = from(format!("bytes={size}-")).await.unwrap();
+  assert_eq!(response.status().as_u16(), 206);
+  assert_eq!(range(&response), format!("bytes */{size}"));
+  assert!(response.bytes().await.unwrap().is_empty());
+  let past = from(format!("bytes={}-", size + 1)).await.unwrap();
+  assert_eq!(past.status().as_u16(), 416);
+  let bad = from("bytes=0-1".into()).await.unwrap();
+  assert_eq!(bad.status().as_u16(), 416);
+}
+
 /// Serves `root` over TLS on a free port, with a certificate for `host`
 /// from a new CA; returns its URL and the CA's certificate.
 async fn serve_tls(root: &TempDir, host: &str) -> (String, String) {
