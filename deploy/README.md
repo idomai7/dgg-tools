@@ -246,7 +246,8 @@ grouped:
   the bottom too (its border turns cyan); Up, Down, Page Up and Page Down
   scroll the focused one when it's over-tall (its title says which lines
   it shows); `m` minimizes it to its title line, or restores it, the
-  others taking the room; `s` sorts it by its next key, round to the
+  others sharing the room evenly (one that needs less than its share
+  taking only that); `s` sorts it by its next key, round to the
   first, and `S` reverses it (its title says how it's sorted, as
   `captures (by load, reversed)`).
 
