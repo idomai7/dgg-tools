@@ -5,9 +5,9 @@ the project's shape, where things stand, and what's open. Update it at
 each handoff: replace what changed, keep what still holds. Last updated
 2026-11-26.
 
-**Started from:** (a new session writes here the commit it started at,
-`git log -1 --format=%h`, and commits it, so the next handoff can see
-what changed since: `git log <that>..`.)
+**Started from:** 597a947 (a new session writes here the commit it
+started at, `git log -1 --format=%h`, and commits it, so the next handoff
+can see what changed since: `git log <that>..`.)
 
 Read with it: this directory's [README](README.md) (the rules for every
 tool), each tool's document here, and `deploy/README.md` (operating the
