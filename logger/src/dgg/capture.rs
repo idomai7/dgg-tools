@@ -10,7 +10,7 @@
 
 use {
   crate::{
-    capture::{Exit, HANDOFF, Handoff, Peer, SHUTDOWN, Say},
+    capture::{Exit, HANDOFF, Handoff, Peer, SHUTDOWN, Say, check_handoff},
     control::{self, Status},
     dgg::{
       Dgg,
@@ -18,9 +18,11 @@ use {
     },
     service::routes,
   },
-  ::common::{log::Level, time::now_ms},
+  ::common::time::now_ms,
   ::dgg_api::chat::{Client, Item, Options},
-  ::logger_journal::{Writer, record::v0::Body, writer::SYNC_INTERVAL},
+  ::logger_journal::{
+    Variant, Writer, record::v0::Body, writer::SYNC_INTERVAL,
+  },
   ::std::{
     io,
     path::{Path, PathBuf},
@@ -202,7 +204,8 @@ pub async fn run(
         // Control files are advisory: a failed round (e.g. Windows refusing
         // a rename while another instance reads the file) is retried next
         // tick rather than stopping capture.
-        match check_handoff(&control, &me, &handoff, &mut older) {
+        match check_handoff(&control, &me, &handoff, &mut older, Variant::Dgg)
+        {
           Ok((successor, said)) => {
             for (level, line) in said {
               say.at(level, line);
@@ -338,49 +341,4 @@ async fn withdraw_status(peer: &Peer, channel: &str, say: &Say) {
   if let Err(e) = sent {
     say.warn(format_args!("peer {}: {e}", peer.url));
   }
-}
-
-/// Writes this instance's status, then returns the successor to hand off
-/// to, if there is one and handing off is allowed.
-fn check_handoff(
-  control: &Path,
-  me: &Status,
-  handoff: &Handoff,
-  older: &mut control::Older,
-) -> io::Result<(Option<String>, control::Said)> {
-  control::write(control, me)?;
-  let others = control::read_all(control)?;
-  let mut said: control::Said = older
-    .gone(me, &others)
-    .into_iter()
-    .map(|line| (Level::Info, line))
-    .collect();
-  let swept = control::sweepable(
-    me,
-    &others,
-    me.heartbeat,
-    handoff.stale_after,
-    control::SWEEP_AFTER,
-  );
-  for status in swept {
-    said.push((
-      Level::Warn,
-      match control::remove(control, &status.instance) {
-        Ok(()) => control::swept_line(status, me.heartbeat),
-        Err(e) => format!("can't remove {}'s status: {e}", status.instance),
-      },
-    ));
-    older.forget(&status.instance);
-  }
-  if handoff.keep_running {
-    return Ok((None, said));
-  }
-  let successor = control::successor(
-    me,
-    &others,
-    me.heartbeat,
-    handoff.grace,
-    handoff.stale_after,
-  );
-  Ok((successor.map(|status| status.instance.clone()), said))
 }

@@ -28,11 +28,10 @@
 use {
   super::channels::{self, Channel},
   crate::{
-    capture::{HANDOFF, Handoff, SHUTDOWN, Say},
+    capture::{HANDOFF, Handoff, SHUTDOWN, Say, check_handoff},
     control::{self, Status},
   },
-  ::common::log::Level,
-  ::common::time::now_ms,
+  ::common::{log::Level, time::now_ms},
   ::kick_api::{
     realtime::{Client, Item, Options},
     web::{Back, Web},
@@ -63,23 +62,14 @@ pub const MAX_PAGES: usize = 10;
 /// times are whole seconds, and its clock isn't ours.
 const MARGIN: i64 = 5_000;
 
+pub use crate::capture::Exit;
+
 /// Why a channel removed from the list stopped, in its journal.
 pub const REMOVED: &str = "removed from the channel list";
 
 /// Why a channel whose ids changed stopped, in its journal, before it
 /// connects again with them.
 pub const CHANGED: &str = "its ids changed in the channel list";
-
-/// Why a capture returned.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Exit {
-  /// `shutdown` completed.
-  Shutdown,
-  /// Retired in favour of this instance.
-  HandedOff(String),
-  /// Its channel was removed from the list.
-  Removed,
-}
 
 pub struct Config {
   /// The channel captured.
@@ -207,7 +197,7 @@ pub async fn run(
     bridge,
   };
   let slug = channel.slug.clone();
-  let controls = [control::dir(&channel_root(&kick_root, &slug))];
+  let control = control_dir(&kick_root, &slug);
   let starter = Starter {
     realtime,
     web,
@@ -235,7 +225,8 @@ pub async fn run(
           listening: Some(slug.clone()),
         };
         // Advisory, as dgg's: a failed round is retried next tick.
-        match check_handoff(&controls, &me, &handoff, &mut older) {
+        let kick = Variant::Kick;
+        match check_handoff(&control, &me, &handoff, &mut older, kick) {
           Ok((successor, said)) => {
             for (level, line) in said {
               say.at(level, line);
@@ -297,69 +288,10 @@ pub async fn run(
       result = Err(e);
     }
   }
-  for dir in &controls {
-    if let Err(e) = control::remove(dir, &instance) {
-      say.warn(format_args!("control: {e}"));
-    }
+  if let Err(e) = control::remove(&control, &instance) {
+    say.warn(format_args!("control: {e}"));
   }
   result
-}
-
-/// Writes this instance's status in each channel's control directory,
-/// then returns the successor to hand off to, if there's one in any and
-/// handing off is allowed.
-fn check_handoff(
-  controls: &[PathBuf],
-  me: &Status,
-  handoff: &Handoff,
-  older: &mut control::Older,
-) -> io::Result<(Option<String>, control::Said)> {
-  for dir in controls {
-    control::write_as(dir, me, Variant::Kick)?;
-  }
-  let mut others = Vec::new();
-  for dir in controls {
-    others.extend(control::read_all_as(dir, Variant::Kick)?);
-  }
-  let mut said: control::Said = older
-    .gone(me, &others)
-    .into_iter()
-    .map(|line| (Level::Info, line))
-    .collect();
-  let mut swept = control::sweepable(
-    me,
-    &others,
-    me.heartbeat,
-    handoff.stale_after,
-    control::SWEEP_AFTER,
-  );
-  // Each control directory has its own copy: one line each.
-  swept.sort_by(|a, b| a.instance.cmp(&b.instance));
-  swept.dedup_by(|a, b| a.instance == b.instance);
-  for status in swept {
-    let removed: io::Result<()> = controls
-      .iter()
-      .try_for_each(|dir| control::remove(dir, &status.instance));
-    said.push((
-      Level::Warn,
-      match removed {
-        Ok(()) => control::swept_line(status, me.heartbeat),
-        Err(e) => format!("can't remove {}'s status: {e}", status.instance),
-      },
-    ));
-    older.forget(&status.instance);
-  }
-  if handoff.keep_running {
-    return Ok((None, said));
-  }
-  let successor = control::successor(
-    me,
-    &others,
-    me.heartbeat,
-    handoff.grace,
-    handoff.stale_after,
-  );
-  Ok((successor.map(|status| status.instance.clone()), said))
 }
 
 /// One channel's capture.

@@ -9,11 +9,13 @@
 //! to that host's `serve` ([`Peer`]).
 
 use {
+  crate::control::{self, Status},
   ::common::{
     log::Level,
     time::{now_ms, utc_timestamp},
   },
-  ::std::{fmt::Display, time::Duration},
+  ::logger_journal::Variant,
+  ::std::{fmt::Display, io, path::Path, time::Duration},
 };
 
 /// The `close` reason written when capture is told to stop.
@@ -141,3 +143,52 @@ pub enum Exit {
 /// not 0, which tells the supervisor it handed off (an upgrade's under
 /// way), nor 1 (failed) or 2 (clap's, for bad arguments).
 pub const REMOVED_EXIT: u8 = 3;
+
+/// Writes `me`, an instance of `variant`'s capture, into the control
+/// directory `control`, sweeps away the statuses there left by instances
+/// that stopped without removing their own, then returns the successor to
+/// hand off to, if there is one and handing off is allowed, and what it
+/// has to say.
+pub(crate) fn check_handoff(
+  control: &Path,
+  me: &Status,
+  handoff: &Handoff,
+  older: &mut control::Older,
+  variant: Variant,
+) -> io::Result<(Option<String>, control::Said)> {
+  control::write_as(control, me, variant)?;
+  let others = control::read_all_as(control, variant)?;
+  let mut said: control::Said = older
+    .gone(me, &others)
+    .into_iter()
+    .map(|line| (Level::Info, line))
+    .collect();
+  let swept = control::sweepable(
+    me,
+    &others,
+    me.heartbeat,
+    handoff.stale_after,
+    control::SWEEP_AFTER,
+  );
+  for status in swept {
+    said.push((
+      Level::Warn,
+      match control::remove(control, &status.instance) {
+        Ok(()) => control::swept_line(status, me.heartbeat),
+        Err(e) => format!("can't remove {}'s status: {e}", status.instance),
+      },
+    ));
+    older.forget(&status.instance);
+  }
+  if handoff.keep_running {
+    return Ok((None, said));
+  }
+  let successor = control::successor(
+    me,
+    &others,
+    me.heartbeat,
+    handoff.grace,
+    handoff.stale_after,
+  );
+  Ok((successor.map(|status| status.instance.clone()), said))
+}
