@@ -142,6 +142,12 @@ The logger, codenamed ledgerline: `logger-journal` and `logger`, run as
       (`--handoff-grace`, default 30 s). Its journal ends with
       `close handoff to <instance>`.
     - `--keep-running` opts out, for deliberate redundancy.
+    - A status left by an instance killed or crashed (an install's or the
+      supervisor's handoff wait running out, say) is swept away by the
+      newest healthy instance once its heartbeat has stopped for 10
+      minutes, older or newer than it, and logged (2026-11-26). Nothing
+      reads a stale status: handoff ignores it, and compact takes it as
+      not writing.
     - Tested live: 34 s of overlap, with 13 MSGs in both journals and none
       missing from their union.
   - **Across hosts:** the old host's `serve` has a control token
