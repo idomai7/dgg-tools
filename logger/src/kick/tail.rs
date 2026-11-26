@@ -12,6 +12,7 @@
 //! the first time it's seen.
 
 use {
+  ::common::fs::MissingOk,
   ::kick_api::realtime::{
     Event, Frame,
     centrifugo::{push, reply},
@@ -73,7 +74,10 @@ impl Tail {
     let root = root.into();
     let mut offsets = HashMap::new();
     for file in live_files(&root)? {
-      offsets.insert(file.clone(), last_end(&file)?);
+      // Compacted away since it was listed: nothing of it to follow.
+      if let Some(end) = last_end(&file).missing_ok()? {
+        offsets.insert(file, end);
+      }
     }
     Ok(Self {
       root,
@@ -99,8 +103,9 @@ impl Tail {
         Err(ReadError::Io(e)) => return Err(e),
         // Not a file this build reads: nothing of it is passed on.
         Err(_) => {
-          let size = file.metadata()?.len();
-          self.offsets.insert(file, size);
+          if let Some(metadata) = file.metadata().missing_ok()? {
+            self.offsets.insert(file, metadata.len());
+          }
           continue;
         }
       };
