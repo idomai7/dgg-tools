@@ -160,6 +160,16 @@ pub async fn run(
           break 'ranges;
         }
       };
+      if page.messages.is_empty() && !page.exhausted {
+        // Nothing to move the cursor back by, and nothing says the source
+        // has no more: asking again would get the same page.
+        stats.stopped = Some(format!(
+          "{}: an empty page before {}, but not the end",
+          source.name(),
+          utc_timestamp(cursor)
+        ));
+        break 'ranges;
+      }
       let now = now_ms();
       for message in &page.messages {
         if message.timestamp < from || message.timestamp >= to {

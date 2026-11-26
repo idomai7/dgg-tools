@@ -248,6 +248,37 @@ async fn an_exhausted_source_covers_back_to_the_start() {
   assert_eq!((stats.requests, stats.filled, stats.messages), (1, 1, 0));
 }
 
+/// A source that answers with nothing, yet doesn't say it's done.
+struct Stuck;
+
+impl Source for Stuck {
+  fn name(&self) -> &str {
+    "stuck"
+  }
+
+  async fn page(&self, _before: i64) -> Result<Page, String> {
+    Ok(Page::default())
+  }
+}
+
+#[::tokio::test]
+async fn an_empty_page_that_isnt_the_end_stops_the_run() {
+  let root = TempDir::new("logger-backfill");
+  let stats = run(&Stuck, &[gap(3000, 5000)], &options(&root, 50))
+    .await
+    .unwrap();
+  assert_eq!((stats.requests, stats.filled), (1, 0));
+  assert!(stats.stopped.unwrap().contains("not the end"));
+  // Nothing is claimed as fetched.
+  let journal = root.path().join("journal");
+  let ranges = backfill_files(&journal)
+    .unwrap()
+    .iter()
+    .flat_map(|file| Reader::open(file, 0).unwrap())
+    .count();
+  assert_eq!(ranges, 0);
+}
+
 #[test]
 fn pages_rustlesearch_searches() {
   let body = r#"{"data":{"messages":[
