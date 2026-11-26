@@ -203,11 +203,11 @@ fn draws_the_watch_screen() {
     .map(|row| row.iter().map(|cell| cell.symbol()).collect::<String>() + "\n")
     .collect();
   for expected in [
-    " programs ",
-    " captures ",
+    " programs (by name) ",
+    " captures (by health) ",
     "healthy for 50.0s",
     "a-1                            destiny.gg  up 1m00s",
-    " journal ",
+    " journal (by list) ",
     " dgg-capture.log ",
     "capturing as a-1",
     " l logs  r records  f channel  space redraw  e open data  q quit ",
@@ -272,7 +272,7 @@ fn scrolls_and_minimizes_the_watch_boxes() {
   // Too many captures for the room: the box says which it shows.
   let (rows, _) = screen(&mut boxes);
   let all = rows.join("\n");
-  assert!(all.contains(" captures (1-"), "{all}");
+  assert!(all.contains(" captures (by health, 1-"), "{all}");
   assert!(all.contains(" of 10) "), "{all}");
   let fit = shown(&rows);
   assert!(fit < 10, "{all}");
@@ -284,7 +284,7 @@ fn scrolls_and_minimizes_the_watch_boxes() {
   boxes.scroll[1] = 2;
   let (rows, buffer) = screen(&mut boxes);
   let all = rows.join("\n");
-  assert!(all.contains(" captures (3-"), "{all}");
+  assert!(all.contains(" captures (by health, 3-"), "{all}");
   assert!(
     !all.contains("dgg  c-0 ") && all.contains("dgg  c-2 "),
     "{all}"
@@ -311,7 +311,10 @@ fn scrolls_and_minimizes_the_watch_boxes() {
   boxes.minimized[1] = true;
   let (rows, _) = screen(&mut boxes);
   let all = rows.join("\n");
-  assert!(all.contains(" captures (minimized, 10 lines) "), "{all}");
+  assert!(
+    all.contains(" captures (by health, minimized, 10 lines) "),
+    "{all}"
+  );
   assert_eq!(shown(&rows), 0, "{all}");
 }
 
@@ -406,11 +409,8 @@ fn sorts_the_programs_and_captures() {
   let mut order = by(4, true);
   order.next(sort::CAPTURES.len());
   assert_eq!(order, Order::default());
-  assert_eq!(order.title("captures", &sort::CAPTURES), "captures");
-  assert_eq!(
-    by(1, true).title("captures", &sort::CAPTURES),
-    "captures by load, reversed"
-  );
+  assert_eq!(order.describe(&sort::CAPTURES), "by health");
+  assert_eq!(by(1, true).describe(&sort::CAPTURES), "by load, reversed");
 }
 
 #[test]

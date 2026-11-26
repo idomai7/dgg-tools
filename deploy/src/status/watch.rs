@@ -652,7 +652,8 @@ fn heights(lines: [usize; 3], minimized: [bool; 4], room: u16) -> [u16; 4] {
 }
 
 /// Draws a box above the page: `lines` under `title`, scrolled as `boxes`
-/// has it, saying where it's scrolled to when they don't all fit.
+/// has it, saying how it's sorted, and where it's scrolled to when they
+/// don't all fit: `captures (by health, 1-5 of 9)`.
 fn draw_box(
   frame: &mut Frame,
   area: ::ratatui::layout::Rect,
@@ -667,17 +668,23 @@ fn draw_box(
   boxes.rows[at] = rows;
   let scroll = boxes.scroll[at].min(most);
   boxes.scroll[at] = scroll;
+  let keys: &[&str] = match at {
+    PROGRAMS => &sort::PROGRAMS,
+    CAPTURES => &sort::CAPTURES,
+    _ => &sort::JOURNAL,
+  };
+  let sorted = boxes.order[at].describe(keys);
   let title = if boxes.minimized[at] {
-    format!("{title} (minimized, {} lines)", lines.len())
+    format!("{title} ({sorted}, minimized, {} lines)", lines.len())
   } else if most > 0 {
     format!(
-      "{title} ({}-{} of {})",
+      "{title} ({sorted}, {}-{} of {})",
       scroll + 1,
       scroll + rows.min(lines.len()),
       lines.len()
     )
   } else {
-    title.to_owned()
+    format!("{title} ({sorted})")
   };
   let focused = boxes.focus == at;
   let scroll = u16::try_from(scroll).unwrap_or(u16::MAX);
@@ -814,28 +821,9 @@ pub fn draw(
   ])
   .areas(frame.area());
   frame.render_widget(header, top);
-  let [programs_title, captures_title, journal_title] = [
-    boxes.order[PROGRAMS].title("programs", &sort::PROGRAMS),
-    boxes.order[CAPTURES].title("captures", &sort::CAPTURES),
-    boxes.order[JOURNAL].title("journal", &sort::JOURNAL),
-  ];
-  draw_box(
-    frame,
-    programs_area,
-    PROGRAMS,
-    &programs_title,
-    programs,
-    boxes,
-  );
-  draw_box(
-    frame,
-    captures_area,
-    CAPTURES,
-    &captures_title,
-    captures,
-    boxes,
-  );
-  draw_box(frame, journal_area, JOURNAL, &journal_title, journal, boxes);
+  draw_box(frame, programs_area, PROGRAMS, "programs", programs, boxes);
+  draw_box(frame, captures_area, CAPTURES, "captures", captures, boxes);
+  draw_box(frame, journal_area, JOURNAL, "journal", journal, boxes);
   draw_page(frame, page_area, pane, boxes);
   frame.render_widget(Paragraph::new(keys), keys_area);
 }

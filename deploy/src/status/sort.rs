@@ -32,13 +32,11 @@ impl Order {
     self.reversed = false;
   }
 
-  /// How a box titled `title` with `keys` says it: as it is, in its
-  /// default order.
-  pub fn title(&self, title: &str, keys: &[&str]) -> String {
-    match (self.key, self.reversed) {
-      (0, false) => title.to_owned(),
-      (key, false) => format!("{title} by {}", keys[key]),
-      (key, true) => format!("{title} by {}, reversed", keys[key]),
+  /// How a box with `keys` says it: `by health`, or `by load, reversed`.
+  pub fn describe(&self, keys: &[&str]) -> String {
+    match self.reversed {
+      false => format!("by {}", keys[self.key]),
+      true => format!("by {}, reversed", keys[self.key]),
     }
   }
 
