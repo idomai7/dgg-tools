@@ -75,17 +75,23 @@ today's files still match it).
   (rule by rule, not bytewise) and returns the emotes' styles and the flairs'
   preamble. The live files matched on 2026-11-09 (`examples/fetch_assets.rs`).
 
-## Status
-- The chat client (reconnect with backoff, PING/PONG, idle timeout, sending raw
-  frames), behind feature `client`; decoding events and encoding commands,
-  behind `protocol`; emotes and flairs decoded behind `assets`, their
-  stylesheets split into generated and hand-written, and all four fetched from
-  the CDN behind `http` (fresh copies on `REFRESHCHATASSETS`'s cache key).
-  - Events seen in a capture (2026-11-09) are typed from it; the rest from
-    chat-gui's handlers (github.com/destinygg/chat-gui), as are the commands.
-  - Frames carry no arrival time; the logger stamps them as it receives them.
-    Stamping them in the client, as each is read, would be more accurate.
-    Perhaps later, in `kick-api` too.
-  - Logging in: a destiny.gg login key (Profile > Developer > Connections), sent
-    as the cookie `authtoken=<key>`. Tried 2026-11-09 with `examples/send.rs`:
-    `ME` named the user, and a public `MSG` echoed back. Whispers are untried.
+## Built
+- **Features:** `client` (the chat client: reconnect with backoff,
+  PING/PONG, an idle timeout, sending raw frames), `protocol` (decoding
+  events, encoding commands), `assets` (emotes and flairs, their
+  stylesheets split into generated and hand-written) and `http` (fetching
+  all four from the CDN, fresh on `REFRESHCHATASSETS`'s cache key).
+- Events seen in a capture (2026-11-09) are typed from it; the rest, and
+  the commands, from chat-gui's handlers.
+- **Logging in:** a destiny.gg login key (Profile > Developer >
+  Connections), sent as the cookie `authtoken=<key>`. Tried 2026-11-09
+  with `examples/send.rs`: `ME` named the user, and a public `MSG` echoed
+  back.
+
+## Open
+- Whispers are untried.
+- Frames carry no arrival time; the logger stamps them as received.
+  Stamping them in the client, as each is read, would be more accurate,
+  in `kick-api` too.
+- Typed events drop the fields they don't name, unlike `kick-api`'s,
+  whose `rest` keeps them.
