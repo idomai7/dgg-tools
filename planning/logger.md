@@ -571,6 +571,17 @@ Planned 2026-11-25. Each step a pause for review.
    index per channel (`index-dgg-<name>.sqlite`). Today's journal and
    index move into the first channel's, as the move by service did.
    Planned in detail in [dgg channels](#dgg-channels).
+6. **Sorting:** noted 2026-11-26, to be planned in detail. `s` cycles the
+   focused box's order through the keys it has, and `S` reverses it, the
+   box's title saying which (`by load`, say). Each box starts in today's
+   order, kept as its default, and remembers its own while `--watch`
+   runs. The keys, by box:
+   - programs: name, service, memory, CPU, build, started;
+   - captures: health (today's: stale, then connecting, then healthy),
+     load (frames a minute), service, channel, started;
+   - journal: the list's order (today's), name, service, size, last
+     write.
+   The log pages stay in time order; `s` on one does nothing.
 
 ## dgg channels
 Planned 2026-11-25, to be reviewed before any of it is built. dgg captured
