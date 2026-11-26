@@ -582,6 +582,12 @@ Planned 2026-11-25. Each step a pause for review.
    - journal: the list's order (today's), name, service, size, last
      write.
    The log pages stay in time order; `s` on one does nothing.
+   Built 2026-11-26: no service key for programs (their names sort them
+   by it already) nor the journal (the list's order puts dgg's first).
+   Each key sorts the most useful first (the biggest, the busiest, the
+   newest, a name's A to Z), ties keeping the order before; the title says
+   the key once it isn't the first. The list problems now follow every
+   channel, not each its service's.
 
 ## dgg channels
 Planned 2026-11-25, to be reviewed before any of it is built. dgg captured
