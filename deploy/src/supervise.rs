@@ -17,14 +17,14 @@
 //!   once an older supervisor has exited. Only once it has succeeded do
 //!   index, compact and sync start; if it fails, they wait for the next
 //!   start.
-//! - `dgg-logger index --follow` is always restarted. Only one supervisor runs it
-//!   at a time (`index.lock` in the data directory), so during a handoff the
-//!   new one waits for the old one to exit.
-//! - `dgg-logger compact` runs every `compact_every` (the first time a minute after
-//!   start), by whichever supervisor holds `compact.lock`. The first time,
-//!   it's `compact --early`: what captures from before the upgrade (or
-//!   restart) left on days still open is compacted then, not once the day
-//!   ends.
+//! - `dgg-logger index --follow` is always restarted. Only one supervisor
+//!   runs it at a time (`index.lock` in the data directory), so during a
+//!   handoff the new one waits for the old one to exit.
+//! - `dgg-logger compact` runs every `compact_every` (the first time a
+//!   minute after start), by whichever supervisor holds `compact.lock`. The
+//!   first time, it's `compact --early`: what captures from before the
+//!   upgrade (or restart) left on days still open is compacted then, not
+//!   once the day ends.
 //! - Given where its peers are (see [`crate::peer`]), `dgg-logger sync`
 //!   pulls from each peer in turn every `sync_every` (the first time two
 //!   minutes after start), by whichever supervisor holds `sync.lock`. They
@@ -137,7 +137,7 @@ pub struct Config {
   pub handoff_wait: Duration,
   /// How far apart the captures' first starts are.
   pub stagger: Duration,
-  /// Holds `index.lock`, `compact.lock` and `sync.lock`.
+  /// Holds `index.lock`, `compact.lock`, `sync.lock` and `serve.lock`.
   pub lock_dir: PathBuf,
   pub logs: PathBuf,
   pub compact_first: Duration,
