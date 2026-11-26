@@ -58,8 +58,7 @@ use {
     },
   },
   ::std::{
-    fs::{self, File},
-    io::{self, Write},
+    fs, io,
     path::{Path, PathBuf},
     thread,
     time::{Duration, Instant},
@@ -251,27 +250,6 @@ pub fn path(dir: &Path, instance: &str) -> PathBuf {
 /// renamed over the old one, so readers never see a partial status.
 pub fn write(dir: &Path, status: &Status) -> io::Result<()> {
   write_as(dir, status, Variant::Dgg)
-}
-
-/// [`write()`], but only while `dir` is there: it's never created, so once
-/// it's removed nothing is written there again. Whether it was written.
-pub fn write_if_there(dir: &Path, status: &Status) -> io::Result<bool> {
-  let path = path(dir, &status.instance);
-  let temporary = atomic_file::temporary(&path);
-  let mut file = match File::create(&temporary) {
-    Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
-    file => file?,
-  };
-  let written = file
-    .write_all(status.encode().as_bytes())
-    .and_then(|()| file.sync_all());
-  drop(file);
-  written
-    .and_then(|()| atomic_file::rename(&temporary, &path))
-    .inspect_err(|_| {
-      let _ = fs::remove_file(&temporary);
-    })?;
-  Ok(true)
 }
 
 /// [`write()`], as `variant`'s capture.

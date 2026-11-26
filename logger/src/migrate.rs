@@ -2,18 +2,17 @@
 //! formats, in place, as a supervisor starts.
 //!
 //! Every host is on this build's formats (`journal dgg.0.3`, index schema
-//! 0.6), but dgg's journals move into a directory per channel, and its
-//! index to one per channel, while capture keeps running (see
-//! [`crate::dgg::migrate`]); and Kick's index of every channel,
+//! 0.6) and layout, dgg's journals by channel; a move of dgg's journals
+//! while capture keeps running would be [`crate::dgg::migrate`]'s, and
+//! there's none now. Kick's index of every channel,
 //! [`OLD_FILE`](kick_index::OLD_FILE), is deleted, each channel's index
 //! being rebuilt from its journal. It logs what an upgrade touches, so its
 //! log shows how one went:
 //!
 //! - first, the build, and the versions it writes;
-//! - anything left of the layout from before dgg's journals had a
-//!   directory of their own (see [`OLD_LAYOUT`]), which nothing reads now;
-//! - what moved into dgg's channel's directory, and what was left where it
-//!   was;
+//! - anything left of an older layout (see [`OLD_LAYOUT`]), which nothing
+//!   reads now;
+//! - what moved, if a move is under way, and what was left where it was;
 //! - for each service's journal roots (each dgg channel's, its backfill
 //!   journal's and each Kick channel's), a line for each kind of file in it,
 //!   with its
@@ -61,14 +60,20 @@ use {
 /// The locks in the data directory it holds, a supervisor's.
 pub const LOCKS: [&str; 3] = ["index.lock", "compact.lock", "sync.lock"];
 
-/// What the layout from before dgg's journals had a directory of their own
-/// had in the data directory, and this one doesn't.
-pub const OLD_LAYOUT: [&str; 5] = [
+/// What older layouts had in the data directory, and this one doesn't:
+/// before dgg's journals had a directory of their own, then before they
+/// were by channel.
+pub const OLD_LAYOUT: [&str; 10] = [
   "journal/live",
   "journal/archive",
   "journal/control",
   "journal/backfill",
   "index.sqlite",
+  "journal/dgg/live",
+  "journal/dgg/archive",
+  "journal/dgg/control",
+  "journal/dgg/backfill",
+  "index-dgg.sqlite",
 ];
 
 /// What a [`migrate`] did, or with a dry run would do.
@@ -78,7 +83,7 @@ pub struct Report {
   pub failed: Vec<String>,
   /// What's left of the [old layout](OLD_LAYOUT), which nothing reads now.
   pub old: Vec<PathBuf>,
-  /// Files moved into dgg's channel's directory.
+  /// Files moved, by a move under way.
   pub moved: u64,
   /// Live files left where they were, still being written.
   pub left: Vec<PathBuf>,
@@ -199,8 +204,7 @@ fn old_layout(data: &Path, say: &mut dyn FnMut(Level, &str)) -> Vec<PathBuf> {
     say(
       Level::Warn,
       &format!(
-        "{} is left from before dgg's journals had a directory of their \
-         own; nothing reads it now",
+        "{} is left from an older layout; nothing reads it now",
         path.display()
       ),
     );

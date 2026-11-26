@@ -125,7 +125,6 @@ async fn journals_connections_and_shutdown() {
     started: 1,
     handoff: Handoff::default(),
     peer: None,
-    old_control: None,
     bridge: false,
   };
   assert_eq!(run(config, shutdown).await.unwrap(), Exit::Shutdown);
@@ -185,7 +184,6 @@ async fn follows_the_channel_list() {
     started: 1,
     handoff: quick_handoff(),
     peer: None,
-    old_control: None,
     bridge: false,
   };
   let running = ::tokio::spawn(run(config, ::std::future::pending()));
@@ -278,7 +276,6 @@ async fn hands_off(quiet: bool) {
     started,
     handoff: quick_handoff(),
     peer: None,
-    old_control: None,
     bridge: false,
   };
 
@@ -306,63 +303,6 @@ async fn hands_off(quiet: bool) {
   assert_eq!(new.last(), Some(&Body::Close(SHUTDOWN.into())));
   let control = control::dir(root.path());
   assert_eq!(control::read_all(&control).unwrap(), []);
-}
-
-/// A capture from before dgg's journals were by channel, writing `dgg/`,
-/// hands off to one writing destiny.gg's, `dgg/destiny.gg/`, which writes
-/// its status in the old `control/` too while it's there, and not once it's
-/// gone.
-#[::tokio::test]
-async fn hands_off_from_before_channels() {
-  let (url, server) = chat_server().await;
-  let root = TempDir::new("logger-capture");
-  let dir = Dgg::dir(root.path());
-  let old_control = control::dir(&dir);
-  let config = |journal_root, instance: &str, started, old_control| Config {
-    channel: channel(&url),
-    list: None,
-    reread_every: Duration::from_secs(60),
-    chat: Options::default(),
-    journal_root,
-    instance: instance.into(),
-    started,
-    handoff: quick_handoff(),
-    peer: None,
-    old_control,
-    bridge: false,
-  };
-
-  let old = config(dir.clone(), "old", 1, None);
-  let old = ::tokio::spawn(run(old, ::std::future::pending()));
-  ::tokio::time::sleep(Duration::from_millis(300)).await;
-  let (stop, stopped) = oneshot::channel::<()>();
-  let new = config(destiny(root.path()), "new", 2, Some(old_control.clone()));
-  let new = ::tokio::spawn(run(new, async {
-    let _ = stopped.await;
-  }));
-  let old_exit = ::tokio::time::timeout(Duration::from_secs(5), old)
-    .await
-    .expect("old instance didn't retire")
-    .unwrap()
-    .unwrap();
-  assert_eq!(old_exit, Exit::HandedOff("new".into()));
-  // Its copy stops once the old directory's gone.
-  let copy = control::path(&old_control, "new");
-  assert!(copy.exists());
-  ::std::fs::remove_dir_all(&old_control).unwrap();
-  ::tokio::time::sleep(Duration::from_millis(100)).await;
-  assert!(!old_control.exists());
-  stop.send(()).unwrap();
-  assert_eq!(new.await.unwrap().unwrap(), Exit::Shutdown);
-  server.abort();
-
-  assert_eq!(
-    bodies(&dir, "old").last(),
-    Some(&Body::Close(format!("{HANDOFF}new")))
-  );
-  assert!(bodies(&dir, "new").is_empty());
-  let new = bodies(&destiny(root.path()), "new");
-  assert_eq!(new.last(), Some(&Body::Close(SHUTDOWN.into())));
 }
 
 /// Cross-host handoff: the old instance's host runs `serve`; the new
@@ -396,7 +336,6 @@ async fn hands_off_to_an_instance_on_another_host() {
     started,
     handoff: quick_handoff(),
     peer,
-    old_control: None,
     bridge: false,
   };
   let old = config(&old_host, "old", 1, None);
@@ -460,7 +399,6 @@ async fn sweeps_away_a_dead_instances_status() {
     started: now,
     handoff: quick_handoff(),
     peer: None,
-    old_control: None,
     bridge: false,
   };
   let (stop, stopped) = oneshot::channel::<()>();

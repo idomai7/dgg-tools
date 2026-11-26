@@ -4,11 +4,10 @@ use {
   super::ConfigFrom,
   crate::{
     capture::{Exit, Handoff, Peer, REMOVED_EXIT, Say, instance_id},
-    control,
     dgg::{
       Dgg,
       capture::{Config, run},
-      channels::{self, Channel, DESTINY},
+      channels::{self, Channel},
     },
     service::Service,
   },
@@ -108,9 +107,6 @@ impl Capture {
     };
     let dir = Dgg::dir(&data.join("journal"));
     let journal_root = Dgg::channel_dir(&dir, &channel.name);
-    // destiny.gg's capture is the one there was before dgg's journals were
-    // by channel, whose old instances look in `dgg/control/`.
-    let old_control = (channel.name == DESTINY).then(|| control::dir(&dir));
     let peer = match self.peer {
       Some(url) => {
         let config = self.config.require::<PeerConfig>(r#"{"token": "..."}"#);
@@ -159,7 +155,6 @@ impl Capture {
         ..Handoff::default()
       },
       peer,
-      old_control,
       bridge: self.bridge,
     };
     match run(config, shutdown()).await {

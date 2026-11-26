@@ -15,11 +15,8 @@ use {
     service::Service,
   },
   ::logger_journal::{
-    Header, Variant, Version, Writer,
-    record::{
-      kick,
-      v0::{self, Body},
-    },
+    Header, Variant, Version,
+    record::{kick, v0},
   },
   ::std::{
     fs::{self, File},
@@ -146,130 +143,30 @@ fn says_each_kind_of_file() {
   assert_eq!(report.failed, Vec::<String>::new());
 }
 
-/// dgg's journals, as they were before they were by channel: `files`
-/// under `dgg/`, each with what it holds, and the index.
-fn before_channels(data: &Path, files: &[(&str, &str)]) {
-  let dir = Dgg::dir(&data.join("journal"));
-  for (path, text) in files {
-    put(&dir.join(path), text);
-  }
-  drop(open(&data.join("index-dgg.sqlite")).unwrap());
-}
-
-#[test]
-fn moves_dgg_into_destiny_ggs_directory() {
-  let dir = TempDir::new("logger-migrate");
-  let dgg = Header::new(Variant::Dgg, v0::VERSION).text();
-  let synced = "synced-archives dgg.0.2\u{1e}\n";
-  let files = [
-    ("live/2026-11-24/a.journal", dgg.as_str()),
-    ("archive/2026/11/2026-11-20.journal.zst", "zst"),
-    ("archive/2026/11/manifest", "manifest"),
-    ("control/synced-archives", synced),
-    ("control/gone.live-lock", ""),
-    ("control/sync-2026-11-20.download", "part"),
-    ("backfill/live/2026-11-20/b.journal", dgg.as_str()),
-    ("backfill/control/b.lock", ""),
-  ];
-  before_channels(dir.path(), &files);
-  let journal = dir.path().join("journal");
-  // A stale status, from a capture long gone.
-  let old_control = control::dir(&Dgg::dir(&journal));
-  let stale = control::Status {
-    instance: "gone".into(),
-    started: 1,
-    heartbeat: 2,
-    healthy_since: None,
-    build: None,
-    listening: None,
-  };
-  control::write(&old_control, &stale).unwrap();
-
-  // A dry run changes nothing.
-  let report = run(dir.path(), true);
-  assert_eq!(report.moved, 5);
-  assert!(Dgg::dir(&journal).join("live").exists());
-
-  let report = run(dir.path(), false);
-  assert_eq!(report.failed, Vec::<String>::new());
-  assert_eq!((report.moved, report.left.len()), (5, 0));
-  let channel = Dgg::channel_dir(&Dgg::dir(&journal), DESTINY);
-  for (path, text) in [
-    ("live/2026-11-24/a.journal", dgg.as_str()),
-    ("archive/2026/11/2026-11-20.journal.zst", "zst"),
-    ("archive/2026/11/manifest", "manifest"),
-    ("control/synced-archives", synced),
-    ("backfill/live/2026-11-20/b.journal", dgg.as_str()),
-  ] {
-    assert_eq!(
-      fs::read_to_string(channel.join(path)).unwrap(),
-      text,
-      "{path}"
-    );
-  }
-  // Nothing's left of the old layout, and the index moved as it was.
-  for old in ["live", "archive", "control", "backfill"] {
-    assert!(!Dgg::dir(&journal).join(old).exists(), "{old}");
-  }
-  assert!(!dir.path().join("index-dgg.sqlite").exists());
-  assert_eq!(report.indexes, [(file(DESTINY), SCHEMA_VERSION)]);
-  // And again, nothing to do.
-  assert_eq!(run(dir.path(), false).moved, 0);
-}
-
-#[test]
-fn leaves_what_a_capture_still_writes() {
-  let dir = TempDir::new("logger-migrate");
-  let journal = dir.path().join("journal");
-  let mut writer = Writer::capture(Dgg::dir(&journal), "old").unwrap();
-  writer.write(0, 1, Body::Frame("MSG 1".into())).unwrap();
-  writer.sync().unwrap();
-  let report = run(dir.path(), false);
-  assert_eq!(report.failed, Vec::<String>::new());
-  assert_eq!(report.moved, 0);
-  assert_eq!(report.left.len(), 1);
-  // Its capture gone, a later migrate moves it.
-  drop(writer);
-  let report = run(dir.path(), false);
-  assert_eq!((report.moved, report.left.len()), (1, 0));
-  let channel = Dgg::channel_dir(&Dgg::dir(&journal), DESTINY);
-  assert!(channel.join("live/1970-01-01/old.journal").exists());
-  assert!(!Dgg::dir(&journal).join("live").exists());
-}
-
-#[test]
-fn refuses_to_move_over_a_file() {
-  let dir = TempDir::new("logger-migrate");
-  let path = "archive/2026/11/2026-11-20.journal.zst";
-  before_channels(dir.path(), &[(path, "old")]);
-  let journal = dir.path().join("journal");
-  let channel = Dgg::channel_dir(&Dgg::dir(&journal), DESTINY);
-  put(&channel.join(path), "new");
-  drop(open(&dir.path().join(file(DESTINY))).unwrap());
-  let report = run(dir.path(), false);
-  assert_eq!(report.failed.len(), 2, "{:?}", report.failed);
-  assert_eq!(
-    fs::read_to_string(Dgg::dir(&journal).join(path)).unwrap(),
-    "old"
-  );
-  assert_eq!(fs::read_to_string(channel.join(path)).unwrap(), "new");
-  assert!(dir.path().join("index-dgg.sqlite").exists());
-}
-
 #[test]
 fn says_what_is_left_of_the_old_layout() {
   let dir = TempDir::new("logger-migrate");
   let journal = dir.path().join("journal");
   put(&journal.join("live/2026-11-24/a.journal"), "");
   put(&dir.path().join("index.sqlite"), "");
+  // And from before dgg's journals were by channel.
+  put(&journal.join("dgg/live/2026-11-25/b.journal"), "");
+  put(&dir.path().join("index-dgg.sqlite"), "");
   let report = run(dir.path(), false);
   assert_eq!(report.failed, Vec::<String>::new());
   assert_eq!(
     report.old,
-    [journal.join("live"), dir.path().join("index.sqlite")]
+    [
+      journal.join("live"),
+      dir.path().join("index.sqlite"),
+      journal.join("dgg/live"),
+      dir.path().join("index-dgg.sqlite"),
+    ]
   );
-  // Left as it was.
+  // Left as they were.
   assert!(journal.join("live/2026-11-24/a.journal").exists());
+  assert!(journal.join("dgg/live/2026-11-25/b.journal").exists());
+  assert_eq!(report.moved, 0);
 }
 
 #[test]
