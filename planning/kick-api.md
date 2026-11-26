@@ -1,231 +1,95 @@
 # kick-api
 
-Kick's APIs, kept lightweight for any tool to depend on: [kick-mod](kick-mod.md)
-now, the omnichat later. Kick only, and similar in scope to `dgg-api`. See the
-[overall rules](README.md).
+Kick's APIs, kept lightweight for any tool to depend on: the logger and
+[kick-mod](kick-mod.md) now, the omnichat later. See the
+[overall rules](README.md). Each part is behind its own feature, as in
+`dgg-api`; the types' rustdoc has the details.
 
 ## Scope
-- Reading chat over Kick's realtime socket.
-- Kick's official public API (`https://api.kick.com/public/v1`): OAuth tokens,
-  channel lookup, sending chat, deleting messages, and banning, timing out and
-  unbanning.
-- A channel's past chat, from `web.kick.com`'s unofficial API.
-- Each part behind its own feature, as in `dgg-api`.
+- Kick's realtime socket, for reading chat.
+- Kick's official public API (`https://api.kick.com/public/v1`): OAuth
+  tokens, channel lookup, sending chat, deleting messages, and banning,
+  timing out and unbanning.
+- `web.kick.com`'s unofficial API: a channel's past chat.
+- The unofficial channel lookup, for channel and chatroom ids.
 
 ## Decisions
 - **Read path:** Centrifugo, which kick.com's own web client has used since
-  2026-10.
-  - The client follows Centrifugo's open-source client protocol
-    (github.com/centrifugal/centrifugo, github.com/centrifugal/protocol). Only
-    Kick's configuration of it is probed.
-  - Not Pusher: it's the legacy path that Kick's site no longer uses, and its
-    key changes without notice (last on 2026-10-17, to `34bf7a0ff419a2a775b9` on
-    cluster `us2`).
-- **Second read backend:** the official webhooks, in case the socket closes off.
-  Deferred.
-  - They need a public HTTPS receiver with a publicly trusted certificate, which
-    the mesh's private CA can't provide.
-- **Lossless:** the raw client delivers every message from every channel it's
-  subscribed to.
-- **Writes:** only through the official public API, with a user's OAuth token.
-  Built now, though the webhooks are deferred.
-- **Structure:** like `dgg-api`, fetching frames and decoding them are separate,
-  so a logger can journal every frame raw, unknown ones included. The typed
-  protocol is derived from those frames, and if Kick changes its protocol, the
-  logger keeps working and the raw journals stay intact.
-  - The realtime path has three levels, each carried inside the one above. Each
-    level is named in its source's own terms: level 1 in dgg-api's, level 2 in
-    Centrifugo's `client.proto` (github.com/centrifugal/protocol), and level 3
-    in Kick's.
-  - **Level 1, the websocket** (`realtime::client`, feature `client`): lifecycle
-    events plus raw frames, in the shape of dgg-api's `chat::client::Item`.
-    Centrifugo adds a session above the socket (a connect handshake, a token
-    that has to be refreshed, subscriptions per channel, disconnects that
-    mustn't be retried), so it adds only the events those require.
-    - `Connected { connection, endpoint }`: after Centrifugo's connect reply,
-      not when the socket opens.
-    - `Frame(Frame)`: one websocket message's text as received, kept whole, with
-      its connection number, as in dgg-api.
-      - It has no arrival time: the consumer stamps it, as dgg's logger does.
-        Stamping it in the client, as the frame is read, would be more accurate.
-        Perhaps later, in both `dgg-api` and `kick-api`.
-      - A frame can hold several newline-separated replies.
-      - Every frame is yielded except pings (the empty `{}`), which are answered
-        internally and not journaled, as dgg-api does with `PING`. Replies to
-        the client's own commands and errors are yielded too.
-    - `Binary { connection, data }`: binary (protobuf) frames. A JSON client
-      shouldn't get them; they're passed through as in dgg-api.
-    - `Disconnected { connection, code, reason }`: the connection dropped and
-      will be retried. `code` is the server's code or the websocket close code.
-    - `ConnectFailed { stage, error, retry_in }`. `stage` is Kick's `connection`
-      endpoint, the token, the transport or the connect reply, so "Kick changed
-      its setup" can be told apart from "the network is down".
-    - `Subscribed { connection, channel }`.
-    - `Unsubscribed { connection, channel, code, reason, resubscribing }`: a
-      refused subscribe, the server unsubscribing the channel, or the caller
-      unsubscribing it (code 0).
-      - The client decides whether to resubscribe, as centrifuge-js does, and
-        says so in `resubscribing`. Otherwise the channel stays a gap.
-      - Resubscribed: a server unsubscribe with code 2500 or up, at once; a
-        subscribe refused with a `temporary` error (100 internal, 111 too many
-        requests) or 109 (token expired), after a backoff with jitter.
-    - `Stopped { code, reason }`: the session ended in a way centrifuge-js
-      doesn't retry either. The stream ends after it. Starting a new client is
-      the supervisor's call.
-      - A disconnect code of 3500 or up.
-      - A connect refused with an error that isn't `temporary` or 109, such as
-        101 unauthorized.
-      - A refresh refused with an error that isn't `temporary`. A temporary one
-        is retried after 5–10 s, as is a token that couldn't be fetched, and the
-        connection stays up meanwhile.
-    - Channel names are opaque strings. That a chatroom is
-      `chatrooms.<chatroom id>.v2` plus `channel_<channel id>` belongs in the
-      tools' config.
-    - The client answers pings, refreshes the token before it expires, and
-      reconnects with backoff, then resubscribes.
-    - It decodes frames with level 2 only to run the connection. If one doesn't
-      decode, it's still yielded.
-    - Details such as the client id, `ttl` and the subscribe results are left to
-      level 2, in the frames.
-    - `realtime::connection`: Kick's setup, with its endpoints' names:
-      `connection` answers the endpoint, `auth/connection` the token. It's kept
-      apart from the socket code, so a supplied endpoint and token can bypass
-      it.
-  - **Level 2, Centrifugo's client protocol** (`realtime::centrifugo`, feature
-    `centrifugo`): the types and names of `client.proto`. Messages are structs
-    and one-ofs are enums.
-    - A `Frame` decodes into `Reply`s: `id`, `error`
-      (`Error { code, message, temporary }`), and one of the results (`connect`,
-      `subscribe`, `refresh`, `unsubscribe`, `history`, …) or a `push`. An empty
-      `Reply` is a ping.
-    - `Push`: `channel`, and one of `pub` (`Publication`), `join`, `leave`,
-      `unsubscribe`, `message`, `subscribe`, `connect`, `disconnect` or
-      `refresh`.
-    - `Publication`: `data` (raw JSON here), `info`, `offset`, `tags`, ….
-    - `Command` with the requests the client sends (`ConnectRequest`,
-      `SubscribeRequest`, `RefreshRequest`).
-    - A feature of its own, so a journal reader can decode frames without tokio.
-      `client` depends on it.
-  - **Level 3, Kick's events** (`realtime::event`, feature `protocol`): a
-    `Publication`'s `data`, `{event, data}`, with `data` a JSON string, decoded
-    into `Event`.
-    - Variants take Kick's names without the `App\Events\` prefix:
-      `ChatMessageEvent`, `MessageDeletedEvent`, `UserBannedEvent`,
-      `UserUnbannedEvent`, `PinnedMessageCreatedEvent`,
-      `PinnedMessageDeletedEvent`, `ChatroomUpdatedEvent`, `ChatroomClearEvent`,
-      `ChatSettingsChanged`.
-    - `Other { event, data }` for an event not typed yet, and
-      `Unreadable { event, data, error }` for a known one whose data doesn't
-      decode, as in `dgg-api`.
-    - Fields take Kick's JSON names, in snake_case where Kick isn't (`pinnedBy`,
-      `aiModerated`).
-    - `metadata.message_ref` is an opaque string. Kick's web client happens to
-      put a timestamp there, but any sender can put anything, so nothing reads
-      it as a time or checks whether it looks like one.
-    - Names are matched whole, prefix included. A typed event sent under another
-      name, such as `ChatMessageEvent` without its prefix, is `Other`.
-    - Required (built 2026-11-20):
-      - a message's `id`, `content` and `sender`;
-      - a user's `id` and `username`;
-      - a deleted message's `id`;
-      - a ban's `user` and `permanent`, and an unban's `user`;
-      - a pinned message;
-      - `ChatroomUpdatedEvent`'s `id`, `ChatSettingsChanged`'s `settings`, a
-        channel's `id`;
-      - each setting's `enabled`.
-    - `PinnedMessageDeletedEvent`'s `[]` decodes to an empty event. An object
-      decodes too, with its fields in `rest`.
-    - Times (`created_at`, `expires_at`) are unix milliseconds, as in `dgg-api`,
-      parsed from Kick's RFC 3339 strings (`+00:00` or `Z`). The offset and
-      spelling aren't kept, but the raw frame has them. A string that doesn't
-      parse stays in `rest`.
-  - **Decoding, levels 2 and 3:**
-    - Only the fields an object needs to mean anything are required. Everything
-      else is optional, so a change degrades the one field instead of the whole
-      event.
-    - Fields an object doesn't name aren't dropped. Each struct keeps them in
-      `rest: Option<Map>`, which is `None` when nothing was left over, so a
-      field Kick adds or renames moves into `rest` rather than being lost.
-    - `Event::complete()` says whether the event is well-formed by the known
-      rules and nothing unknown is left over: it's a typed variant (not `Other`
-      or `Unreadable`) and every nested `rest` is `None`.
-      - It doesn't mean every field is filled in. An optional field that's
-        absent is still complete.
-    - `dgg-api` drops unnamed fields from its typed events. It stays that way
-      for now: its flattened structs make leftovers fiddly to place.
-  - `official`: the official API over reqwest: OAuth (app and user tokens, and
-    refreshing them), channel lookup, sending chat, deleting, banning, timing
-    out and unbanning.
-    - `official::oauth`: Kick's sign-in, as data and requests, with no server of
-      its own.
-      - It builds the authorize URL from the client id, redirect URI and scopes,
-        with a random `state` and a PKCE verifier (`S256`), and returns those
-        for the caller to keep until the callback.
-      - It exchanges the code for a user token, refreshes one, revokes one, and
-        fetches app tokens.
-      - A `Token` holds the access and refresh tokens, the scopes, and when it
-        expires, in unix milliseconds.
-      - The callback on `http://localhost:8787/oauth/callback` belongs to the
-        tool: kick-mod serves it from its own web server. An example shows the
-        whole flow with a one-shot listener.
-    - `official::Api`: one method per endpoint: users, channels, sending chat,
-      deleting a message, banning or timing out, and unbanning.
-      - Responses are typed, and fields they don't name are kept in `rest`, as
-        in the realtime events.
-      - An error keeps the HTTP status and Kick's `message`, and tells apart a
-        429 (wait) and a 403 that looks like the Cloudflare block.
-      - Base URLs can be set, so the tests run against a local fake server, as
-        the realtime client's do.
-    - **Refreshing the token:** `Api` isn't a service. It has no task and no
-      timer, and does nothing between calls.
-      - `Api::refresh()` refreshes now, however long the token has left. It's
-        the only path to a new token: everything below goes through it.
-        - A caller can use it to keep the token alive without other calls, or at
-          startup to check that a saved token still works. This helps only if
-          Kick expires refresh tokens that go unused, which is unknown.
-      - `Api::token()` is the current `Token`, so the caller can see
-        `expires_at` and choose when to refresh.
-      - A call checks the user token first. If it expires within a minute, the
-        call goes through `refresh()` before sending the request. A 401 goes
-        through `refresh()` once and retries.
-      - Concurrent calls share one refresh, whether a call or the caller started
-        it.
-      - Kick answers each refresh with a new refresh token, so `refresh()` hands
-        each new `Token` to a callback the caller supplies, which saves it.
-        Whether the old one still works isn't documented, so it's always
-        replaced.
-      - A refresh that fails is returned as the error of the call that asked for
-        it, and isn't retried. The tool then asks the user to sign in again.
-      - With an app token, `refresh()` fetches a new app token, and there's no
-        callback, since there's nothing to keep.
-      - `oauth::App`'s token requests stay the low-level steps: `Api` calls them
-        only from `refresh()`, and a tool calls them only to sign in.
-      - The realtime client's token is Centrifugo's, from Kick's realtime setup,
-        and not an OAuth token. It's refreshed on its own, as now.
-  - `channel`: decoding the unofficial channel lookup, as now.
-  - `web` (feature `web`): `web.kick.com`'s unofficial API, for now only a
-    channel's chat history (see below).
-    - `web::Client::new(user_agent)`: every request names the tool with an
-      honest `User-Agent`, such as `gavelgab/0.1.0`, never a browser's.
-      Requests without one are refused (403).
-    - `history(channel_id, cursor)`: a page of the channel's messages,
-      newest first, and the cursor for the page before. `cursor_at(ms)` makes
-      the cursor to start at a time; `None` starts now.
-    - Messages are typed like the realtime events' (the sender is the same
-      `User`), with fields they don't name kept in `rest`.
-    - An error keeps the HTTP status and the body, and tells apart a 403
-      that looks like the Cloudflare block.
-    - No retries or pacing: the tool asks for one page at a time, politely.
-    - The base URL can be set, so the tests run against a local fake server.
+  2026-10, following Centrifugo's open-source client protocol
+  (github.com/centrifugal/centrifugo, github.com/centrifugal/protocol);
+  only Kick's configuration of it was probed. Not Pusher: the legacy path
+  Kick's site no longer uses, whose key changes without notice.
+- **Webhooks, deferred:** a second read path in case the socket closes
+  off. They need a public HTTPS receiver with a publicly trusted
+  certificate, which the mesh's CA can't give.
+- **Writes** go only through the official API, with a user's OAuth token.
+- **Raw first:** as in `dgg-api`, fetching frames and decoding them are
+  apart, so the logger journals every frame raw, unknown ones included,
+  and keeps working if Kick changes its protocol. The realtime path has
+  three levels, each named in its source's terms:
+  1. **The websocket** (`realtime::client`, feature `client`): lifecycle
+     events and raw frames, shaped like `dgg-api`'s, plus what
+     Centrifugo's session needs: `Connected` (after the connect reply),
+     `Frame`, `Binary`, `Disconnected` (retried), `ConnectFailed { stage }`
+     (Kick's setup, the token, the transport or the reply, so "Kick
+     changed" is told from "the network is down"), `Subscribed`,
+     `Unsubscribed { resubscribing }` and `Stopped` (ended in a way
+     centrifuge-js doesn't retry either: a disconnect code of 3500 or up,
+     or a connect or refresh refused with a non-`temporary` error).
+     - It answers pings (not yielded), refreshes the token before it
+       expires (a temporary failure retried after 5 to 10 s), reconnects
+       with backoff and resubscribes. It resubscribes as centrifuge-js
+       does: a server unsubscribe of 2500 or up at once, a `temporary`
+       refusal or 109 after a backoff with jitter.
+     - Frames carry no arrival time: the consumer stamps them.
+     - Channel names are opaque; `chatrooms.<id>.v2` and `channel_<id>`
+       are the tools' business. Kick's setup (`realtime::connection`) is
+       apart, so a supplied endpoint and token can bypass it.
+  2. **Centrifugo's client protocol** (`realtime::centrifugo`): the types
+     and names of `client.proto`; `Reply`, `Push`, `Publication`,
+     `Command`. Its own feature, so a journal reader needs no tokio.
+  3. **Kick's events** (`realtime::event`, feature `protocol`): a
+     publication's `{event, data}` into `Event`, variants named as Kick's
+     without the `App\Events\` prefix (matched whole, prefix included),
+     plus `Other` and `Unreadable` as in `dgg-api`. Times are unix
+     milliseconds from Kick's RFC 3339 strings.
+     `metadata.message_ref` is opaque: any sender can put anything there.
+- **Decoding:** only the fields an object needs to mean anything are
+  required, so a change degrades one field, not the event. Fields an
+  object doesn't name are kept in `rest` (`None` when nothing's left
+  over), so a field Kick adds moves there rather than being lost.
+  `Event::complete()` says it's typed and nothing is left over. (`dgg-api`
+  still drops unnamed fields: its flattened structs make that fiddly.)
+- **Official API** (`official`): `official::oauth` is Kick's sign-in as
+  data and requests (authorize URL with `state` and PKCE `S256`, code
+  exchange, refresh, revoke, app tokens), with no server: the callback is
+  the tool's. `official::Api` has a method per endpoint, typed answers
+  keeping `rest`, and errors keeping the status and Kick's `message`,
+  telling apart a 429 and a 403 that looks like Cloudflare's block.
+  - **Tokens:** `Api` is not a service: no task, no timer. A call
+    refreshes first if the token expires within a minute, and once on a
+    401; concurrent calls share one refresh; `Api::refresh()` is the only
+    path to a new token, handing each to the caller's callback to save,
+    since Kick answers every refresh with a new refresh token. A failed
+    refresh is the call's error, not retried: the tool asks the user to
+    sign in again.
+- **Web API** (`web`): `Web::new(http, user_agent)`, every request naming
+  the tool honestly, never as a browser. `history(channel_id,
+  cursor)` gives a page newest first and the cursor before it;
+  `cursor_at(ms)` starts at a time. `Web::back_to` pages back to a time,
+  for filling gaps. No retries or pacing: one page at a time.
+- **Fakes:** every client's base URL can be set, so tests run against a
+  local fake server.
 - **Kick's terms (read 2026-11-24):** the Terms of Service (§1.4) forbid
-  automated access to the site, access by means it hasn't provided, and
-  bypassing its access measures. The developer terms (§10.1) forbid
-  undocumented endpoints, and limit keeping chat logs to what the tool needs.
-  The realtime socket, the channel lookup and the chat history are all
-  undocumented. Used anyway, knowingly: read-only, low volume, for moderating
-  our own channels, with an honest `User-Agent`. The cost is that any of
-  them may break or be blocked without notice, and the app's credentials may
-  be at risk.
+  automated access, access by means it hasn't provided, and bypassing its
+  access measures; the developer terms (§10.1) forbid undocumented
+  endpoints and limit keeping chat logs to what the tool needs. The
+  realtime socket, the channel lookup and the chat history are all
+  undocumented. Used anyway, knowingly: read-only, low volume, for
+  moderating our own channels, with an honest `User-Agent`. The cost: any
+  may break or be blocked without notice, and the app's credentials may
+  be at risk. Hence the logger reads them anonymously, and kick-mod,
+  holding the app's credentials, never does.
 
 ## Known
 ### Centrifugo (probed 2026-11-19)
@@ -364,8 +228,7 @@ each chat setting and cleared chat.
     `{"error": "Request blocked by security policy."}`, but let curl through,
     so it was taken for blocking on the TLS fingerprint. More likely it was
     the `User-Agent`, as on `web.kick.com` (below): so since 2026-11-25 the
-    lookup asks with reqwest, naming the tool by its codename. Not yet
-    tried live.
+    lookup asks with reqwest, naming the tool by its codename.
 
 ### Chat history (probed 2026-11-24)
 Found in kick.com's own page scripts, then asked anonymously for `destiny`.
@@ -464,8 +327,7 @@ Found in kick.com's own page scripts, then asked anonymously for `destiny`.
   the official channel lookup has it; otherwise the user enters it once and the
   tool keeps it.
 - How long a refresh token lasts when it isn't used.
-- How far back chat history goes, and whether it leaves out deleted messages
-  or banned users'.
+- Whether chat history leaves out deleted messages or banned users'.
 - For the webhooks: whether an app token may subscribe to any channel's
   webhooks.
 
