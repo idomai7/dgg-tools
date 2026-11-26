@@ -49,7 +49,7 @@
 //! heartbeat has stopped for [`SWEEP_AFTER`] (see [`sweepable`]).
 
 use {
-  ::common::{atomic_file, fs::MissingOk},
+  ::common::{atomic_file, fs::MissingOk, log::Level},
   ::logger_journal::{
     Format, Header, Variant, Version,
     record::{
@@ -381,6 +381,11 @@ pub fn sweepable<'a>(
     .filter(|other| age(other.heartbeat) >= sweep_after.as_millis())
     .collect()
 }
+
+/// What an instance has to say after looking at the other statuses, each
+/// line at its level: of older ones gone at info, of statuses swept away
+/// (see [`sweepable`]) as warnings.
+pub type Said = Vec<(Level, String)>;
 
 /// What an instance says of a status it swept away (see [`sweepable`]),
 /// at `now`.

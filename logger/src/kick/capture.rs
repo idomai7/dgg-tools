@@ -236,9 +236,9 @@ pub async fn run(
         };
         // Advisory, as dgg's: a failed round is retried next tick.
         match check_handoff(&controls, &me, &handoff, &mut older) {
-          Ok((successor, gone)) => {
-            for line in gone {
-              say.info(line);
+          Ok((successor, said)) => {
+            for (level, line) in said {
+              say.at(level, line);
             }
             if let Some(successor) = successor {
               break Ok(Exit::HandedOff(successor));
@@ -313,7 +313,7 @@ fn check_handoff(
   me: &Status,
   handoff: &Handoff,
   older: &mut control::Older,
-) -> io::Result<(Option<String>, Vec<String>)> {
+) -> io::Result<(Option<String>, control::Said)> {
   for dir in controls {
     control::write_as(dir, me, Variant::Kick)?;
   }
@@ -321,7 +321,11 @@ fn check_handoff(
   for dir in controls {
     others.extend(control::read_all_as(dir, Variant::Kick)?);
   }
-  let mut gone = older.gone(me, &others);
+  let mut said: control::Said = older
+    .gone(me, &others)
+    .into_iter()
+    .map(|line| (Level::Info, line))
+    .collect();
   let mut swept = control::sweepable(
     me,
     &others,
@@ -336,14 +340,17 @@ fn check_handoff(
     let removed: io::Result<()> = controls
       .iter()
       .try_for_each(|dir| control::remove(dir, &status.instance));
-    gone.push(match removed {
-      Ok(()) => control::swept_line(status, me.heartbeat),
-      Err(e) => format!("can't remove {}'s status: {e}", status.instance),
-    });
+    said.push((
+      Level::Warn,
+      match removed {
+        Ok(()) => control::swept_line(status, me.heartbeat),
+        Err(e) => format!("can't remove {}'s status: {e}", status.instance),
+      },
+    ));
     older.forget(&status.instance);
   }
   if handoff.keep_running {
-    return Ok((None, gone));
+    return Ok((None, said));
   }
   let successor = control::successor(
     me,
@@ -352,7 +359,7 @@ fn check_handoff(
     handoff.grace,
     handoff.stale_after,
   );
-  Ok((successor.map(|status| status.instance.clone()), gone))
+  Ok((successor.map(|status| status.instance.clone()), said))
 }
 
 /// One channel's capture.
