@@ -13,14 +13,19 @@
 //! `8` serve's. Last, the
 //! boxes: Tab and Shift-Tab move the focus between them (the page at the
 //! bottom too), Up, Down, Page Up and Page Down scroll the focused one when
-//! it's over-tall, and `m` minimizes it to its title line, or restores it.
-//! On a narrow screen the keys take more than one line.
+//! it's over-tall, `m` minimizes it to its title line, or restores it,
+//! and `s` sorts it by its next key, `S` the other way (see [`sort`]; the
+//! page keeps its order). On a narrow screen the keys take more than one
+//! line.
 
 use {
   super::{
     Log, Report, SHARED_CAPTURE_LOGS, Watcher, Which, capture_logs,
-    capture_tail, gaps, health, journal_lines, listening, listening_width,
-    logged_at, logs, merge_logs, per_minute, program_width, service, tail,
+    capture_tail, gaps, health, journal_lines_in, listening, listening_width,
+    logged_at, logs, merge_logs, per_minute, program_build, program_width,
+    service,
+    sort::{self, Order},
+    tail,
   },
   crate::paths::Paths,
   ::common::{
@@ -55,6 +60,8 @@ enum Action {
   OpenData,
   Quit,
   Minimize,
+  Sort,
+  Reverse,
 }
 
 /// A page for the bottom of the screen, as a key offers it.
@@ -94,7 +101,11 @@ const KEYS: [&[(char, &str, Action)]; 3] = [
     ('7', "sync", Action::Show(Page::Log("sync"))),
     ('8', "serve", Action::Show(Page::Log("serve"))),
   ],
-  &[('m', "minimize", Action::Minimize)],
+  &[
+    ('m', "minimize", Action::Minimize),
+    ('s', "sort", Action::Sort),
+    ('S', "reverse", Action::Reverse),
+  ],
 ];
 
 /// The keys that aren't characters, before the boxes' group of [`KEYS`].
@@ -109,14 +120,15 @@ const PAGE: usize = 3;
 /// The fewest rows the page is given, unless it's minimized.
 const PAGE_LEAST: u16 = 6;
 
-/// The boxes' state: which has the focus, how far each is scrolled, and
-/// which are minimized.
+/// The boxes' state: which has the focus, how far each is scrolled, which
+/// are minimized, and the order each above the page is sorted in.
 pub struct Boxes {
   pub focus: usize,
   /// The boxes above the page, from their first line; the page, back from
   /// its last.
   pub scroll: [usize; 4],
   pub minimized: [bool; 4],
+  pub order: [Order; 3],
   /// How far each could scroll, and how many lines it showed, as last
   /// drawn.
   most: [usize; 4],
@@ -130,6 +142,7 @@ impl Default for Boxes {
       focus: PAGE,
       scroll: [0; 4],
       minimized: [false; 4],
+      order: [Order::default(); 3],
       most: [0; 4],
       rows: [0; 4],
     }
@@ -161,6 +174,27 @@ impl Boxes {
 
   fn minimize(&mut self) {
     self.minimized[self.focus] ^= true;
+  }
+
+  /// Sorts the focused box by its next key, or reversed; not the page.
+  fn sort(&mut self, reverse: bool) {
+    let keys = match self.focus {
+      PROGRAMS => sort::PROGRAMS.len(),
+      CAPTURES => sort::CAPTURES.len(),
+      JOURNAL => sort::JOURNAL.len(),
+      _ => return,
+    };
+    let order = &mut self.order[self.focus];
+    match reverse {
+      true => order.reversed ^= true,
+      false => order.next(keys),
+    }
+  }
+
+  /// Sorts `report`'s programs and captures as their boxes are.
+  pub fn sort_report(&self, report: &mut Report) {
+    sort::programs(&mut report.programs, self.order[PROGRAMS]);
+    sort::captures(&mut report.captures, self.order[CAPTURES]);
   }
 }
 
@@ -428,7 +462,8 @@ fn event_loop(
   let mut view = View::Logs;
   let mut boxes = Boxes::default();
   loop {
-    let report = watcher.gather(paths)?;
+    let mut report = watcher.gather(paths)?;
+    boxes.sort_report(&mut report);
     if let View::Gaps(gaps) = &mut view {
       gaps.refresh(&paths.data, report.dgg.channels.len() > 1);
     }
@@ -466,6 +501,14 @@ fn event_loop(
           Some(Action::OpenData) => open(&paths.data),
           Some(Action::Quit) => return Ok(()),
           Some(Action::Minimize) => boxes.minimize(),
+          Some(Action::Sort) => {
+            boxes.sort(false);
+            boxes.sort_report(&mut report);
+          }
+          Some(Action::Reverse) => {
+            boxes.sort(true);
+            boxes.sort_report(&mut report);
+          }
           None => {}
         },
         KeyCode::Tab => boxes.next(),
@@ -663,15 +706,7 @@ pub fn draw(
       .iter()
       .map(|program| {
         let up = format::duration(now - program.started as i64 * 1000);
-        let from = match (&program.exe, program.ours) {
-          (Some(exe), true) => exe
-            .parent()
-            .and_then(|build| build.file_name())
-            .map(|build| build.to_string_lossy().into_owned())
-            .unwrap_or_default(),
-          (Some(exe), false) => exe.display().to_string(),
-          (None, _) => "(path hidden)".into(),
-        };
+        let from = program_build(program);
         Line::from(vec![
           Span::styled(format!("{:<name$}", program.name), Style::new().bold()),
           Span::raw(format!(
@@ -730,8 +765,10 @@ pub fn draw(
       })
       .collect()
   };
-  let journal: Vec<Line> =
-    journal_lines(report).into_iter().map(Line::from).collect();
+  let journal: Vec<Line> = journal_lines_in(report, boxes.order[JOURNAL])
+    .into_iter()
+    .map(Line::from)
+    .collect();
 
   let free = report
     .free
@@ -777,9 +814,28 @@ pub fn draw(
   ])
   .areas(frame.area());
   frame.render_widget(header, top);
-  draw_box(frame, programs_area, PROGRAMS, "programs", programs, boxes);
-  draw_box(frame, captures_area, CAPTURES, "captures", captures, boxes);
-  draw_box(frame, journal_area, JOURNAL, "journal", journal, boxes);
+  let [programs_title, captures_title, journal_title] = [
+    boxes.order[PROGRAMS].title("programs", &sort::PROGRAMS),
+    boxes.order[CAPTURES].title("captures", &sort::CAPTURES),
+    boxes.order[JOURNAL].title("journal", &sort::JOURNAL),
+  ];
+  draw_box(
+    frame,
+    programs_area,
+    PROGRAMS,
+    &programs_title,
+    programs,
+    boxes,
+  );
+  draw_box(
+    frame,
+    captures_area,
+    CAPTURES,
+    &captures_title,
+    captures,
+    boxes,
+  );
+  draw_box(frame, journal_area, JOURNAL, &journal_title, journal, boxes);
   draw_page(frame, page_area, pane, boxes);
   frame.render_widget(Paragraph::new(keys), keys_area);
 }

@@ -6,12 +6,14 @@
 //! [`Watcher::gather`] takes a snapshot ([`Report`]); [`text`] prints one,
 //! and [`watch`] redraws one every second.
 
+pub mod sort;
 pub mod watch;
 
 use {
   crate::{
     paths::Paths,
     peer, processes,
+    status::sort::Order,
     supervise::{dgg_capture_log, kick_capture_log},
   },
   ::common::{
@@ -1030,6 +1032,20 @@ pub fn program_width(report: &Report) -> usize {
   widest.unwrap_or(0)
 }
 
+/// Where `program` runs from, as shown: its build's directory's name, if
+/// it's this install's, else its path.
+pub fn program_build(program: &Program) -> String {
+  match (&program.exe, program.ours) {
+    (Some(exe), true) => exe
+      .parent()
+      .and_then(|build| build.file_name())
+      .map(|build| build.to_string_lossy().into_owned())
+      .unwrap_or_default(),
+    (Some(exe), false) => exe.display().to_string(),
+    (None, _) => "(path hidden)".into(),
+  }
+}
+
 /// The service `capture` is of: `dgg` or `kick`.
 pub fn service(capture: &Capture) -> &'static str {
   if capture.kick { "kick" } else { "dgg" }
@@ -1054,33 +1070,26 @@ pub fn listening_width(report: &Report) -> usize {
   widest.unwrap_or(0)
 }
 
-/// Kick's channels' journals today, a line each with one on its index
-/// indented under it, and the channel list's problem, if it has one.
-fn kick_lines(report: &Report) -> Vec<String> {
-  let kick = &report.kick;
-  let now = report.now;
-  let mut out = Vec::new();
-  for channel in &kick.channels {
-    let last = match channel.last_write {
-      Some(at) => format!("last write {} ago", format::duration(now - at)),
-      None => "nothing today".into(),
-    };
-    let listed = if channel.listed { "" } else { "  (not listed)" };
-    out.push(format!(
+/// Kick channel `channel`'s journal today, at `now`: a line, with one on
+/// its index indented under it.
+fn kick_lines(channel: &KickChannel, now: i64) -> Vec<String> {
+  let last = match channel.last_write {
+    Some(at) => format!("last write {} ago", format::duration(now - at)),
+    None => "nothing today".into(),
+  };
+  let listed = if channel.listed { "" } else { "  (not listed)" };
+  vec![
+    format!(
       "kick {:<20} today {} files  {}  {last}{listed}",
       channel.slug,
       channel.today_files.count,
       format::size(channel.today_files.bytes as f64)
-    ));
-    out.push(match channel.index {
+    ),
+    match channel.index {
       Some(file) => format!("  {}", index_line("index", file, now)),
       None => "  index  none yet".into(),
-    });
-  }
-  if let Some(problem) = &kick.problem {
-    out.push(format!("kick channel list  {problem}"));
-  }
-  out
+    },
+  ]
 }
 
 /// The size and last write (unix ms) of the file at `path`, if there's
@@ -1153,19 +1162,42 @@ fn dgg_lines(channel: &DggChannel, now: i64) -> Vec<String> {
   out
 }
 
-/// The journals and indexes: each dgg channel's (see [`dgg_lines`]), the
-/// dgg channel list's problem, if it has one, then Kick's channels' (see
-/// [`kick_lines`]); then the peers.
+/// The journals and indexes: each dgg channel's (see [`dgg_lines`]), then
+/// Kick's channels' (see [`kick_lines`]); each channel list's problem, if
+/// it has one; then the peers.
 pub fn journal_lines(report: &Report) -> Vec<String> {
+  journal_lines_in(report, Order::default())
+}
+
+/// [`journal_lines`], the channels in `order`.
+pub fn journal_lines_in(report: &Report, order: Order) -> Vec<String> {
   let now = report.now;
-  let mut out = Vec::new();
+  let mut channels: Vec<(sort::Channel, Vec<String>)> = Vec::new();
   for channel in &report.dgg.channels {
-    out.extend(dgg_lines(channel, now));
+    let by = sort::Channel {
+      name: channel.name.clone(),
+      bytes: channel.journal.today_files.bytes,
+      last_write: channel.journal.last_write,
+    };
+    channels.push((by, dgg_lines(channel, now)));
   }
+  for channel in &report.kick.channels {
+    let by = sort::Channel {
+      name: channel.slug.clone(),
+      bytes: channel.today_files.bytes,
+      last_write: channel.last_write,
+    };
+    channels.push((by, kick_lines(channel, now)));
+  }
+  sort::journal(&mut channels, order);
+  let mut out: Vec<String> =
+    channels.into_iter().flat_map(|(_, lines)| lines).collect();
   if let Some(problem) = &report.dgg.problem {
     out.push(format!("dgg channel list  {problem}"));
   }
-  out.extend(kick_lines(report));
+  if let Some(problem) = &report.kick.problem {
+    out.push(format!("kick channel list  {problem}"));
+  }
   if let Some(sync) = &report.sync {
     for peer in &sync.peers {
       let last = peer.last.as_deref().unwrap_or("no round yet");

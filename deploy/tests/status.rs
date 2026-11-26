@@ -319,18 +319,149 @@ fn scrolls_and_minimizes_the_watch_boxes() {
 fn the_watch_keys_take_more_lines_when_narrow() {
   use ::deploy::status::watch::keys;
 
-  let wide = keys(200);
+  let wide = keys(240);
   assert_eq!(wide.len(), 1, "{wide:?}");
   assert!(wide[0].contains("q quit | 1 supervisor"), "{wide:?}");
   assert!(wide[0].contains("8 serve | tab focus"), "{wide:?}");
-  assert!(wide[0].ends_with("m minimize"), "{wide:?}");
+  assert!(
+    wide[0].ends_with("m minimize  s sort  S reverse"),
+    "{wide:?}"
+  );
   let narrow = keys(80);
   assert_eq!(narrow.len(), 3, "{narrow:?}");
   assert!(narrow.iter().all(|line| line.len() <= 80), "{narrow:?}");
   assert!(narrow[0].ends_with("q quit"), "{narrow:?}");
   assert!(narrow[1].starts_with(" 1 supervisor"), "{narrow:?}");
   assert!(narrow[1].ends_with("8 serve"), "{narrow:?}");
-  assert!(narrow[2].ends_with("m minimize"), "{narrow:?}");
+  assert!(narrow[2].ends_with("S reverse"), "{narrow:?}");
+}
+
+#[test]
+fn sorts_the_programs_and_captures() {
+  use ::deploy::status::{
+    Capture, Health, Program,
+    sort::{self, Order},
+  };
+
+  let program = |name: &str, started, memory, cpu| Program {
+    name: name.into(),
+    pid: 1,
+    started,
+    memory,
+    cpu,
+    exe: None,
+    ours: false,
+  };
+  let mut programs = vec![
+    program("b", 1, 30, 1.0),
+    program("a", 2, 10, 9.0),
+    program("c", 3, 20, 5.0),
+  ];
+  let names = |programs: &[Program]| {
+    programs.iter().map(|p| p.name.clone()).collect::<Vec<_>>()
+  };
+  let by = |key, reversed| Order { key, reversed };
+  sort::programs(&mut programs, Order::default());
+  assert_eq!(names(&programs), ["a", "b", "c"]);
+  sort::programs(&mut programs, by(1, false));
+  assert_eq!(names(&programs), ["b", "c", "a"], "the most memory first");
+  sort::programs(&mut programs, by(2, false));
+  assert_eq!(names(&programs), ["a", "c", "b"], "the most CPU first");
+  sort::programs(&mut programs, by(2, true));
+  assert_eq!(names(&programs), ["b", "c", "a"]);
+  sort::programs(&mut programs, by(4, false));
+  assert_eq!(names(&programs), ["c", "a", "b"], "the newest first");
+
+  let capture = |instance: &str, kick, channel: &str, health, rate| Capture {
+    instance: instance.into(),
+    started: 0,
+    health,
+    build: None,
+    frames: 0,
+    listening: Some(channel.into()),
+    kick,
+    per_minute: Some(rate),
+  };
+  let mut captures = vec![
+    capture("k", true, "kc", Health::Healthy(0), 50.0),
+    capture("d", false, "destiny.gg", Health::Healthy(0), 10.0),
+    capture("s", false, "omniliberal.dev", Health::Stale(0), 0.0),
+  ];
+  let instances = |captures: &[Capture]| {
+    captures
+      .iter()
+      .map(|c| c.instance.clone())
+      .collect::<Vec<_>>()
+  };
+  sort::captures(&mut captures, Order::default());
+  assert_eq!(instances(&captures), ["s", "k", "d"], "the stale first");
+  sort::captures(&mut captures, by(0, true));
+  assert_eq!(instances(&captures), ["k", "d", "s"], "the healthy first");
+  sort::captures(&mut captures, by(2, false));
+  assert_eq!(instances(&captures), ["d", "s", "k"], "dgg's first");
+  sort::captures(&mut captures, by(3, false));
+  assert_eq!(instances(&captures), ["d", "k", "s"], "by channel");
+
+  // Round the keys, back to the first, not reversed.
+  let mut order = by(4, true);
+  order.next(sort::CAPTURES.len());
+  assert_eq!(order, Order::default());
+  assert_eq!(order.title("captures", &sort::CAPTURES), "captures");
+  assert_eq!(
+    by(1, true).title("captures", &sort::CAPTURES),
+    "captures by load, reversed"
+  );
+}
+
+#[test]
+fn sorts_the_journal_box() {
+  use ::deploy::status::{journal_lines, journal_lines_in, sort::Order};
+
+  let dir = TempDir::new("deploy-status-journal-sort");
+  let now = now_ms();
+  let today = utc_day(now);
+  dir.write(
+    "dgg-channels.jsonc",
+    r#"{"channels": [
+      {"name": "destiny.gg", "url": "wss://a.example/ws", "origin": null},
+      {"name": "b.example", "url": "wss://b.example/ws", "origin": null},
+    ]}"#,
+  );
+  dir.write(
+    format!("data/journal/dgg/b.example/live/{today}/x-1.journal"),
+    "x".repeat(100),
+  );
+  dir.write(
+    format!("data/journal/kick/a-kick/live/{today}/y-1.journal"),
+    "y".repeat(10),
+  );
+  let report = Watcher::new()
+    .unwrap()
+    .gather(&Paths::under(dir.to_path_buf()))
+    .unwrap();
+  let channels = |lines: Vec<String>| {
+    let channels = lines.into_iter().filter(|line| !line.starts_with(' '));
+    channels
+      .map(|line| line.split_whitespace().nth(1).unwrap().to_owned())
+      .collect::<Vec<_>>()
+  };
+  let by = |key, reversed| Order { key, reversed };
+  let list = ["destiny.gg", "b.example", "a-kick"];
+  assert_eq!(channels(journal_lines(&report)), list);
+  assert_eq!(channels(journal_lines_in(&report, by(0, false))), list);
+  assert_eq!(
+    channels(journal_lines_in(&report, by(0, true))),
+    ["a-kick", "b.example", "destiny.gg"]
+  );
+  assert_eq!(
+    channels(journal_lines_in(&report, by(1, false))),
+    ["a-kick", "b.example", "destiny.gg"]
+  );
+  assert_eq!(
+    channels(journal_lines_in(&report, by(2, false))),
+    ["b.example", "a-kick", "destiny.gg"],
+    "the most written today first"
+  );
 }
 
 #[test]
