@@ -244,8 +244,8 @@ grouped:
   scroll the focused one when it's over-tall (its title says which lines
   it shows); `m` minimizes it to its title line, or restores it, the
   others taking the room; `s` sorts it by its next key, round to the
-  first, and `S` reverses it (its title says which, once it isn't the
-  first).
+  first, and `S` reverses it (its title says how it's sorted, as
+  `captures (by load, reversed)`).
 
 The captures box lists dgg's and Kick's captures together, each after its
 service, the unhealthy first (stale, then connecting), then the busiest,
