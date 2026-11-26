@@ -863,7 +863,12 @@ WebSocket URL of its own. Each step a pause for review.
   end, listing live files failing as compaction removed a day (which quit
   `status --watch`, now kept up through a failed look too), and backfill
   and kick-mod requests that could hang forever; an install now says when
-  the old captures didn't all hand off. Left as they are:
+  the old captures didn't all hand off. A third fixed a delete's message
+  id going into Kick's path unchecked, an install going on (and an
+  uninstall failing unexplained) while old programs outlived being
+  stopped, the supervisor's log lines lost while rotating failed, and
+  flags of seconds panicking on a negative or infinite number. Left as
+  they are:
   - A backfill page's oldest millisecond may hold more messages than
     the page reached: those past it are skipped. linkers.ooo's pages
     leave out their oldest second for this; rustlesearch's are to the
