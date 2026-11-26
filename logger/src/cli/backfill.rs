@@ -219,7 +219,17 @@ impl Backfill {
       report: self.report.or(report).map(Duration::from_secs_f64),
     };
     let _ = ::rustls::crypto::ring::default_provider().install_default();
-    let http = ::reqwest::Client::new();
+    // A request that hangs is failed, and retried, not waited on forever.
+    let http = match ::reqwest::Client::builder()
+      .timeout(Duration::from_secs(60))
+      .build()
+    {
+      Ok(http) => http,
+      Err(e) => {
+        error!("backfill failed: {e}");
+        return ExitCode::FAILURE;
+      }
+    };
     match self.source {
       SourceName::Rustlesearch => {
         let api = ::rustlesearch_api::Api::new(http, crate::USER_AGENT);
