@@ -10,8 +10,10 @@ use {
     service::{Root, Service},
   },
   ::clap::Args,
-  ::common::time::now_ms,
-  ::common::{error, info},
+  ::common::{
+    error, info,
+    time::{now_ms, seconds},
+  },
   ::std::{path::Path, process::ExitCode, time::Duration},
 };
 
@@ -27,7 +29,7 @@ pub struct Compact {
   #[arg(long)]
   early: bool,
   /// Hours after a day ends before it counts as closed.
-  #[arg(long, default_value_t = 1.0)]
+  #[arg(long, default_value_t = 1.0, value_parser = seconds)]
   grace_hours: f64,
   /// zstd level, 1 (fast) to 22 (smallest).
   #[arg(long, default_value_t = DEFAULT_LEVEL)]
@@ -73,7 +75,9 @@ impl Compact {
   /// Compacts journal `root`; whether every day went well.
   fn compact(&self, root: &Root) -> bool {
     let name = &root.name;
-    let grace = Duration::from_secs_f64(self.grace_hours * 3600.0);
+    // As many hours as seconds a Duration holds overflow it.
+    let grace = Duration::try_from_secs_f64(self.grace_hours * 3600.0)
+      .unwrap_or(Duration::MAX);
     let now = self.now.unwrap_or_else(now_ms);
     let days = match closed_days(root, now, grace) {
       Ok(days) => days,

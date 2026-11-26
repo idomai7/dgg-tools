@@ -16,10 +16,11 @@ use {
     },
   },
   ::clap::{Args, ValueEnum},
-  ::common::{config::Secret, error, info, warn},
   ::common::{
-    format,
-    time::{now_ms, unix_ms, utc_timestamp},
+    config::Secret,
+    error, format, info,
+    time::{now_ms, seconds, unix_ms, utc_timestamp},
+    warn,
   },
   ::serde::Deserialize,
   ::std::{path::Path, process::ExitCode, time::Duration},
@@ -64,19 +65,19 @@ pub struct Backfill {
   #[arg(long)]
   reserve: Option<u64>,
   /// Seconds to fetch past each end of a gap, for clock differences.
-  #[arg(long, default_value_t = 5.0)]
+  #[arg(long, default_value_t = 5.0, value_parser = seconds)]
   margin: f64,
   /// Seconds between requests [default: 1 for rustlesearch, 1.5 for
   /// linkers; 10 with `--from`, which takes linkers.ooo's whole archive
   /// about two months].
-  #[arg(long)]
+  #[arg(long, value_parser = seconds)]
   delay: Option<f64>,
   /// Failed requests in a row to retry, with growing waits, before giving
   /// up [default: 3; 20 with `--from`].
   #[arg(long)]
   retries: Option<u32>,
   /// Seconds between progress lines [default: 600; none without `--from`].
-  #[arg(long)]
+  #[arg(long, value_parser = seconds)]
   report: Option<f64>,
   /// Host name used in this run's instance id (default: this machine's).
   #[arg(long)]

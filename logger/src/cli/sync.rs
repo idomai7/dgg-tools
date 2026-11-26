@@ -4,7 +4,7 @@ use {
   super::ConfigFrom,
   crate::{capture::Peer, sync::sync},
   ::clap::Args,
-  ::common::{config::Secret, error, info, warn},
+  ::common::{config::Secret, error, info, time::seconds, warn},
   ::serde::Deserialize,
   ::std::{
     path::{Path, PathBuf},
@@ -33,7 +33,7 @@ pub struct Sync {
   #[arg(long)]
   follow: bool,
   /// Seconds between rounds with `--follow`.
-  #[arg(long, default_value_t = 5.0)]
+  #[arg(long, default_value_t = 5.0, value_parser = seconds)]
   interval: f64,
 }
 

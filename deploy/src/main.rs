@@ -162,7 +162,7 @@ enum Command {
     /// Stay open, redrawing every `--interval` seconds, with a log below.
     #[arg(long)]
     watch: bool,
-    #[arg(long, default_value_t = 1.0)]
+    #[arg(long, default_value_t = 1.0, value_parser = ::common::time::seconds)]
     interval: f64,
     /// Lines of each log to show, without `--watch`.
     #[arg(long, default_value_t = 5)]

@@ -10,7 +10,7 @@ use {
     service::{Indexed, Service},
   },
   ::clap::Args,
-  ::common::{error, info, warn},
+  ::common::{error, info, time::seconds, warn},
   ::rusqlite::Connection,
   ::std::{
     collections::HashSet,
@@ -45,21 +45,21 @@ pub struct Index {
   #[arg(long)]
   follow: bool,
   /// With `--follow`, seconds between looks at what's waiting.
-  #[arg(long, default_value_t = 1.0)]
+  #[arg(long, default_value_t = 1.0, value_parser = seconds)]
   interval: f64,
   /// With `--follow`, the records waiting that make a round due.
   #[arg(long, default_value_t = 500)]
   batch: u64,
   /// With `--follow`, the fewest seconds between rounds.
-  #[arg(long, default_value_t = 60.0)]
+  #[arg(long, default_value_t = 60.0, value_parser = seconds)]
   min_wait: f64,
   /// With `--follow`, the most seconds between rounds, however few records
   /// are waiting.
-  #[arg(long, default_value_t = 600.0)]
+  #[arg(long, default_value_t = 600.0, value_parser = seconds)]
   max_wait: f64,
   /// With `--follow`, seconds between summaries of what was indexed (none
   /// is printed if nothing was); 0 prints one for every round.
-  #[arg(long, default_value_t = 60.0)]
+  #[arg(long, default_value_t = 60.0, value_parser = seconds)]
   report: f64,
 }
 

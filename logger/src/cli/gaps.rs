@@ -7,7 +7,7 @@ use {
     index::{index, open},
   },
   ::clap::Args,
-  ::common::format,
+  ::common::{format, time::seconds},
   ::std::{path::Path, process::ExitCode},
 };
 
@@ -19,7 +19,7 @@ pub struct Gaps {
   #[arg(long, default_value = DESTINY)]
   channel: String,
   /// Only list gaps at least this many seconds long.
-  #[arg(long, default_value_t = 0.0)]
+  #[arg(long, default_value_t = 0.0, value_parser = seconds)]
   min: f64,
 }
 
