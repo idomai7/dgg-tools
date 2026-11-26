@@ -230,7 +230,8 @@ grouped:
   it starts on); `r` the latest records of the capture at the top of the
   captures box (`r` again for the next capture, round every channel's),
   titled with what it listens to; `f` one channel's capture's log, dgg's
-  or Kick's (`f` again for the next, and after the last, every capture's);
+  or Kick's (`f` again for the next, and after the last, every capture's;
+  `F` goes round the other way);
   Space redraws, `e`
   opens the data folder, `q` quits;
 - each program's log: `1` the supervisor's, `2` migrate's, `3` every
