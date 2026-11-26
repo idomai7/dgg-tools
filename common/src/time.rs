@@ -7,8 +7,9 @@
 //! - The day a timestamp is in, and back: [`utc_day`] and [`day_start`].
 //! - The calendar arithmetic under them, Howard Hinnant's:
 //!   [`days_from_civil`] and [`civil_from_days`].
+//! - A number of seconds a command is given: [`seconds`].
 
-use ::std::time::{SystemTime, UNIX_EPOCH};
+use ::std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub const DAY_MS: i64 = 86_400_000;
 
@@ -147,6 +148,16 @@ fn time_of_day(ms: i64) -> String {
   let (hours, minutes) = (in_day / 3_600_000, in_day / 60_000 % 60);
   let (seconds, millis) = (in_day / 1000 % 60, in_day % 1000);
   format!("{hours:02}:{minutes:02}:{seconds:02}.{millis:03}")
+}
+
+/// `text` as a number of seconds, as a command's flag gives one: one a
+/// [`Duration`] can hold, so not negative, and finite. For clap's
+/// `value_parser`, so a bad one is refused rather than panicking later.
+pub fn seconds(text: &str) -> Result<f64, String> {
+  match text.trim().parse::<f64>() {
+    Ok(n) if Duration::try_from_secs_f64(n).is_ok() => Ok(n),
+    _ => Err("not a number, 0 or more".into()),
+  }
 }
 
 fn days_in_month(year: i64, month: i64) -> i64 {

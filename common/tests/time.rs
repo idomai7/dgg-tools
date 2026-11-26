@@ -2,8 +2,17 @@
 
 use ::common::time::{
   DAY_MS, civil_from_days, day_start, days_from_civil, now_ms, rfc3339,
-  unix_ms, utc_day, utc_timestamp,
+  seconds, unix_ms, utc_day, utc_timestamp,
 };
+
+#[test]
+fn seconds_are_what_a_duration_holds() {
+  assert_eq!(seconds("0"), Ok(0.0));
+  assert_eq!(seconds("1.5"), Ok(1.5));
+  for bad in ["-1", "NaN", "inf", "1e30", "", "soon"] {
+    assert!(seconds(bad).is_err(), "{bad:?}");
+  }
+}
 
 #[test]
 fn now_is_now() {
