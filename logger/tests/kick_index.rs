@@ -310,6 +310,8 @@ fn reads_archives_once() {
   // checkpoint goes with it.
   let stats = index(&mut db, &c(&dir)).unwrap();
   assert_eq!((stats.records, stats.messages), (7, 0));
+  assert_eq!(stats.forgotten.len(), 1);
+  assert!(stats.forgotten[0].starts_with("live/1970-01-01/"));
   let paths: Vec<String> = db
     .prepare("SELECT path FROM files")
     .unwrap()

@@ -91,6 +91,9 @@ pub trait Tally: Default {
   fn records(&self) -> u64;
   /// Files skipped because their header couldn't be read, with why.
   fn skipped(&self) -> &[(String, String)];
+  /// Live files gone from the journal since, whose checkpoints and
+  /// unparsed rows were dropped.
+  fn forgotten(&self) -> &[String];
   /// Adds `other`'s counts to these.
   fn add(&mut self, other: &Self);
   /// The counts, as a line.
@@ -305,4 +308,32 @@ pub(crate) fn checkpoint(
     )
     .optional()?;
   Ok(found.unwrap_or((0, None)))
+}
+
+/// Drops what `db` holds of live files, those whose paths start with one
+/// of `live_prefixes`, that aren't in `live` any more (compacted away, or
+/// lost): their checkpoints and their unparsed rows, even ones a build
+/// from before this left behind. Returns their paths.
+pub(crate) fn forget_gone(
+  db: &mut Connection,
+  live_prefixes: &[&str],
+  live: &[String],
+) -> Result<Vec<String>, Error> {
+  let transaction = db.transaction()?;
+  let gone: Vec<String> = transaction
+    .prepare("SELECT path FROM files UNION SELECT path FROM unparsed")?
+    .query_map([], |row| row.get(0))?
+    .collect::<Result<Vec<String>, _>>()?
+    .into_iter()
+    .filter(|path: &String| {
+      live_prefixes.iter().any(|prefix| path.starts_with(prefix))
+        && !live.contains(path)
+    })
+    .collect();
+  for path in &gone {
+    transaction.execute("DELETE FROM files WHERE path = ?1", [path])?;
+    transaction.execute("DELETE FROM unparsed WHERE path = ?1", [path])?;
+  }
+  transaction.commit()?;
+  Ok(gone)
 }

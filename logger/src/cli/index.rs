@@ -160,6 +160,13 @@ impl Following {
   }
 }
 
+/// What's said of a live file the index forgot, gone from the journal.
+fn forgot(file: &str) -> String {
+  format!(
+    "{file} is gone from the journal; its checkpoint and unparsed rows      are dropped (if it wasn't compacted, what the index hadn't reached      is lost)"
+  )
+}
+
 /// Each line about `indexed` starts with this.
 fn prefix(indexed: &Indexed) -> String {
   format!("{}: ", indexed.name)
@@ -198,6 +205,9 @@ fn once<S: Service>(data: &Path, journal: &Path, rebuild: bool) -> bool {
         info!("{prefix}{}", stats.summary());
         for (file, why) in stats.skipped() {
           warn!("{prefix}skipped {file}: {why}");
+        }
+        for file in stats.forgotten() {
+          warn!("{prefix}{}", forgot(file));
         }
       }
       Err(e) => {
@@ -277,6 +287,9 @@ impl<S: Tally> Reporter<S> {
       if self.skipped.insert(file.clone()) {
         warn!("{prefix}skipped {file}: {why}");
       }
+    }
+    for file in stats.forgotten() {
+      warn!("{prefix}{}", forgot(file));
     }
     self.totals.add(stats);
     if self.totals.records() > 0 && self.since.elapsed() >= self.period {

@@ -28,7 +28,10 @@
 use {
   crate::{
     dgg::Dgg,
-    index::{Error, Tally, checkpoint, open_at, open_read_only_at, waiting_in},
+    index::{
+      Error, Tally, checkpoint, forget_gone, open_at, open_read_only_at,
+      waiting_in,
+    },
     service::Service,
   },
   ::logger_journal::{
@@ -69,6 +72,8 @@ pub struct Stats {
   pub unparsed: u64,
   /// Files skipped because their header couldn't be read, with why.
   pub skipped: Vec<(String, String)>,
+  /// Live and backfill files gone from the journal, forgotten.
+  pub forgotten: Vec<String>,
 }
 
 impl Tally for Stats {
@@ -78,6 +83,10 @@ impl Tally for Stats {
 
   fn skipped(&self) -> &[(String, String)] {
     &self.skipped
+  }
+
+  fn forgotten(&self) -> &[String] {
+    &self.forgotten
   }
 
   fn add(&mut self, other: &Self) {
@@ -175,34 +184,8 @@ pub fn index(db: &mut Connection, dir: &Path) -> Result<Stats, Error> {
     };
     index_file(db, &path, Some(&archive.sha256), reader, &mut stats)?;
   }
-  forget_gone(db, &live)?;
+  stats.forgotten = forget_gone(db, &["live/", "backfill/live/"], &live)?;
   Ok(stats)
-}
-
-/// Drops what the index holds of live and backfill files that no longer
-/// exist (compacted away): their checkpoints and their unparsed rows.
-fn forget_gone(db: &mut Connection, live: &[String]) -> Result<(), Error> {
-  let transaction = db.transaction()?;
-  // Unparsed rows too, even ones a build from before this left behind.
-  let stale: Vec<String> = transaction
-    .prepare(
-      "SELECT path FROM files
-       WHERE path LIKE 'live/%' OR path LIKE 'backfill/live/%'
-       UNION
-       SELECT path FROM unparsed
-       WHERE path LIKE 'live/%' OR path LIKE 'backfill/live/%'",
-    )?
-    .query_map([], |row| row.get(0))?
-    .collect::<Result<Vec<String>, _>>()?
-    .into_iter()
-    .filter(|path| !live.contains(path))
-    .collect();
-  for path in stale {
-    transaction.execute("DELETE FROM files WHERE path = ?1", [&path])?;
-    transaction.execute("DELETE FROM unparsed WHERE path = ?1", [&path])?;
-  }
-  transaction.commit()?;
-  Ok(())
 }
 
 fn index_file(

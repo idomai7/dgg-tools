@@ -558,6 +558,7 @@ fn follows_files_into_archives() {
     .unwrap();
   let archived = index(&mut db, &dgg(&root)).unwrap();
   assert_eq!((archived.records, archived.messages), (3, 0));
+  assert_eq!(archived.forgotten, ["live/1970-01-01/a.journal"]);
   let paths = |db: &Connection| -> Vec<(String, bool)> {
     db.prepare("SELECT path, digest IS NOT NULL FROM files ORDER BY path")
       .unwrap()
@@ -570,6 +571,7 @@ fn follows_files_into_archives() {
   assert_eq!(paths(&db), [(archive_path.clone(), true)]);
   let idle = index(&mut db, &dgg(&root)).unwrap();
   assert_eq!(idle.records, 0);
+  assert_eq!(idle.forgotten, Vec::<String>::new());
 
   // A late file re-merges the archive: its digest changes, so it's read
   // again from the start, and the late message arrives.
@@ -623,6 +625,10 @@ fn forgets_compacted_files_unparsed_rows() {
   compact_day(&Root::at(dgg(&root)), "1970-01-01", 3)
     .unwrap()
     .unwrap();
-  index(&mut db, &dgg(&root)).unwrap();
+  let stats = index(&mut db, &dgg(&root)).unwrap();
   assert_eq!(rows(&db), ["archive/1970/01/1970-01-01.journal.zst"]);
+  assert_eq!(
+    stats.forgotten,
+    ["live/1970-01-01/a.journal", "live/1970-01-02/old.journal"]
+  );
 }

@@ -24,8 +24,8 @@
 use {
   crate::{
     index::{
-      Error, Tally, checkpoint, open_at, open_read_only_at, relative,
-      waiting_in,
+      Error, Tally, checkpoint, forget_gone, open_at, open_read_only_at,
+      relative, waiting_in,
     },
     kick::Kick,
     service::Service,
@@ -82,6 +82,8 @@ pub struct Stats {
   pub unparsed: u64,
   /// Files skipped because their header couldn't be read, with why.
   pub skipped: Vec<(String, String)>,
+  /// Live files gone from the journal, forgotten.
+  pub forgotten: Vec<String>,
 }
 
 impl Tally for Stats {
@@ -91,6 +93,10 @@ impl Tally for Stats {
 
   fn skipped(&self) -> &[(String, String)] {
     &self.skipped
+  }
+
+  fn forgotten(&self) -> &[String] {
+    &self.forgotten
   }
 
   fn add(&mut self, other: &Self) {
@@ -191,7 +197,7 @@ pub fn index(db: &mut Connection, dir: &Path) -> Result<Stats, Error> {
     };
     index_file(db, &origin, Some(&archive.sha256), reader, &mut stats)?;
   }
-  forget_gone(db, &live)?;
+  stats.forgotten = forget_gone(db, &["live/"], &live)?;
   Ok(stats)
 }
 
@@ -229,29 +235,6 @@ pub(crate) fn recent(
     index_file(&mut recent, &origin, None, reader, &mut stats)?;
   }
   Ok(recent)
-}
-
-/// Drops what the index holds of live files that no longer exist
-/// (compacted away): their checkpoints and their unparsed rows.
-fn forget_gone(db: &mut Connection, live: &[String]) -> Result<(), Error> {
-  let transaction = db.transaction()?;
-  let stale: Vec<String> = transaction
-    .prepare(
-      "SELECT path FROM files WHERE path GLOB 'live/*'
-       UNION
-       SELECT path FROM unparsed WHERE path GLOB 'live/*'",
-    )?
-    .query_map([], |row| row.get(0))?
-    .collect::<Result<Vec<String>, _>>()?
-    .into_iter()
-    .filter(|path| !live.contains(path))
-    .collect();
-  for path in stale {
-    transaction.execute("DELETE FROM files WHERE path = ?1", [&path])?;
-    transaction.execute("DELETE FROM unparsed WHERE path = ?1", [&path])?;
-  }
-  transaction.commit()?;
-  Ok(())
 }
 
 /// The file being indexed: its channel, and its path as the index names it.
