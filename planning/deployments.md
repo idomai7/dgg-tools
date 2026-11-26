@@ -20,6 +20,9 @@ from as a rule. Rollouts before 2026-11-24 are sparsely recorded; those
 between 2026-11-09 and 2026-11-23 aren't in any surviving transcript.
 
 ## Rollouts
+- **2026-11-26-03** `370faaf`, Ryx then Lemur: the audit's fixes, the
+  stale-status sweep's warnings, dgg channels' step 8. Both nominal.
+  Lemur may show `be4ee56`, the same code (a docs commit made meanwhile).
 - **2026-11-26-02,** the second host: build unknown, between `c3ca0cc`
   and `d637e59` (both hosts were upgraded by 14:38, before step 8 of dgg
   channels was built). Not tagged.
