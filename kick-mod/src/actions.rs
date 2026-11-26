@@ -43,6 +43,8 @@ pub struct Target {
 
 impl Asked {
   /// Whether Kick could take it: why not if not. A blank reason is none.
+  /// A message's id goes in a delete's path, so it's letters, digits and
+  /// dashes, as Kick's are.
   pub fn check(mut self) -> Result<Self, String> {
     self.reason = self
       .reason
@@ -56,6 +58,9 @@ impl Asked {
     match self.action {
       Action::Delete if self.message_id.is_none() => {
         Err("a delete needs the message's id".into())
+      }
+      Action::Delete if !self.message_id.as_deref().is_some_and(is_id) => {
+        Err("not a message's id".into())
       }
       Action::Timeout { minutes } if !(1..=MAX_TIMEOUT).contains(&minutes) => {
         Err(format!("a timeout is 1 to {MAX_TIMEOUT} minutes"))
@@ -87,4 +92,9 @@ impl Asked {
       Action::Unban => api.unban(broadcaster_user_id, self.user.id).await,
     }
   }
+}
+
+/// Whether `id` could be a message's: letters, digits and dashes.
+fn is_id(id: &str) -> bool {
+  !id.is_empty() && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
 }

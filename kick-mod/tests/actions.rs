@@ -53,6 +53,17 @@ fn a_delete_needs_its_message() {
 }
 
 #[test]
+fn a_deletes_message_id_is_one_kick_could_give() {
+  let mut delete = asked(Action::Delete);
+  delete.message_id = Some("0b8c2a3e-1f2d-4c5b-9a6e-7d8f9a0b1c2d".into());
+  assert!(delete.clone().check().is_ok());
+  for id in ["", "../moderation/bans", "m1?x=1", "m 1"] {
+    delete.message_id = Some(id.into());
+    assert!(delete.clone().check().is_err(), "{id:?}");
+  }
+}
+
+#[test]
 fn reads_as_the_page_sends_it() {
   let sent = r#"{"channel": "one", "action": "timeout", "minutes": 10,
     "user": {"id": 9, "username": "someone"}, "message_id": "m1"}"#;
