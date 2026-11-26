@@ -26,6 +26,13 @@ hold the same working rules as below; they load on their own.
 - **Live things are the user's:** anything that talks to Kick, dgg or a
   real install's data is run by the user in their own terminal. Don't run
   commands that act on real data.
+- **Upgrades:** asked whether it's a good time to upgrade, say what the
+  upgrade changes on a host, what could go wrong, and whether one host can
+  go first. Walk through it step by step when asked.
+- **Choices:** for a design choice the user should make, ask with a few
+  options, the recommended one first and marked so. The user often
+  writes "notes:" with several requests at once: plan them, confirm,
+  then build them one at a time.
 
 ## Commits
 - Commit each finished task as soon as it builds and passes tests and
@@ -38,6 +45,8 @@ hold the same working rules as below; they load on their own.
   reminder says.
 - `Cargo.lock` changes go in their own commit right after the code that
   caused them, with the bare message `Cargo.lock` and no `generated`.
+- The checks: `cargo fmt --check`, `cargo clippy --workspace
+  --all-targets` with no warnings, and `cargo test --workspace`.
 - Chain checks with `&&`, never `;`, so a failing test stops the commit
   (once, a commit went through a failing test that way).
 
@@ -100,6 +109,11 @@ hold the same working rules as below; they load on their own.
   `cargo run -p deploy --bin dgg-logger -- <command>`.
 - Cargo's own `--config` flag reads TOML: kick-mod's flags go after `--`
   (`cargo run -p kick-mod -- config`).
+- Tests mustn't depend on what runs on this machine: it runs a real
+  install, whose processes once filled the watch screen's test (it
+  clears `report.programs` now).
+- A few files were CRLF before (`deploy/src/install/task.rs`, the cert
+  `.pem` fixtures); leave them as they are.
 - `git status` lists `logger/src/dgg/backfill/mod.rs` and
   `logger/tests/backfill.rs` as modified, but their contents match the
   index and `git diff` is empty. Ignore them.
@@ -159,8 +173,8 @@ How it runs (details in `deploy/README.md`):
   yet.
 - **Git:** `main` is 28 commits ahead of `origin/main` (`d637e59`),
   nothing pushed. Tag `pre-audit` (`581e270`) marks the start of the
-  2026-11-26 audit; 24 commits since. There are also old `kick` (the
-  webhook probe) and `master` branches.
+  2026-11-26 audit; 24 commits since. `main` is the only branch (the old
+  `kick` and `master` were merged and deleted on 2026-11-26).
 - **Done recently:** dgg channels (all 8 steps), a capture per Kick
   channel, JSONC channel lists, the status screen (sorting, scrolling,
   minimizing, scrollbars, reverse keys), the stale-status sweep, and the
