@@ -5,6 +5,10 @@ the project's shape, where things stand, and what's open. Update it at
 each handoff: replace what changed, keep what still holds. Last updated
 2026-11-26.
 
+**Started from:** (a new session writes here the commit it started at,
+`git log -1 --format=%h`, and commits it, so the next handoff can see
+what changed since: `git log <that>..`.)
+
 Read with it: this directory's [README](README.md) (the rules for every
 tool), each tool's document here, and `deploy/README.md` (operating the
 logger). Planning documents say what is and what's open; how it got
@@ -172,7 +176,8 @@ How it runs (details in `deploy/README.md`):
   through the dgg channels work and the status-screen changes. Channels:
   destiny.gg, omniliberal.dev (a quiet dev chat), and the user's Kick
   channels. Which build each runs now: ask. Neither syncs with the other
-  yet.
+  yet. Every rollout is in [deployments](deployments.md) and tagged
+  `deployed/<date>-<nn>`: record each the user reports.
 - **Git:** see `git status` for what's unpushed (pushing is the user's).
   Tags: `pre-audit` marks the start of the 2026-11-26 audit (`git log
   pre-audit..` has its fixes); `planning-full` the planning documents
