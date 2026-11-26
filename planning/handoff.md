@@ -172,7 +172,8 @@ How it runs (details in `deploy/README.md`):
   `--config-stdin`, never from flags or the environment.
 
 ## Where things stand
-- **Hosts:** two Windows hosts run the logger, both upgraded by the user
+- **Hosts:** two Windows hosts run the logger, Ryx (this machine, where
+  the repo is) and Lemur, both upgraded by the user
   through the dgg channels work and the status-screen changes. Channels:
   destiny.gg, omniliberal.dev (a quiet dev chat), and the user's Kick
   channels. Which build each runs now: ask. Neither syncs with the other

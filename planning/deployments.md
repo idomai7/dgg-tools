@@ -1,6 +1,7 @@
 # Deployments
 
-Every rollout of the logger to the hosts, newest first: when, the build
+The hosts are Ryx (the development machine) and Lemur. Every rollout of
+the logger to them, newest first: when, the build
 (the commit it was built from, as `status` shows it after the version),
 which hosts, and anything that went wrong. Each rollout is also an
 annotated tag, `deployed/<date>-<nn>` (local dates, AEDT; `nn` from
