@@ -3,16 +3,15 @@
 //!
 //! The keys are grouped. First, with letters: `l` every log at once, in
 //! time order, the page it starts on; `r` the newest records a capture
-//! wrote, again for the next capture, round every channel's; `f` one
-//! channel's capture's log, again for the next, and `F` the one before;
-//! Space redraws now, `e`
-//! opens the data folder, and `q` (or Esc, or Ctrl-C) quits. Then each
-//! program's log, with numbers: `1` the supervisor's, `2` migrate's, `3`
-//! every capture's, dgg's and Kick's, in time order, `4` compact's, `5`
-//! index's, `6` the gaps in the first dgg channel's capture, looked at
-//! again every 30 seconds, again for the next channel's, `7` sync's and
-//! `8` serve's. Last, the
-//! boxes: Tab and Shift-Tab move the focus between them (the page at the
+//! wrote, again for the next capture, round every channel's, and `R` the
+//! one before; `f` one channel's capture's log, again for the next, and
+//! `F` the one before; Space redraws now, `e` opens the data folder, and
+//! `q` (or Esc, or Ctrl-C) quits. Then each program's log, with numbers:
+//! `1` the supervisor's, `2` migrate's, `3` every capture's, dgg's and
+//! Kick's, in time order, `4` compact's, `5` index's, `6` the gaps in the
+//! first dgg channel's capture, looked at again every 30 seconds, again
+//! for the next channel's, and `^` (Shift-6) the one before, `7` sync's
+//! and `8` serve's. Last, the boxes: Tab and Shift-Tab move the focus between them (the page at the
 //! bottom too), Up, Down, Page Up and Page Down scroll the focused one when
 //! it's over-tall, `m` minimizes it to its title line, or restores it,
 //! and `s` sorts it by its next key, `S` the other way (see [`sort`]; the
@@ -79,18 +78,24 @@ enum Page {
   /// One capture's log, the one before.
   CaptureBack,
   Records,
+  /// A capture's records, the one before.
+  RecordsBack,
   Gaps,
+  /// The gaps of the dgg channel before.
+  GapsBack,
 }
 
 /// The keys, with their names and what they do, in groups: the views
 /// across everything and the controls, then each program's log, then the
-/// boxes' (after [`MOVING`]).
+/// boxes' (after [`MOVING`]). A key with no name does the key before's
+/// the other way, and is shown with it (`r/R records`).
 const KEYS: [&[(char, &str, Action)]; 3] = [
   &[
     ('l', "logs", Action::Show(Page::Logs)),
     ('r', "records", Action::Show(Page::Records)),
+    ('R', "", Action::Show(Page::RecordsBack)),
     ('f', "channel", Action::Show(Page::Capture)),
-    ('F', "back", Action::Show(Page::CaptureBack)),
+    ('F', "", Action::Show(Page::CaptureBack)),
     (' ', "redraw", Action::Redraw),
     ('e', "open data", Action::OpenData),
     ('q', "quit", Action::Quit),
@@ -108,7 +113,7 @@ const KEYS: [&[(char, &str, Action)]; 3] = [
   &[
     ('m', "minimize", Action::Minimize),
     ('s', "sort", Action::Sort),
-    ('S', "reverse", Action::Reverse),
+    ('S', "", Action::Reverse),
   ],
 ];
 
@@ -288,7 +293,7 @@ fn look_for_gaps(index: &Path, channel: &str, more: bool) -> Pane<'static> {
       utc_timestamp(now),
       GAPS_EVERY.as_secs(),
       if more {
-        "; 6 again for the next channel"
+        "; 6 for the next channel, ^ the one before"
       } else {
         ""
       }
@@ -310,16 +315,21 @@ impl View {
       (Page::Captures, _) => Self::Captures(None),
       (Page::Capture, current) => current.next_capture(report, false),
       (Page::CaptureBack, current) => current.next_capture(report, true),
-      (Page::Records, current) => current.next_records(report),
-      (Page::Gaps, Self::Gaps(gaps)) => {
-        let next = next_channel(report, Some(&gaps.channel));
+      (Page::Records, current) => current.next_records(report, false),
+      (Page::RecordsBack, current) => current.next_records(report, true),
+      (Page::Gaps | Page::GapsBack, Self::Gaps(gaps)) => {
+        let back = page == Page::GapsBack;
+        let next = next_channel(report, Some(&gaps.channel), back);
         match next == gaps.channel {
           // The one channel: as it is, not looked at again.
           true => Self::Gaps(gaps),
           false => Self::Gaps(Gaps::new(next)),
         }
       }
-      (Page::Gaps, _) => Self::Gaps(Gaps::new(next_channel(report, None))),
+      (Page::Gaps | Page::GapsBack, _) => {
+        let back = page == Page::GapsBack;
+        Self::Gaps(Gaps::new(next_channel(report, None, back)))
+      }
     }
   }
 
@@ -408,10 +418,10 @@ impl View {
   }
 
   /// The records of the capture at the top of the captures box, or if a
-  /// capture's are shown, the next one's: dgg's, then Kick's, each by
-  /// channel, then by instance, so that however the box is sorted,
-  /// pressing on comes round to every one.
-  fn next_records(&self, report: &Report) -> Self {
+  /// capture's are shown, the next one's, or `back`, the one before:
+  /// dgg's, then Kick's, each by channel, then by instance, so that
+  /// however the box is sorted, pressing on comes round to every one.
+  fn next_records(&self, report: &Report, back: bool) -> Self {
     let mut all: Vec<Which> = report
       .captures
       .iter()
@@ -421,8 +431,7 @@ impl View {
       return Self::Records(all.into_iter().next());
     };
     all.sort();
-    let next = all.iter().find(|which| *which > current);
-    Self::Records(next.or(all.first()).cloned())
+    Self::Records(next_after(&all, current, back).cloned())
   }
 }
 
@@ -437,9 +446,23 @@ pub fn cycle(at: Option<usize>, len: usize, back: bool) -> Option<usize> {
   }
 }
 
+/// The first of `sorted` after `current`, or `back`, the last before it;
+/// round to the other end, past one.
+pub fn next_after<'a, T: Ord>(
+  sorted: &'a [T],
+  current: &T,
+  back: bool,
+) -> Option<&'a T> {
+  match back {
+    false => sorted.iter().find(|t| *t > current).or(sorted.first()),
+    true => sorted.iter().rev().find(|t| *t < current).or(sorted.last()),
+  }
+}
+
 /// The dgg channel after `current` in `report` (its first, after the last
-/// or without one); destiny.gg's if it has none.
-fn next_channel(report: &Report, current: Option<&str>) -> String {
+/// or without one), or `back`, before it (its last, before the first or
+/// without one); destiny.gg's if it has none.
+fn next_channel(report: &Report, current: Option<&str>, back: bool) -> String {
   let names: Vec<&str> = report
     .dgg
     .channels
@@ -447,9 +470,14 @@ fn next_channel(report: &Report, current: Option<&str>) -> String {
     .map(|c| c.name.as_str())
     .collect();
   let at = current.and_then(|current| names.iter().position(|n| *n == current));
-  let next = at.map_or(0, |at| at + 1);
-  let next = names.get(next).or(names.first());
-  next.map_or(DESTINY, |name| name).to_owned()
+  let len = names.len();
+  let next = match (at, back) {
+    (None, false) => 0,
+    (None, true) => len.saturating_sub(1),
+    (Some(at), false) => (at + 1) % len,
+    (Some(at), true) => (at + len - 1) % len,
+  };
+  names.get(next).map_or(DESTINY, |name| name).to_owned()
 }
 
 /// The records page's title: the capture, and what it listens to.
@@ -460,7 +488,7 @@ fn records_title(which: &Which, report: &Report) -> String {
     true => format!("kick {}, channel {listening}", which.instance),
     false => format!("dgg {}, {listening}", which.instance),
   };
-  format!("records: {what} (r again for the next capture)")
+  format!("records: {what} (r for the next capture, R the one before)")
 }
 
 /// Runs the screen until the user quits.
@@ -547,9 +575,16 @@ fn action(key: char) -> Option<Action> {
   KEYS
     .iter()
     .flat_map(|group| group.iter())
+    .chain(&UNLISTED)
     .find(|(offered, _, _)| *offered == key)
     .map(|(_, _, action)| *action)
 }
+
+/// Keys left out of the keys shown, for room, each told of where it
+/// works: `^` (Shift-6), the gaps of the dgg channel before, in the gaps
+/// page's title.
+const UNLISTED: [(char, &str, Action); 1] =
+  [('^', "", Action::Show(Page::GapsBack))];
 
 /// The keys, in their groups, on as many lines `width` wide as they need. A
 /// group isn't split across lines, and goes on the first line with room.
@@ -559,11 +594,18 @@ pub fn keys(width: u16) -> Vec<String> {
     .map(|group| {
       group
         .iter()
-        .map(|(key, name, _)| match key {
-          ' ' => format!("space {name}"),
-          key => format!("{key} {name}"),
+        .fold(Vec::<String>::new(), |mut shown, (key, name, _)| {
+          match (shown.last_mut(), *name) {
+            // The key before's, the other way: shown with it, `r/R records`.
+            (Some(before), "") => {
+              let at = before.find(' ').unwrap_or(before.len());
+              before.insert_str(at, &format!("/{key}"));
+            }
+            _ if *key == ' ' => shown.push(format!("space {name}")),
+            _ => shown.push(format!("{key} {name}")),
+          }
+          shown
         })
-        .collect::<Vec<_>>()
         .join("  ")
     })
     .collect();

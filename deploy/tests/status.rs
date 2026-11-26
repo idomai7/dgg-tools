@@ -210,8 +210,7 @@ fn draws_the_watch_screen() {
     " journal (by list) ",
     " dgg-capture.log ",
     "capturing as a-1",
-    " l logs  r records  f channel  F back  space redraw  e open data  \
-     q quit ",
+    " l logs  r/R records  f/F channel  space redraw  e open data  q quit ",
     " 1 supervisor  2 migrate  3 capture  4 compact  5 index  6 gaps  7 sync  \
      8 serve",
   ] {
@@ -327,22 +326,30 @@ fn the_watch_keys_take_more_lines_when_narrow() {
   assert_eq!(wide.len(), 1, "{wide:?}");
   assert!(wide[0].contains("q quit | 1 supervisor"), "{wide:?}");
   assert!(wide[0].contains("8 serve | tab focus"), "{wide:?}");
-  assert!(
-    wide[0].ends_with("m minimize  s sort  S reverse"),
-    "{wide:?}"
-  );
+  assert!(wide[0].ends_with("m minimize  s/S sort"), "{wide:?}");
   let narrow = keys(80);
   assert_eq!(narrow.len(), 3, "{narrow:?}");
   assert!(narrow.iter().all(|line| line.len() <= 80), "{narrow:?}");
   assert!(narrow[0].ends_with("q quit"), "{narrow:?}");
   assert!(narrow[1].starts_with(" 1 supervisor"), "{narrow:?}");
   assert!(narrow[1].ends_with("8 serve"), "{narrow:?}");
-  assert!(narrow[2].ends_with("S reverse"), "{narrow:?}");
+  assert!(narrow[2].ends_with("s/S sort"), "{narrow:?}");
 }
 
 #[test]
-fn goes_round_the_capture_logs_both_ways() {
-  use ::deploy::status::watch::cycle;
+fn goes_round_both_ways() {
+  use ::deploy::status::watch::{cycle, next_after};
+
+  // Records: round every capture, past one to the other end.
+  let all = [1, 3, 5];
+  assert_eq!(next_after(&all, &3, false), Some(&5));
+  assert_eq!(next_after(&all, &5, false), Some(&1));
+  assert_eq!(next_after(&all, &3, true), Some(&1));
+  assert_eq!(next_after(&all, &1, true), Some(&5));
+  // One gone meanwhile: the one either side of where it was.
+  assert_eq!(next_after(&all, &4, false), Some(&5));
+  assert_eq!(next_after(&all, &4, true), Some(&3));
+  assert_eq!(next_after::<i32>(&[], &4, true), None);
 
   // Every capture's, then each in turn, then every capture's again.
   let mut at = None;
