@@ -245,14 +245,18 @@ grouped:
   `^` (Shift-6) the one before, left off the keys shown for room),
   `7` sync's, `8` serve's;
 - the boxes: Tab and Shift-Tab move the focus between them, the page at
-  the bottom too (its border turns cyan); Up, Down, Page Up and Page Down
-  scroll the focused one when it's over-tall (its title says which lines
-  it shows, and a scrollbar on its right border where they are, `▲` or
-  `▼` at an end with more that way, `△` or `▽` with none); `m` minimizes it to its title line, or restores it, the
-  others sharing the room evenly (one that needs less than its share
-  taking only that); `s` sorts it by its next key, round to the
-  first, and `S` reverses it (its title says how it's sorted, as
-  `captures (by load, reversed)`).
+  the bottom too (its border turns cyan), and so does a click on one;
+  Up, Down, Page Up and Page Down scroll the focused one when it's
+  over-tall, and the mouse wheel the one under the cursor, focused or
+  not, 3 lines a notch (its title says which lines it shows, and a
+  scrollbar on its right border where they are, `▲` or `▼` at an end
+  with more that way, `△` or `▽` with none); `m` minimizes it to its
+  title line, saying `(minimized)`, or restores it, the others sharing
+  the room evenly (one that needs less than its share taking only that);
+  `s` sorts it by its next key, round to the first, and `S` reverses it
+  (its title says how it's sorted, as `captures (by load, reversed)`).
+  The screen captures the mouse while it runs, so a plain drag doesn't
+  select text; in Windows Terminal, Shift-drag still does.
 
 The captures box lists dgg's and Kick's captures together, each after its
 service, the unhealthy first (stale, then connecting), then the busiest,
