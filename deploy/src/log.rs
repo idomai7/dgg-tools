@@ -61,15 +61,19 @@ impl Log {
   }
 
   /// Appends `line` with unix ms `ms` in front, rotating first if it would
-  /// take the file past its maximum size.
+  /// take the file past its maximum size. A rotation that fails (as while
+  /// a reader holds a file that won't let it be renamed) is its error, but
+  /// the line is written still, and the rotation tried again at the next.
   pub fn line_at(&mut self, ms: i64, line: &str) -> io::Result<()> {
     let text = format!("{} {line}\n", utc_timestamp(ms));
-    if self.size > 0 && self.size + text.len() as u64 > self.max_size {
-      self.rotate()?;
-    }
+    let full = self.size + text.len() as u64 > self.max_size;
+    let rotated = match self.size > 0 && full {
+      true => self.rotate(),
+      false => Ok(()),
+    };
     self.file.write_all(text.as_bytes())?;
     self.size += text.len() as u64;
-    Ok(())
+    rotated
   }
 
   fn rotate(&mut self) -> io::Result<()> {

@@ -40,6 +40,30 @@ fn rotates_by_size_keeping_some() {
 }
 
 #[test]
+fn a_line_is_kept_while_rotating_fails() {
+  let dir = TempDir::new("deploy-log-stuck");
+  let path = dir.path().join("capture.log");
+  // Where the log would rotate to, taken: rotating fails.
+  dir.write("capture.1.log/in-the-way", "");
+  let mut log = Log::open(&path, 70, 1).unwrap();
+  log.line_at(0, "line0").unwrap();
+  log.line_at(0, "line1").unwrap();
+  assert!(log.line_at(0, "line2").is_err());
+  fs::remove_dir_all(rotated(&path, 1)).unwrap();
+  log.line_at(0, "line3").unwrap();
+  drop(log);
+  let stamp = utc_timestamp(0);
+  let lines = |ns: &[u32]| -> String {
+    ns.iter().map(|n| format!("{stamp} line{n}\n")).collect()
+  };
+  assert_eq!(
+    fs::read_to_string(rotated(&path, 1)).unwrap(),
+    lines(&[0, 1, 2])
+  );
+  assert_eq!(fs::read_to_string(&path).unwrap(), lines(&[3]));
+}
+
+#[test]
 fn appends_to_an_existing_log() {
   let dir = TempDir::new("deploy-log-append");
   let path = dir.path().join("index.log");
