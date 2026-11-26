@@ -773,7 +773,10 @@ WebSocket URL of its own. Each step a pause for review.
      a change is picked up, backfill destiny.gg's alone), and dgg's by
      channel throughout.
   8. Removing the old-control heartbeat and the move, once both hosts
-     have moved.
+     have moved. Built 2026-11-26: `dgg::migrate` stays as a skeleton for
+     the next move, a `move_in` that does nothing, its docs saying how
+     this one was built and where its code is (from `4869223`); `migrate`
+     warns of what's left of dgg's old layout, as of the layout before.
 - **The next channel:** `omniliberal.dev`, a dev chat speaking the same
   protocol as destiny.gg, added to the list once step 4 is in (its URL and
   Origin confirmed then). No backfill source has it, so its gaps stay
