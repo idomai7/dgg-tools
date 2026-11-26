@@ -173,8 +173,7 @@ How it runs (details in `deploy/README.md`):
   yet.
 - **Git:** `main` is 28 commits ahead of `origin/main` (`d637e59`),
   nothing pushed. Tag `pre-audit` (`581e270`) marks the start of the
-  2026-11-26 audit; 24 commits since. `main` is the only branch (the old
-  `kick` and `master` were merged and deleted on 2026-11-26).
+  2026-11-26 audit; 24 commits since.
 - **Done recently:** dgg channels (all 8 steps), a capture per Kick
   channel, JSONC channel lists, the status screen (sorting, scrolling,
   minimizing, scrollbars, reverse keys), the stale-status sweep, and the
