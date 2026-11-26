@@ -33,6 +33,10 @@
 //! - `0.2`: the header ends at RS LF too.
 //!
 //! Only 0.2 is read: every host's manifests were migrated to it.
+//!
+//! Whatever writes a root's archives or manifests (compaction, and sync
+//! taking a peer's archive) holds its [`lock`] meanwhile, so neither loses
+//! the other's entry, or writes over the other's archive.
 
 use {
   crate::{
@@ -41,7 +45,8 @@ use {
   },
   ::common::{atomic_file, fs::MissingOk},
   ::std::{
-    fs, io,
+    fs::{self, File},
+    io,
     path::{Path, PathBuf},
   },
 };
@@ -61,6 +66,23 @@ pub fn version(variant: Variant) -> Version {
 
 /// The manifest's file name in each month directory.
 pub const MANIFEST: &str = "manifest";
+
+/// The lock's file name in the archive directory.
+pub const LOCK: &str = "archives.lock";
+
+/// Waits for, then holds, journal `root`'s archives' lock (see the
+/// [module docs](self)), until the file returned is dropped.
+pub fn lock(root: &Path) -> io::Result<File> {
+  let dir = archive_dir(root);
+  fs::create_dir_all(&dir)?;
+  let file = File::options()
+    .create(true)
+    .truncate(false)
+    .write(true)
+    .open(dir.join(LOCK))?;
+  file.lock()?;
+  Ok(file)
+}
 
 /// One archived day.
 #[derive(Clone, Debug, PartialEq, Eq)]

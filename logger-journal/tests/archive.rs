@@ -138,3 +138,26 @@ fn reader_reads_archives_and_resumes() {
   // Offsets are into the decompressed journal, and resuming works.
   assert_eq!(frames(36), [(36, "MSG 2".into())]);
 }
+
+#[test]
+fn the_lock_is_held_by_one_at_a_time() {
+  let root = TempDir::new("journal-archive");
+  let held = archive::lock(root.path()).unwrap();
+  // Another holder waits until it's let go.
+  let (sent, got) = ::std::sync::mpsc::channel();
+  let dir = root.path().to_owned();
+  let waiting = ::std::thread::spawn(move || {
+    let lock = archive::lock(&dir).unwrap();
+    sent.send(()).unwrap();
+    drop(lock);
+  });
+  let wait = ::std::time::Duration::from_millis(200);
+  assert!(got.recv_timeout(wait).is_err());
+  drop(held);
+  got
+    .recv_timeout(::std::time::Duration::from_secs(10))
+    .unwrap();
+  waiting.join().unwrap();
+  // And nothing reads it as a year of archives.
+  assert_eq!(archive::all(root.path()).unwrap(), []);
+}

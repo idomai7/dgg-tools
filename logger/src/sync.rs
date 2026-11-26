@@ -487,6 +487,8 @@ fn take(
   size: u64,
   download: &Path,
 ) -> io::Result<bool> {
+  // Decided and done while compaction can't change what's here.
+  let _lock = archive::lock(&root.dir)?;
   let installed = !archived(&root.dir, day)? && !has_live(root, day)?;
   let root = root.dir.as_path();
   if installed {

@@ -25,7 +25,9 @@
 //! into place and recorded in its month's manifest. Live files are deleted
 //! last, and only if they haven't grown since they were read; a file that
 //! did is merged again next time. A crash at any point leaves the live files
-//! or a verified archive (or both, which the next run merges again).
+//! or a verified archive (or both, which the next run merges again). The
+//! root's [archives' lock](archive::lock) is held throughout, so a `sync`
+//! taking a peer's archive waits.
 //!
 //! The backfill journal is compacted the same way, as a journal root of its
 //! own. Backfill runs write to days that are already closed, so the files of
@@ -304,6 +306,7 @@ fn compact(
   open: Option<i64>,
 ) -> io::Result<Option<Day>> {
   let journal_root = root.dir.as_path();
+  let _lock = archive::lock(journal_root)?;
   let mut inputs = Vec::new();
   let archive_path = archive_file(journal_root, day);
   let remerged = archive_path.exists();
