@@ -198,18 +198,11 @@ Not started; the user picks what's next.
 - **Roadmap** ([README](README.md#roadmap)): the read-only viewer, the
   archives and stats tools, a services dashboard; community services are
   notes only ([community](community.md)).
-- **Cleanup outside the repo,** each with a dry run and the user's
-  approval:
-  - `C:\Users\Nick\.claude.damaged`, the damaged copy of `~/.claude`. It
-    still holds a Kick app client id that leaked. Delete once the user is
-    satisfied nothing more is needed from it.
-  - Raw Kick probe logs with real data: the `kprobe\` folder in session
-    `f9096016-…`'s scratchpad, and `kv1\*.json` in session
-    `ac1ebf4c-…`'s, both under
-    `C:\Users\Nick\AppData\Local\Temp\claude\Z--idomai7-playground-dgg-tools\`.
-  - This session's scratchpad (`b4ed6a8a-…`) holds `tail.txt` and
-    `talk.txt`, the damaged session's conversation extracted, plus
-    throwaway edit scripts.
+- **Other sessions' scratchpads,** under
+  `C:\Users\Nick\AppData\Local\Temp\claude\Z--idomai7-playground-dgg-tools\`,
+  haven't been looked through; clearing them needs a listing first and the
+  user's approval. The known real-data leftovers (the damaged `~/.claude`
+  copy, the raw Kick probe logs) were deleted 2026-11-26.
 - **The user's own:** treat the Kick app's client id as exposed (it's an
   id, not the secret). `kick-mod.toml` is gone; the config is
   `kick-mod.env.jsonc`.
@@ -219,8 +212,8 @@ Not started; the user picks what's next.
   from transcripts matched a one-letter test value, "s", and replaced
   every "s" with "x" across `~/.claude`. The user restored `~/.claude`
   from a Windows previous version of 2026-11-24 6:24 PM, so about 7.5
-  hours of that session's transcript are lost from `~/.claude` (the
-  damaged copy is in `.claude.damaged`). All its work is in git: the
+  hours of that session's transcript are lost (the damaged copy was
+  read for what mattered, then deleted 2026-11-26). All its work is in git: the
   status page's log levels and merged logs, the index's pace, Kick steps
   4 to 6, dgg and Kick as services with API v0, `compact --early`,
   config and secrets as JSON (`install.env.json`), the supervisor running
