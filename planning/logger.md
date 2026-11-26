@@ -145,7 +145,7 @@ The logger, codenamed ledgerline: `logger-journal` and `logger`, run as
     - A status left by an instance killed or crashed (an install's or the
       supervisor's handoff wait running out, say) is swept away by the
       newest healthy instance once its heartbeat has stopped for 10
-      minutes, older or newer than it, and logged (2026-11-26). Nothing
+      minutes, older or newer than it, with a warning (2026-11-26). Nothing
       reads a stale status: handoff ignores it, and compact takes it as
       not writing.
     - Tested live: 34 s of overlap, with 13 MSGs in both journals and none
