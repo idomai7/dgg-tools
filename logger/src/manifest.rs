@@ -46,6 +46,7 @@
 
 use {
   crate::service::{Root, Service},
+  ::common::fs::MissingOk,
   ::logger_journal::{
     archive::{self, valid_day},
     layout::{ARCHIVE_SUFFIX, EXTENSION},
@@ -145,13 +146,18 @@ pub fn list<S: Service>(dir: &Path, name: &str) -> io::Result<Vec<File>> {
   for root in S::channel_roots(dir, name) {
     for path in root.live_files()? {
       let relative = root.path(&path);
-      if valid_path::<S>(&relative) {
-        files.push(File {
-          path: relative,
-          size: fs::metadata(&path)?.len(),
-          sha256: None,
-        });
+      if !valid_path::<S>(&relative) {
+        continue;
       }
+      // Compacted away since it was listed, it's in an archive now.
+      let Some(metadata) = fs::metadata(&path).missing_ok()? else {
+        continue;
+      };
+      files.push(File {
+        path: relative,
+        size: metadata.len(),
+        sha256: None,
+      });
     }
     for archive in archive::all(&root.dir)? {
       let day = &archive.day;
