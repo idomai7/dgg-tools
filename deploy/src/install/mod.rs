@@ -597,12 +597,19 @@ pub fn install(options: &Options) -> io::Result<Done> {
         ],
         true => &["dgg-logger dgg-capture", "dgg-logger capture"],
       };
-      processes::wait_gone_except(
+      let gone = processes::wait_gone_except(
         &old.bin(),
         captures,
         &build,
         options.handoff_within,
       )?;
+      if !gone {
+        problems.push(format!(
+          "what was installed didn't hand off all its captures within {}s, \
+           and they were stopped: a channel may miss a few minutes",
+          options.handoff_within.as_secs()
+        ));
+      }
     }
     stop(current, options.scope, &build)?;
 
@@ -679,7 +686,7 @@ pub fn install(options: &Options) -> io::Result<Done> {
       problems.push(format!(
         "{slug}: the new install's Kick capture wasn't healthy within {}s; \
          see supervisor.log and {}.log",
-        options.healthy_within.as_secs(),
+        (options.healthy_within + spread).as_secs(),
         kick_capture_log(slug)
       ));
     }
