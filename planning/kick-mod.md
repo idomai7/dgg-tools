@@ -1,211 +1,113 @@
 # kick-mod
 
-A chat client and moderation tools for Kick channels, codenamed gavelgab. Kick
-only, built on [kick-api](kick-api.md). See the [overall rules](README.md).
+A chat client and moderation tools for Kick channels, codenamed gavelgab,
+built on [kick-api](kick-api.md) and the [logger](logger.md). See the
+[overall rules](README.md).
 
 ## Scope (first version)
-- Several Kick channels managed at once, as broadcaster on my own channels and
-  as moderator on others.
-- **Manual actions:** ban, timeout, unban and delete message, from the chat
-  view.
-- **Automod rules:** each rule says what a match does: flag it for review,
+- Several Kick channels at once: as broadcaster on my own, as moderator on
+  others.
+- **Manual actions:** ban, timeout, unban and delete message, from the chat.
+- **Automod rules:** each says what a match does: flag it for review,
   delete, timeout or ban.
-- **User history lookup:** a user's past messages, and the actions taken on
-  them.
+- **User history:** a user's past messages in a channel, and the actions
+  taken on them.
 - **Mod log:** every action taken through the tool, with its reason.
 
 ## Decisions
-- **Kick, only officially:** kick-mod talks to Kick only through its official
-  API, signed in, and gets everything else (live chat, history, channels'
-  ids) from the logger, which reads Kick's undocumented endpoints
-  anonymously, with no token or login (see [logger](logger.md)). So nothing
-  tied to the account or the app touches an undocumented endpoint.
-  - Until the logger served Kick, kick-mod had its own Centrifugo
-    connection, journal, gap filling and `ids` lookup. They went on
-    2026-11-25 (step 8); the steps below that describe them are history.
-- **Interface:** a local web UI: axum serving plain-JS pages with no build step.
-- **Users:** for now one user (me), with one Kick OAuth token, on the local PC.
-  It may later be hosted remotely and opened to other moderators, so this
-  shouldn't be designed out.
-- **Connections:** one stream from the logger per channel.
-- **History:** the logger's, which captures Kick's chat always, not only
-  while kick-mod runs. kick-mod journals nothing. Journals it wrote before
-  (`data/kick-mod/journal/`) stay on disk, in the logger's format.
-- **Files:** settings in a config file, and what kick-mod learns or keeps in
-  `data/kick-mod/`.
-  - **Config:** JSON, as every config with secrets is (see the
-    [overall rules](README.md)): `kick-mod.env.jsonc` (`--config-file` for
-    another), or on stdin with `--config-stdin`. Gitignored, since it holds
-    the app's secret and the logger's token. Only edited by hand; kick-mod
-    never writes it. `kick-mod config` shows it, each secret as `<secret>`.
-    It replaced `kick-mod.toml` on 2026-11-25, which replaced `.env`.
-    ```jsonc
-    {
-      "app": {"client_id": "...", "client_secret": "..."},
-      "server": {"listen": "127.0.0.1:8787"},
-      "logger": {
-        "url": "https://pi:8788",
-        "token": "...",
-        "ca": "-----BEGIN CERTIFICATE-----\n..."
-      }
+- **Kick, only officially:** kick-mod talks to Kick only through its
+  official API, signed in. Live chat, history and channels' ids come from
+  the logger, which reads Kick's undocumented endpoints anonymously, so
+  nothing tied to the account or the app touches an undocumented
+  endpoint. (Until 2026-11-25 kick-mod had its own Centrifugo connection,
+  journal and gap filling; its old journals stay in
+  `data/kick-mod/journal/`, in the logger's format.)
+- **Interface:** a local web UI, axum serving plain-JS pages with no build
+  step. Server-sent events push to the page; actions are plain POSTs.
+- **Users:** one for now (me), with one Kick OAuth token, on the local PC.
+  It may later be hosted for other moderators, so that isn't designed out:
+  some settings (which channels they see) would become theirs, in a
+  per-moderator part of `data/kick-mod/`.
+- **Access:** listens on `127.0.0.1:8787` only, with no login yet. It
+  refuses requests whose `Host` or `Origin` isn't its own, so other sites
+  in the browser can't act through it. A login (most likely signing in
+  with Kick) comes before it's hosted for others.
+- **Requests to Kick** time out after 30 s.
+
+## Files
+- **Config:** `kick-mod.env.jsonc` (or `--config-file`, or
+  `--config-stdin`), JSONC like every config with secrets (see the
+  [overall rules](README.md)). Gitignored; edited by hand only.
+  `kick-mod config` shows it with each secret as `<secret>`.
+
+  ```jsonc
+  {
+    "app": {"client_id": "...", "client_secret": "..."},
+    "server": {"listen": "127.0.0.1:8787"},
+    "logger": {
+      "url": "https://pi:8788",
+      "token": "...",
+      "ca": "-----BEGIN CERTIFICATE-----\n..."
     }
-    ```
-    - `server` is optional. `logger` is required: the logger's `serve` to
-      read Kick from, with its query token, and the mesh CA's certificate
-      for HTTPS.
-  - **Channels:** `data/kick-mod/channels.json`, an object per channel by slug,
-    written by kick-mod and editable by hand:
-    ```json
-    {
-      "<slug>": {"broadcaster_user_id": 456}
-    }
-    ```
-    - kick-mod adds a channel when asked, by `kick-mod add <slug>` now and
-      from the page later: `broadcaster_user_id` from the official API, with
-      the app's token. The channel and chatroom ids it once recorded stay in
-      old files, kept as fields it doesn't know.
-    - Written whole, pretty-printed and sorted by slug. It's re-read just before
-      each write, so hand edits made while kick-mod runs survive, and fields
-      kick-mod doesn't know are kept.
-    - It's still a race: a hand edit saved between kick-mod's read and its write
-      is lost. Rare while it's one moderator; it could be handled later, by
-      writing only if the file hasn't changed since the read.
-      - Written to a temporary file beside it, then renamed over it. Written in
-        place, a reader (an editor, or another process) could see it empty or
-        half-written; renamed, it sees the old file or the new one. On Windows
-        the rename can fail while another process has the file open, so a failed
-        write is reported and retried, not lost.
-  - **Token:** `data/kick-mod/token.json`, saved again on each refresh.
-  - **Mod log:** `data/kick-mod/modlog.jsonl`.
-  - With several moderators, some settings become theirs, such as which channels
-    they see. They'll go in a per-moderator part of `data/kick-mod/`, since
-    moderators will change them from the page; for now there's one moderator,
-    who sees every channel.
-- **Pushing to the page:** server-sent events (SSE). The page sends actions with
-  plain POSTs.
-- **Access:** the server listens on `127.0.0.1:8787` only, with no login yet. It
-  refuses requests whose `Host` or `Origin` isn't its own, so other websites in
-  the browser can't act through it.
-  - Later, a login: needed before it's hosted for other moderators. Most likely
-    each moderator signs in with Kick, which also says who they are.
+  }
+  ```
 
-## Steps
-Each is a pause for review.
-1. **Server:** `kick-mod serve`, reading the config and the channels and serving
-   one plain page, with the `Host`/`Origin` check. `ids` records channels' ids
-   in `channels.json`.
-2. **Sign-in:** a "Sign in" button on the page goes to Kick, which redirects
-   back to the server's own `/oauth/callback`. Later starts use the saved token.
-   When it can't be refreshed, the page asks to sign in again. Signing out
-   revokes the token with Kick and deletes it. The redirect URI is
-   `http://localhost:<port>/oauth/callback`, so the app has to register it
-   with the port kick-mod serves on.
-3. **Live chat:** a realtime connection per channel, and a column per channel on
-   the page, fed over SSE: messages, with deletions, bans and timeouts shown as
-   they happen.
-   - The channels are read when kick-mod starts: one added later is listened
-     to after a restart, until channels can be added from the page.
-   - A page that connects gets each channel's status, then what happens
-     after. Nothing is replayed, to a page that reconnects or after Kick's
-     connection drops: the page says so, and that chat is missing.
-4. **Manual actions:** delete, timeout (preset durations), ban and unban on each
-   message, with an optional reason. Each is appended to the mod log: when, by
-   whom, what, on whom, why, and Kick's answer. A failure shows Kick's error.
-   - The buttons show on hovering a message: delete, timeouts of 1m, 10m, 1h
-     and 1d, and ban. A ban or timeout's line has unban. One reason box, in
-     the header, goes with the next action and is cleared once it's done.
-   - What's done shows when Kick's event for it arrives in the chat; only a
-     refusal is shown at once.
-   - A refused action doesn't sign the moderator out, even with a 400 or
-     401: Kick answers a bad request with 400 too. The page's next check of
-     who's signed in does.
-5. **Journal:** each channel's connection is journaled as it arrives, raw:
-   frames, and opens and closes.
-   - A stop, which has no disconnect of its own, closes the open connection.
-   - A channel whose slug can't be a directory's name isn't journaled. A
-     write that fails stops that channel's journal until a restart, said on
-     stderr.
-   - Quitting kick-mod writes no close: the file just ends.
-6. **User history lookup:** clicking a username in a channel's column opens a
-   panel with that user's history in that channel, by their user id (it stays
-   when they rename). Oldest first, one timeline:
-   - From the channel's journal (its live files, and archives if any): their
-     messages, those later deleted marked so (by Kick's AI moderation, too),
-     and the bans, timeouts and unbans on them, with by whom. Frames are read
-     into events by the same code as live chat.
-   - From the mod log: the actions taken on them in that channel through
-     kick-mod, refused ones too, with the reason and Kick's answer.
-   - `GET /api/history?channel=<slug>&user=<id>`: the messages, capped at the
-     newest 500, the events and the actions. The name shown is the newest seen.
-   - Each request reads the files again, with no index: kick-mod's journals
-     are small, only what it heard while running. The file being written is
-     read up to its last complete record. An index can come if it's slow.
-   - The panel shows what was there when it opened; it isn't updated live.
-     It has a close button.
-   - Not yet: looking up a typed name, across channels.
-7. **Filling gaps:** when a channel's connection comes back after a blip,
-   kick-mod asks Kick's chat history (`web.kick.com`, see
-   [kick-api](kick-api.md)) for the messages sent while it was down.
-   - Only blips for now: a reconnect within a run. Not the gap between runs
-     (a restart, or a handover), which may come later.
-   - **How far:** from the newest page back, until a page reaches the last
-     thing received before the drop, with a few seconds' margin, since Kick's
-     times are whole seconds and clocks differ. For a typical blip of a
-     second or two, that's the first page. At most 10 pages (250 messages);
-     past that, the rest of the gap stays missing.
-   - Messages already received (by id) are skipped, the overlap at either
-     end of the gap.
-   - Only messages come back: the history has no deletions, bans, timeouts or
-     unbans, so those during the gap stay missing. Whether it leaves out
-     messages deleted meanwhile is unknown.
-   - **Journal:** each page as received, raw, in a record of a new kind,
-     `history` (Kick's format `kick.0.1`; see [logger](logger.md)), on the
-     connection that came back. The user history lookup reads its messages
-     too, skipping ones it has (by id).
-   - **Page:** the recovered messages show in the column in time order,
-     marked as recovered, and the notice of the drop says how many came back,
-     or that some are still missing.
-   - Needs each channel's channel id, which `channels.json` doesn't have yet:
-     `ids` records it as `channel_id`, from the unofficial lookup that has the
-     chatroom id. A channel without one isn't filled.
-   - Requests name kick-mod in their `User-Agent` (`gavelgab/<version>`).
+  `server` is optional. `logger` is required: a node's `serve`, its query
+  token, and the mesh CA's certificate.
+- **Channels:** `data/kick-mod/channels.json`, by slug:
 
-8. **Switching to the logger,** once it serves Kick (see
-   [logger](logger.md#capture)):
-   - Live chat from the logger's live endpoint, and user history from its
-     query endpoint, with a query token and the mesh CA's certificate.
-   - kick-mod's own Centrifugo connection, journal, gap filling and `ids` go,
-     and with them every undocumented endpoint.
-   - `channels.json` keeps each channel's slug and `broadcaster_user_id`,
-     both from the official API.
-   - In parts, each a pause for review:
-     1. The config as JSON, with the `logger` section (optional until 2).
-        Done 2026-11-25.
-     2. Live chat from the logger's events, per channel: Kick's events
-        decoded as now; its connections' opens and closes as the column's
-        status; a gap's history pages as `filled`. A dropped stream is
-        retried, and the page told that chat is missing. Done 2026-11-25.
-        - A stream starts live: a capture's connection opened before it
-          isn't known. A close leaves it down until an open.
-        - Filled messages are those since following started, but those
-          already seen; a page with none isn't shown.
-        - Retried after 1 s, doubling to 30 s; 45 s of silence is a drop. A
-          `400`, `401` or `403` stops the channel: the config needs fixing.
-        - Not yet: the page doesn't show `filled` (step 7's page part).
-     3. User history from the logger, with the mod log's actions added.
-        Done 2026-11-25: in the same shape as from the journal.
-        - A channel the logger doesn't have (`404`) gives only the mod
-          log's actions; a logger that can't be asked, `502` with why.
-        - Not yet: the page has no history panel (step 6's page part);
-          only `/api/history` exists.
-     4. What's left goes: the Centrifugo connection, the journal, gap
-        filling and `ids`, which becomes `kick-mod add <slug>`, from the
-        official API only. Old journals stay on disk, in the logger's
-        format. Done 2026-11-25: the config's `logger` section is required.
-        - `--journal` went, and so did history's `unreadable` and
-          `filled`'s `partial` and `error`, which only kick-mod's own
-          connection set.
+  ```json
+  {
+    "<slug>": {"broadcaster_user_id": 456}
+  }
+  ```
 
-Later, each its own step:
+  `kick-mod add <slug>...` looks up `broadcaster_user_id` with the official
+  API. Written whole, sorted, through a temp file renamed over it (a
+  reader sees the old file or the new, never half of one; on Windows a
+  rename can fail while the file is open, so a failed write is reported
+  and retried). Re-read just before each write, so hand edits survive and
+  unknown fields are kept; a hand edit saved between the read and the
+  write is still lost, which is rare with one moderator.
+- **Token:** `data/kick-mod/token.json`, saved again on each refresh.
+- **Mod log:** `data/kick-mod/modlog.jsonl`.
+
+## How it works
+- **Sign-in:** the page's "Sign in" goes to Kick, which redirects back to
+  `http://localhost:<port>/oauth/callback`, so the app must have that
+  redirect URI with the port served on. Later starts use the saved token;
+  when it can't be refreshed, the page asks to sign in again. Signing out
+  revokes the token and deletes it.
+- **Live chat:** a column per channel, from the logger's
+  `/kick/v0/channels/<slug>/events`. The logger's opens and closes of its
+  connection to Kick are the column's status. A stream starts live:
+  nothing is replayed, and a page that reconnects is told chat is missing.
+  A dropped stream is retried after 1 s, doubling to 30 s; 45 s of silence
+  counts as a drop; `400`, `401` or `403` stops the channel, as the config
+  needs fixing. A gap's history pages arrive as `filled` messages: those
+  since following started that weren't already seen. Channels are read at
+  start; one added later needs a restart.
+- **Actions:** on hovering a message: delete, timeouts of 1m, 10m, 1h and
+  1d, and ban; a ban's or timeout's line has unban. One reason box, in the
+  header, goes with the next action. Each is appended to the mod log (when,
+  by whom, what, on whom, why, and Kick's answer). What's done shows when
+  Kick's event for it arrives; only a refusal shows at once, with Kick's
+  error. A refusal never signs the moderator out (Kick answers a bad
+  request with 400 too); the page's next check of who's signed in does. A
+  delete's message id must be letters, digits and dashes.
+- **User history:** `GET /api/history?channel=<slug>&user=<id>` (by user
+  id, which stays when they rename): the logger's history of them in the
+  channel (messages, the newest 500, with deletions; bans, timeouts and
+  unbans, with by whom; the newest name), plus the mod log's actions on
+  them there, refused ones too. A channel the logger doesn't have (`404`)
+  gives only the mod log's; a logger that can't be asked gives `502`.
+
+## Open
+- **The page's missing parts:** the history panel (clicking a username
+  opens it, oldest first, with a close button, as of when it opened; only
+  `/api/history` exists), and showing `filled` messages in time order,
+  marked recovered, the drop's notice saying how many came back.
+- A live test against the logger, run by the user.
+- Adding channels from the page; looking up a typed name across channels.
 - Automod rules.
 - The login, and per-moderator config.
