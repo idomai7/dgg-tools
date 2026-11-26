@@ -4,7 +4,8 @@
 //! The keys are grouped. First, with letters: `l` every log at once, in
 //! time order, the page it starts on; `r` the newest records a capture
 //! wrote, again for the next capture, round every channel's; `f` one
-//! channel's capture's log, again for the next; Space redraws now, `e`
+//! channel's capture's log, again for the next, and `F` the one before;
+//! Space redraws now, `e`
 //! opens the data folder, and `q` (or Esc, or Ctrl-C) quits. Then each
 //! program's log, with numbers: `1` the supervisor's, `2` migrate's, `3`
 //! every capture's, dgg's and Kick's, in time order, `4` compact's, `5`
@@ -75,6 +76,8 @@ enum Page {
   Captures,
   /// One capture's log, the next.
   Capture,
+  /// One capture's log, the one before.
+  CaptureBack,
   Records,
   Gaps,
 }
@@ -87,6 +90,7 @@ const KEYS: [&[(char, &str, Action)]; 3] = [
     ('l', "logs", Action::Show(Page::Logs)),
     ('r', "records", Action::Show(Page::Records)),
     ('f', "channel", Action::Show(Page::Capture)),
+    ('F', "back", Action::Show(Page::CaptureBack)),
     (' ', "redraw", Action::Redraw),
     ('e', "open data", Action::OpenData),
     ('q', "quit", Action::Quit),
@@ -304,7 +308,8 @@ impl View {
       (Page::Logs, _) => Self::Logs,
       (Page::Log(name), _) => Self::Log(name),
       (Page::Captures, _) => Self::Captures(None),
-      (Page::Capture, current) => current.next_capture(report),
+      (Page::Capture, current) => current.next_capture(report, false),
+      (Page::CaptureBack, current) => current.next_capture(report, true),
       (Page::Records, current) => current.next_records(report),
       (Page::Gaps, Self::Gaps(gaps)) => {
         let next = next_channel(report, Some(&gaps.channel));
@@ -333,7 +338,7 @@ impl View {
         empty: "(empty: shell runs print to their own windows)",
       },
       Self::Captures(Some(shown)) => Pane {
-        title: format!("{shown}'s log (f again for the next)"),
+        title: format!("{shown}'s log (f for the next, F the one before)"),
         header: None,
         lines: match capture_logs(report)
           .into_iter()
@@ -380,23 +385,26 @@ impl View {
     }
   }
 
-  /// The first channel's capture's log, or if one's is shown, the next
-  /// one's; after the last, every capture's again. The logs each service's
-  /// captures shared before each channel had its own are only among every
-  /// capture's.
-  fn next_capture(&self, report: &Report) -> Self {
+  /// The next channel's capture's log, or `back`, the one before (see
+  /// [`cycle`]). The logs each service's captures shared before each
+  /// channel had its own are only among every capture's.
+  fn next_capture(&self, report: &Report, back: bool) -> Self {
     let logs: Vec<Log> = capture_logs(report)
       .into_iter()
       .filter(|log| !SHARED_CAPTURE_LOGS.contains(&log.name.as_str()))
       .collect();
-    let next = match self {
-      Self::Captures(Some(current)) => logs
-        .iter()
-        .position(|log| log.shown == *current)
-        .map_or(0, |at| at + 1),
-      _ => 0,
+    let at = match self {
+      Self::Captures(Some(current)) => {
+        logs.iter().position(|log| log.shown == *current)
+      }
+      _ => None,
     };
-    Self::Captures(logs.into_iter().nth(next).map(|log| log.shown))
+    let next = cycle(at, logs.len(), back);
+    Self::Captures(
+      next
+        .and_then(|next| logs.into_iter().nth(next))
+        .map(|log| log.shown),
+    )
   }
 
   /// The records of the capture at the top of the captures box, or if a
@@ -415,6 +423,17 @@ impl View {
     all.sort();
     let next = all.iter().find(|which| *which > current);
     Self::Records(next.or(all.first()).cloned())
+  }
+}
+
+/// Going round `len` things and, between the last and the first, every
+/// one at once (`None`): the one after `at`, or `back`, the one before.
+pub fn cycle(at: Option<usize>, len: usize, back: bool) -> Option<usize> {
+  match (at, back) {
+    (None, false) => (len > 0).then_some(0),
+    (None, true) => len.checked_sub(1),
+    (Some(at), false) => (at + 1 < len).then_some(at + 1),
+    (Some(at), true) => at.checked_sub(1),
   }
 }
 

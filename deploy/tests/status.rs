@@ -210,7 +210,8 @@ fn draws_the_watch_screen() {
     " journal (by list) ",
     " dgg-capture.log ",
     "capturing as a-1",
-    " l logs  r records  f channel  space redraw  e open data  q quit ",
+    " l logs  r records  f channel  F back  space redraw  e open data  \
+     q quit ",
     " 1 supervisor  2 migrate  3 capture  4 compact  5 index  6 gaps  7 sync  \
      8 serve",
   ] {
@@ -337,6 +338,28 @@ fn the_watch_keys_take_more_lines_when_narrow() {
   assert!(narrow[1].starts_with(" 1 supervisor"), "{narrow:?}");
   assert!(narrow[1].ends_with("8 serve"), "{narrow:?}");
   assert!(narrow[2].ends_with("S reverse"), "{narrow:?}");
+}
+
+#[test]
+fn goes_round_the_capture_logs_both_ways() {
+  use ::deploy::status::watch::cycle;
+
+  // Every capture's, then each in turn, then every capture's again.
+  let mut at = None;
+  let mut seen = Vec::new();
+  for _ in 0..4 {
+    at = cycle(at, 3, false);
+    seen.push(at);
+  }
+  assert_eq!(seen, [Some(0), Some(1), Some(2), None]);
+  let mut seen = Vec::new();
+  for _ in 0..4 {
+    at = cycle(at, 3, true);
+    seen.push(at);
+  }
+  assert_eq!(seen, [Some(2), Some(1), Some(0), None]);
+  assert_eq!(cycle(None, 0, false), None);
+  assert_eq!(cycle(None, 0, true), None);
 }
 
 #[test]
