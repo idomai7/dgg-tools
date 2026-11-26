@@ -88,7 +88,11 @@ pub fn live_files(root: &Path) -> io::Result<Vec<PathBuf>> {
     if !day.file_type()?.is_dir() {
       continue;
     }
-    for file in fs::read_dir(day.path())? {
+    // Compaction removes a day's directory once it's archived.
+    let Some(day_files) = fs::read_dir(day.path()).missing_ok()? else {
+      continue;
+    };
+    for file in day_files {
       let path = file?.path();
       if path
         .extension()
