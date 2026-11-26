@@ -7,7 +7,8 @@ each handoff: replace what changed, keep what still holds. Last updated
 
 Read with it: this directory's [README](README.md) (the rules for every
 tool), each tool's document here, and `deploy/README.md` (operating the
-logger). The memory files in
+logger). Planning documents say what is and what's open; how it got
+there is in git history. The memory files in
 `C:\Users\Nick\.claude\projects\Z--idomai7-playground-dgg-tools\memory\`
 hold the same working rules as below; they load on their own.
 
@@ -171,14 +172,16 @@ How it runs (details in `deploy/README.md`):
   destiny.gg, omniliberal.dev (a quiet dev chat), and the user's Kick
   channels. Which build each runs now: ask. Neither syncs with the other
   yet.
-- **Git:** `main` is 28 commits ahead of `origin/main` (`d637e59`),
-  nothing pushed. Tag `pre-audit` (`581e270`) marks the start of the
-  2026-11-26 audit; 24 commits since.
+- **Git:** see `git status` for what's unpushed (pushing is the user's).
+  Tags: `pre-audit` marks the start of the 2026-11-26 audit (`git log
+  pre-audit..` has its fixes); `planning-full` the planning documents
+  before they were trimmed to design, decisions and what's open, with
+  every step and rollout told in full.
 - **Done recently:** dgg channels (all 8 steps), a capture per Kick
   channel, JSONC channel lists, the status screen (sorting, scrolling,
   minimizing, scrollbars, reverse keys), the stale-status sweep, and the
-  audit (three passes). Each is recorded in [logger](logger.md), with the
-  audit's findings under its Status.
+  audit (three passes). The logger's design is in [logger](logger.md),
+  what the audit left under its Open.
 - **Before turning sync on:** both hosts need a build from the audit or
   later: sync now checks the peer's `Content-Range`, which older serves
   don't send.
