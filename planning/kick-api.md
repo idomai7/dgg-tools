@@ -470,12 +470,13 @@ Found in kick.com's own page scripts, then asked anonymously for `destiny`.
   webhooks.
 
 ## The webhook probe
-It lives on the `kick` branch (`viewer/examples/kick.rs`, with `.env.example`).
-It compiles but hasn't been run.
+It lives in commit `58ed214`, the tip of the old `kick` branch (deleted
+2026-11-26; the commit is in `main`'s history): `viewer/examples/kick.rs`, with
+`.env.example`. It compiles but hasn't been run.
 - **Running it needs:**
   - a Kick app with webhooks turned on;
   - a tunnel such as `cloudflared tunnel --url http://localhost:8787`;
   - `.env` filled in from `.env.example`.
 
-  Then, on the `kick` branch, run
+  Then, with that commit checked out, run
   `cargo run -p viewer --example kick -- <slug>`.

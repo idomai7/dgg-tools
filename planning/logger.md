@@ -331,9 +331,9 @@ undocumented endpoints anonymously: no token, no login, no app. Planned
     channel lookup, anonymously, and writes them there. Asking the lookup
     is `kick-api`'s `lookup` feature: with reqwest, as `ledgerline/<build>`
     (with curl until 2026-11-25).
-  - Slugs are lowercase letters, digits, `-` and `_`, so each is also a
-    directory's name. Hand edits survive `kick-ids`: it changes only the
-    channel's own line.
+  - Slugs are lowercase letters, digits, `-`, `_` and `@` (an app's bot
+    user is `@<name>`, 2026-11-25), so each is also a directory's name.
+    Hand edits survive `kick-ids`: it changes only the channel's own line.
   - JSONC since 2026-11-25, `kick-channels.jsonc`, as dgg's list is (see
     [dgg channels](#dgg-channels)): `kick-ids` still edits in place,
     replacing the channel's entry or adding one at the end of the array.
