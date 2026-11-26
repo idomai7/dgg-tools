@@ -976,16 +976,7 @@ pub fn text(report: &Report) -> Vec<String> {
   let name = program_width(report);
   for program in &report.programs {
     let up = format::duration(now - program.started as i64 * 1000);
-    let from = match (&program.exe, program.ours) {
-      (_, true) => program
-        .exe
-        .as_ref()
-        .and_then(|exe| exe.parent()?.file_name())
-        .map(|build| build.to_string_lossy().into_owned())
-        .unwrap_or_default(),
-      (Some(exe), false) => exe.display().to_string(),
-      (None, false) => "(path hidden)".into(),
-    };
+    let from = program_build(program);
     out.push(format!(
       "  {:<name$}  pid {:<6} up {:<8} {:>8}  {:>5.1}% cpu  {from}",
       program.name,
