@@ -118,43 +118,46 @@ pub fn count_under(dir: &Path) -> io::Result<usize> {
 
 /// Kills every process running from under `dir`, `first` names first (a
 /// supervisor, whose programs then die with it), and waits (briefly) for
-/// them to go.
+/// them to go: an error if some don't.
 pub fn kill_under(dir: &Path, first: &[&str]) -> io::Result<()> {
   kill_from(dir, first)?;
-  for process in system()?.processes().values() {
-    if process.exe().is_some_and(|exe| exe.starts_with(dir)) {
-      process.kill();
-    }
-  }
-  let until = Instant::now() + Duration::from_secs(10);
-  while count_under(dir)? > 0 && Instant::now() < until {
-    thread::sleep(Duration::from_millis(200));
-  }
-  Ok(())
+  kill_where(dir, |exe| exe.starts_with(dir))
 }
 
 /// Kills every process running from under `dir` but not from under
-/// `except`, and waits (briefly) for them to go.
+/// `except`, and waits (briefly) for them to go: an error if some don't.
 pub fn kill_under_except(dir: &Path, except: &Path) -> io::Result<()> {
-  let doomed = |exe: &Path| exe.starts_with(dir) && !exe.starts_with(except);
+  kill_where(dir, |exe| exe.starts_with(dir) && !exe.starts_with(except))
+}
+
+/// Kills every process whose binary is `doomed`, and waits (briefly) for
+/// them to go; if some don't, an error saying how many still run from
+/// `dir`, as what's done next (moving or removing their files) would fail.
+fn kill_where(dir: &Path, doomed: impl Fn(&Path) -> bool) -> io::Result<()> {
   for process in system()?.processes().values() {
-    if process.exe().is_some_and(doomed) {
+    if process.exe().is_some_and(&doomed) {
       process.kill();
     }
   }
   let until = Instant::now() + Duration::from_secs(10);
-  while Instant::now() < until {
+  loop {
     let left = system()?
       .processes()
       .values()
-      .filter(|process| process.exe().is_some_and(doomed))
+      .filter(|process| process.exe().is_some_and(&doomed))
       .count();
     if left == 0 {
-      break;
+      return Ok(());
+    }
+    if Instant::now() >= until {
+      return Err(io::Error::other(format!(
+        "{left} of the programs under {} still run after 10s; stop them, \
+         then try again",
+        dir.display()
+      )));
     }
     thread::sleep(Duration::from_millis(200));
   }
-  Ok(())
 }
 
 /// Waits up to `patience` for every process running one of `names` from
