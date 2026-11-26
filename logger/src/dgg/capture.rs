@@ -372,7 +372,21 @@ fn check_handoff(
 ) -> io::Result<(Option<String>, Vec<String>)> {
   control::write(control, me)?;
   let others = control::read_all(control)?;
-  let gone = older.gone(me, &others);
+  let mut gone = older.gone(me, &others);
+  let swept = control::sweepable(
+    me,
+    &others,
+    me.heartbeat,
+    handoff.stale_after,
+    control::SWEEP_AFTER,
+  );
+  for status in swept {
+    gone.push(match control::remove(control, &status.instance) {
+      Ok(()) => control::swept_line(status, me.heartbeat),
+      Err(e) => format!("can't remove {}'s status: {e}", status.instance),
+    });
+    older.forget(&status.instance);
+  }
   if handoff.keep_running {
     return Ok((None, gone));
   }

@@ -43,6 +43,10 @@
 //! this host's `serve` (see [`push_body`]), which writes it here with its
 //! times shifted onto this host's clock, so local instances treat it like
 //! any other.
+//!
+//! An instance removes its status as it stops, but one killed or crashed
+//! can't: the newest healthy instance sweeps such a status away once its
+//! heartbeat has stopped for [`SWEEP_AFTER`] (see [`sweepable`]).
 
 use {
   ::common::{atomic_file, fs::MissingOk},
@@ -346,6 +350,49 @@ pub fn successor<'a>(
     .max_by_key(|other| (other.started, &other.instance))
 }
 
+/// How long a status's heartbeat must have stopped before it's swept away
+/// (see [`sweepable`]): long past stale, since a running instance writes
+/// its own every second.
+pub const SWEEP_AFTER: Duration = Duration::from_secs(600);
+
+/// The statuses among `others` that `me` should delete, left by instances
+/// that stopped without removing their own (killed, or crashed): none
+/// unless `me` is healthy and no other started after it is fresh (its
+/// heartbeat no older than `stale_after` at `now`); then each whose
+/// heartbeat stopped at least `sweep_after` ago, older or newer than `me`.
+pub fn sweepable<'a>(
+  me: &Status,
+  others: &'a [Status],
+  now: i64,
+  stale_after: Duration,
+  sweep_after: Duration,
+) -> Vec<&'a Status> {
+  let age = |since: i64| u128::try_from(now - since).unwrap_or(0);
+  let newer_fresh = others.iter().any(|other| {
+    (other.started, &other.instance) > (me.started, &me.instance)
+      && age(other.heartbeat) <= stale_after.as_millis()
+  });
+  if me.healthy_since.is_none() || newer_fresh {
+    return Vec::new();
+  }
+  others
+    .iter()
+    .filter(|other| other.instance != me.instance)
+    .filter(|other| age(other.heartbeat) >= sweep_after.as_millis())
+    .collect()
+}
+
+/// What an instance says of a status it swept away (see [`sweepable`]),
+/// at `now`.
+pub fn swept_line(status: &Status, now: i64) -> String {
+  let build = status.build.as_deref().unwrap_or("not given");
+  format!(
+    "removed {}'s status (build {build}): its heartbeat stopped {} ago",
+    status.instance,
+    ::common::format::duration(now - status.heartbeat)
+  )
+}
+
 /// The older instances one instance has seen, so it can say when each goes:
 /// see [`Older::gone`].
 #[derive(Clone, Debug, Default)]
@@ -380,6 +427,12 @@ impl Older {
       .iter()
       .map(|status| gone_line(status, took_over))
       .collect()
+  }
+
+  /// Forgets `instance`, whose status was swept away (see [`sweepable`]),
+  /// so it isn't said to have gone too.
+  pub fn forget(&mut self, instance: &str) {
+    self.0.retain(|seen| seen.instance != instance);
   }
 }
 

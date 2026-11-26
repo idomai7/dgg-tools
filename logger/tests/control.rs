@@ -225,3 +225,41 @@ fn says_which_older_instance_it_took_over_from() {
     ["old (build 0.0.1-abc) stopped"]
   );
 }
+
+#[test]
+fn sweeps_away_statuses_long_stale() {
+  use ::logger::control::sweepable;
+
+  let (stale, sweep) = (Duration::from_secs(5), Duration::from_secs(600));
+  let now = 2_000_000;
+  let at = |instance: &str, started, heartbeat, healthy: bool| Status {
+    heartbeat,
+    ..status(instance, started, healthy.then_some(started))
+  };
+  let me = at("me", 1_000_000, now, true);
+  let dead_older = at("old", 10, now - 600_000, true);
+  let just_stale = at("blip", 20, now - 10_000, true);
+  let dead_newer = at("bridge", 1_500_000, now - 700_000, false);
+  let others = [
+    me.clone(),
+    dead_older.clone(),
+    just_stale.clone(),
+    dead_newer.clone(),
+  ];
+  let swept = |me: &Status, others: &[Status]| {
+    let swept = sweepable(me, others, now, stale, sweep);
+    swept.iter().map(|s| s.instance.clone()).collect::<Vec<_>>()
+  };
+  // Those stopped ten minutes or more, older or newer; never itself.
+  assert_eq!(swept(&me, &others), ["old", "bridge"]);
+  // Not while it isn't healthy itself.
+  let connecting = at("me", 1_000_000, now, false);
+  assert_eq!(swept(&connecting, &others), [] as [String; 0]);
+  // Nor while a newer one is running: that one sweeps.
+  let newer = at("new", 1_900_000, now - 1_000, false);
+  let with_newer = [others.as_slice(), &[newer]].concat();
+  assert_eq!(swept(&me, &with_newer), [] as [String; 0]);
+  assert!(
+    control::swept_line(&dead_older, now).starts_with("removed old's status")
+  );
+}

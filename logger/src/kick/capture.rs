@@ -321,7 +321,27 @@ fn check_handoff(
   for dir in controls {
     others.extend(control::read_all_as(dir, Variant::Kick)?);
   }
-  let gone = older.gone(me, &others);
+  let mut gone = older.gone(me, &others);
+  let mut swept = control::sweepable(
+    me,
+    &others,
+    me.heartbeat,
+    handoff.stale_after,
+    control::SWEEP_AFTER,
+  );
+  // Each control directory has its own copy: one line each.
+  swept.sort_by(|a, b| a.instance.cmp(&b.instance));
+  swept.dedup_by(|a, b| a.instance == b.instance);
+  for status in swept {
+    let removed: io::Result<()> = controls
+      .iter()
+      .try_for_each(|dir| control::remove(dir, &status.instance));
+    gone.push(match removed {
+      Ok(()) => control::swept_line(status, me.heartbeat),
+      Err(e) => format!("can't remove {}'s status: {e}", status.instance),
+    });
+    older.forget(&status.instance);
+  }
   if handoff.keep_running {
     return Ok((None, gone));
   }

@@ -431,3 +431,52 @@ async fn hands_off_to_an_instance_on_another_host() {
   let control = control::dir(&destiny(old_host.path()));
   assert_eq!(control::read_all(&control).unwrap(), []);
 }
+
+/// A healthy capture removes the status of an instance that stopped
+/// without removing its own, once it's long stale; a fresh one it leaves.
+#[::tokio::test]
+async fn sweeps_away_a_dead_instances_status() {
+  let (url, server) = chat_server().await;
+  let root = TempDir::new("logger-capture-sweep");
+  let dir = control::dir(root.path());
+  let now = ::common::time::now_ms();
+  let left = |instance: &str, heartbeat| control::Status {
+    instance: instance.into(),
+    started: 1,
+    heartbeat,
+    healthy_since: Some(1),
+    build: None,
+    listening: None,
+  };
+  control::write(&dir, &left("dead", now - 11 * 60_000)).unwrap();
+  control::write(&dir, &left("blip", now - 10_000)).unwrap();
+  let config = Config {
+    channel: channel(&url),
+    list: None,
+    reread_every: Duration::from_secs(60),
+    chat: Options::default(),
+    journal_root: root.to_path_buf(),
+    instance: "me".into(),
+    started: now,
+    handoff: quick_handoff(),
+    peer: None,
+    old_control: None,
+    bridge: false,
+  };
+  let (stop, stopped) = oneshot::channel::<()>();
+  let capture = ::tokio::spawn(run(config, async {
+    let _ = stopped.await;
+  }));
+  let dead = control::path(&dir, "dead");
+  for _ in 0..250 {
+    if !dead.exists() {
+      break;
+    }
+    ::tokio::time::sleep(Duration::from_millis(20)).await;
+  }
+  assert!(!dead.exists(), "the dead instance's status is still there");
+  assert!(control::path(&dir, "blip").exists());
+  stop.send(()).unwrap();
+  assert_eq!(capture.await.unwrap().unwrap(), Exit::Shutdown);
+  server.abort();
+}
