@@ -11,12 +11,12 @@
 //! Kick's, in time order, `4` compact's, `5` index's, `6` the gaps in the
 //! first dgg channel's capture, looked at again every 30 seconds, again
 //! for the next channel's, and `^` (Shift-6) the one before, `7` sync's
-//! and `8` serve's. Last, the boxes: Tab and Shift-Tab move the focus between them (the page at the
-//! bottom too), Up, Down, Page Up and Page Down scroll the focused one when
-//! it's over-tall, `m` minimizes it to its title line, or restores it,
-//! and `s` sorts it by its next key, `S` the other way (see [`sort`]; the
-//! page keeps its order). On a narrow screen the keys take more than one
-//! line.
+//! and `8` serve's. Last, the boxes: Tab and Shift-Tab move the focus
+//! between them (the page at the bottom too), Up, Down, Page Up and Page
+//! Down scroll the focused one when it's over-tall, `m` minimizes it to its
+//! title line, or restores it, and `s` sorts it by its next key, `S` the
+//! other way (see [`sort`]; the page keeps its order). On a narrow screen
+//! the keys take more than one line.
 
 use {
   super::{
@@ -510,13 +510,28 @@ fn event_loop(
 ) -> io::Result<()> {
   let mut view = View::Logs;
   let mut boxes = Boxes::default();
+  let mut last: Option<Report> = None;
   loop {
-    let mut report = watcher.gather(paths)?;
+    // A look that fails (a file busy as it's replaced, say) keeps the last
+    // report up, saying so, and looks again next time.
+    let (mut report, failed) = match watcher.gather(paths) {
+      Ok(report) => (report, None),
+      Err(e) => match last.take() {
+        Some(report) => (report, Some(e)),
+        None => return Err(e),
+      },
+    };
     boxes.sort_report(&mut report);
     if let View::Gaps(gaps) = &mut view {
       gaps.refresh(&paths.data, report.dgg.channels.len() > 1);
     }
-    let pane = view.pane(paths, &report);
+    let mut pane = view.pane(paths, &report);
+    if let Some(e) = failed {
+      pane.header = Some(format!(
+        "(couldn't look again: {e}; this is as of {})",
+        utc_timestamp(report.now)
+      ));
+    }
 
     let until = Instant::now() + interval;
     // Drawn again after each key that moves the boxes, without looking
@@ -569,6 +584,7 @@ fn event_loop(
         _ => {}
       }
     }
+    last = Some(report);
   }
 }
 
@@ -670,7 +686,6 @@ fn log_line(line: &str) -> Line<'_> {
   ])
 }
 
-/// A box's border and title, highlighted if it has the focus.
 /// Draws a scrollbar on the right border of the box in `area`, if it has
 /// more lines than its `rows` show: `top` the first shown, of `most + 1`
 /// it could start at. Its ends say which way there's more (`▲`, `▼`).
@@ -705,6 +720,7 @@ fn scrollbar(
   frame.render_stateful_widget(bar, inside, &mut state);
 }
 
+/// A box's border and title, highlighted if it has the focus.
 fn heading(title: &str, focused: bool) -> Block<'_> {
   let border = match focused {
     true => Style::new().fg(Color::Cyan),
