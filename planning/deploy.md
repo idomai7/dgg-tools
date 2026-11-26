@@ -55,22 +55,6 @@ Everything an install is configured with, secrets included, is one file,
   the new one waits for the old one's port.
 
 ## Open
-The status screen and the mouse, planned 2026-11-26, a commit each:
-1. A minimized box's title says only `(minimized)`: `captures
-   (minimized)`, not its order or how many lines it has, as the page's
-   already does.
-2. A click on a box focuses it, minimized or not. The screen captures
-   the mouse (crossterm's `EnableMouseCapture`, turned off again on quit);
-   each box's area, as last drawn, is kept in `Boxes` to find which one
-   was clicked.
-3. The wheel scrolls the box under the cursor, focused or not, 3 lines a
-   notch, as far as it goes; the page's wheel-up goes back from its end,
-   as Up does. The module's docs and the keys line say so (`mouse focus
-   /scroll`).
-
-Capturing the mouse means a plain drag no longer selects text: in
-Windows Terminal, Shift-drag still does.
-
 In order, from the original plan:
 - Linux builds and a systemd install.
 - Provisioning with OpenTofu and a Rust `dgg-deploy`.
