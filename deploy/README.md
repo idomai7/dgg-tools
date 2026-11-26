@@ -176,13 +176,13 @@ If anything goes wrong, `install` says what, and the capture that was
 running (or the bridge) keeps running.
 
 dgg's journals are by channel, destiny.gg's in `journal\dgg\destiny.gg\`
-and its index in `index-dgg-destiny.gg.sqlite`. An install moves them
-there from `journal\dgg\` and `index-dgg.sqlite` as its supervisor starts;
-a live file still being written is moved at a later start, and
-`migrate.log` says what moved and what was left. Kick's index is by
-channel too, `index-kick-<slug>.sqlite`: an install deletes the old
-`index-kick.sqlite` as its supervisor starts, and `index` builds each
-channel's from its journal.
+and its index in `index-dgg-destiny.gg.sqlite`. Builds `4869223` to
+`d637e59` moved them there from `journal\dgg\` and `index-dgg.sqlite`;
+later builds don't, but `migrate.log` warns of anything left there, so
+upgrading from a build older than `4869223` goes through one of those
+first. Kick's index is by channel too, `index-kick-<slug>.sqlite`: an
+install deletes the old `index-kick.sqlite` as its supervisor starts, and
+`index` builds each channel's from its journal.
 
 Builds `ed46061` to `52d088d` moved dgg's journal into `journal\dgg\` from `journal\` and
 `index.sqlite`; later builds don't, so upgrading from a build older than
