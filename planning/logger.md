@@ -852,3 +852,16 @@ WebSocket URL of its own. Each step a pause for review.
   - Checkpoints of compacted-away live files are dropped.
   - Real data: the index rebuilt from the archive is identical to one built from
     the live files (535 messages).
+  - `index` warns of each live file whose checkpoint it drops: gone from
+    the journal, compacted or not.
+- **Audit (2026-11-26, from tag `pre-audit`):** fixed a manifest failing
+  while compaction removed a file, sync appending from wherever a peer
+  sent (it checks `Content-Range` now), compact and sync losing each
+  other's manifest entries (both hold `archive/archives.lock`), pushed
+  statuses overflowing, and Kick's live tail failing on a file compacted
+  away. Left as they are:
+  - A lock file is removed as it's let go, so on Unix a second holder
+    could lock a file just unlinked; on Windows, the hosts' OS, the
+    removal fails while it's open.
+  - Compaction holds a whole day in memory, its records and its archive:
+    a few times a busy day's size.
