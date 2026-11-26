@@ -230,7 +230,14 @@ fn draws_the_watch_screen() {
 fn scrolls_and_minimizes_the_watch_boxes() {
   use {
     ::deploy::status::watch::{Boxes, Pane, draw},
-    ::ratatui::{Terminal, backend::TestBackend, style::Color},
+    ::ratatui::{
+      Terminal,
+      backend::TestBackend,
+      crossterm::event::{
+        KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+      },
+      style::Color,
+    },
   };
 
   let dir = TempDir::new("deploy-status-boxes");
@@ -313,6 +320,29 @@ fn scrolls_and_minimizes_the_watch_boxes() {
   let all = rows.join("\n");
   assert!(all.contains(" captures (minimized) "), "{all}");
   assert_eq!(shown(&rows), 0, "{all}");
+
+  // A click on a box focuses it, minimized too; one anywhere else, or
+  // anything but a left click, changes nothing.
+  let row_of = |title: &str| {
+    rows.iter().position(|row| row.contains(title)).unwrap() as u16
+  };
+  let (page, captures) = (row_of(" the page ("), row_of(" captures ("));
+  let mouse = |kind, row| MouseEvent {
+    kind,
+    column: 10,
+    row,
+    modifiers: KeyModifiers::NONE,
+  };
+  let click = |row| mouse(MouseEventKind::Down(MouseButton::Left), row);
+  assert!(boxes.mouse(click(page)));
+  assert_eq!(boxes.focus, 3);
+  assert!(!boxes.mouse(click(page)));
+  assert!(!boxes.mouse(mouse(MouseEventKind::Moved, captures)));
+  assert!(!boxes.mouse(mouse(MouseEventKind::Down(MouseButton::Right), 0)));
+  assert!(!boxes.mouse(click(0)));
+  assert_eq!(boxes.focus, 3);
+  assert!(boxes.mouse(click(captures)));
+  assert_eq!(boxes.focus, 1);
 }
 
 #[test]
@@ -322,7 +352,7 @@ fn the_watch_keys_take_more_lines_when_narrow() {
   let wide = keys(240);
   assert_eq!(wide.len(), 1, "{wide:?}");
   assert!(wide[0].contains("q quit | 1 supervisor"), "{wide:?}");
-  assert!(wide[0].contains("8 serve | tab focus"), "{wide:?}");
+  assert!(wide[0].contains("8 serve | tab/click focus"), "{wide:?}");
   assert!(wide[0].ends_with("m minimize  s/S sort"), "{wide:?}");
   let narrow = keys(80);
   assert_eq!(narrow.len(), 3, "{narrow:?}");

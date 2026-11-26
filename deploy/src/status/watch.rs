@@ -12,7 +12,8 @@
 //! first dgg channel's capture, looked at again every 30 seconds, again
 //! for the next channel's, and `^` (Shift-6) the one before, `7` sync's
 //! and `8` serve's. Last, the boxes: Tab and Shift-Tab move the focus
-//! between them (the page at the bottom too), Up, Down, Page Up and Page
+//! between them (the page at the bottom too), and so does a click on one
+//! (the screen captures the mouse while it runs), Up, Down, Page Up and Page
 //! Down scroll the focused one when it's over-tall, `m` minimizes it to its
 //! title line, or restores it, and `s` sorts it by its next key, `S` the
 //! other way (see [`sort`]; the page keeps its order). On a narrow screen
@@ -36,8 +37,14 @@ use {
   ::logger::dgg::{self, channels::DESTINY},
   ::ratatui::{
     DefaultTerminal, Frame,
-    crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
-    layout::{Constraint, Layout},
+    crossterm::{
+      event::{
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode,
+        KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+      },
+      execute,
+    },
+    layout::{Constraint, Layout, Position, Rect},
     style::{Color, Modifier, Style, Stylize},
     text::{Line, Span},
     widgets::{
@@ -120,7 +127,7 @@ const KEYS: [&[(char, &str, Action)]; 3] = [
 ];
 
 /// The keys that aren't characters, before the boxes' group of [`KEYS`].
-const MOVING: &str = "tab focus  arrows/pgup/pgdn scroll";
+const MOVING: &str = "tab/click focus  arrows/pgup/pgdn scroll";
 
 /// The boxes, in the order Tab moves through them: the page last.
 const PROGRAMS: usize = 0;
@@ -140,10 +147,11 @@ pub struct Boxes {
   pub scroll: [usize; 4],
   pub minimized: [bool; 4],
   pub order: [Order; 3],
-  /// How far each could scroll, and how many lines it showed, as last
-  /// drawn.
+  /// How far each could scroll, how many lines it showed, and where it
+  /// was, as last drawn.
   most: [usize; 4],
   rows: [usize; 4],
+  areas: [Rect; 4],
 }
 
 impl Default for Boxes {
@@ -156,11 +164,29 @@ impl Default for Boxes {
       order: [Order::default(); 3],
       most: [0; 4],
       rows: [0; 4],
+      areas: [Rect::default(); 4],
     }
   }
 }
 
 impl Boxes {
+  /// Does what `mouse` asks: a left click on a box focuses it. Whether
+  /// anything changed, so the screen needs drawing again.
+  pub fn mouse(&mut self, mouse: MouseEvent) -> bool {
+    let at = Position::new(mouse.column, mouse.row);
+    let Some(clicked) = self.areas.iter().position(|area| area.contains(at))
+    else {
+      return false;
+    };
+    match mouse.kind {
+      MouseEventKind::Down(MouseButton::Left) if clicked != self.focus => {
+        self.focus = clicked;
+        true
+      }
+      _ => false,
+    }
+  }
+
   fn next(&mut self) {
     self.focus = (self.focus + 1) % 4;
   }
@@ -497,7 +523,9 @@ fn records_title(which: &Which, report: &Report) -> String {
 pub fn run(paths: &Paths, interval: Duration) -> io::Result<()> {
   let mut watcher = Watcher::new()?;
   let mut terminal = ::ratatui::try_init()?;
-  let result = event_loop(&mut terminal, &mut watcher, paths, interval);
+  let result = execute!(io::stdout(), EnableMouseCapture)
+    .and_then(|()| event_loop(&mut terminal, &mut watcher, paths, interval));
+  let _ = execute!(io::stdout(), DisableMouseCapture);
   ::ratatui::restore();
   result
 }
@@ -534,17 +562,27 @@ fn event_loop(
     }
 
     let until = Instant::now() + interval;
-    // Drawn again after each key that moves the boxes, without looking
-    // again.
+    // Drawn again after each key or click that moves the boxes, without
+    // looking again.
+    let mut redraw = true;
     loop {
-      terminal.draw(|frame| draw(frame, &report, &pane, &mut boxes))?;
+      if redraw {
+        terminal.draw(|frame| draw(frame, &report, &pane, &mut boxes))?;
+      }
+      redraw = true;
       let left = until.saturating_duration_since(Instant::now());
       if left.is_zero() || !event::poll(left)? {
         break;
       }
-      let Event::Key(key) = event::read()? else {
+      let key = match event::read()? {
+        Event::Key(key) => key,
+        // Drawn for only if it changed something: not the mouse moving.
+        Event::Mouse(mouse) => {
+          redraw = boxes.mouse(mouse);
+          continue;
+        }
         // A resize, say: redraw.
-        break;
+        _ => break,
       };
       if key.kind != KeyEventKind::Press {
         continue;
@@ -832,6 +870,7 @@ fn draw_box(
   let most = lines.len().saturating_sub(rows);
   boxes.most[at] = most;
   boxes.rows[at] = rows;
+  boxes.areas[at] = area;
   let scroll = boxes.scroll[at].min(most);
   boxes.scroll[at] = scroll;
   let keys: &[&str] = match at {
@@ -1016,6 +1055,7 @@ fn draw_page(
   let most = all.saturating_sub(rows);
   boxes.most[PAGE] = most;
   boxes.rows[PAGE] = rows;
+  boxes.areas[PAGE] = area;
   let back = boxes.scroll[PAGE].min(most);
   boxes.scroll[PAGE] = back;
   let shown = &pane.lines[all - rows.min(all) - back..all - back];
