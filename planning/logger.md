@@ -859,7 +859,15 @@ WebSocket URL of its own. Each step a pause for review.
   sent (it checks `Content-Range` now), compact and sync losing each
   other's manifest entries (both hold `archive/archives.lock`), pushed
   statuses overflowing, and Kick's live tail failing on a file compacted
-  away. Left as they are:
+  away. A second pass fixed backfill taking an empty page as the source's
+  end, listing live files failing as compaction removed a day (which quit
+  `status --watch`, now kept up through a failed look too), and backfill
+  and kick-mod requests that could hang forever; an install now says when
+  the old captures didn't all hand off. Left as they are:
+  - A backfill page's oldest millisecond may hold more messages than
+    the page reached: those past it are skipped. linkers.ooo's pages
+    leave out their oldest second for this; rustlesearch's are to the
+    millisecond, so it's rare.
   - A lock file is removed as it's let go, so on Unix a second holder
     could lock a file just unlinked; on Windows, the hosts' OS, the
     removal fails while it's open.
