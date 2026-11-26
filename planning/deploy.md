@@ -11,7 +11,7 @@ deployment principles, and `deploy/README.md` for operating it.
 - `serve` gets TLS from a private CA kept on the PC.
 - The plan, in steps: multiple peers, TLS, push, Linux builds, a systemd
   install, OpenTofu with a Rust `dgg-deploy`, `status --mesh`, then rollout.
-- The logger's Kick capture (see [logger](logger.md#kick)) runs on the same
+- The logger's Kick capture (see [logger](logger.md#capture)) runs on the same
   nodes, under the same supervisor, from a `kick-channels` list in the
   install. `serve` also answers kick-mod, with a query token of its own.
 

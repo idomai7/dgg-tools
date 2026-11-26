@@ -194,7 +194,7 @@ Not started; the user picks what's next.
   the index, the query and live endpoints) haven't been checked on a
   real host.
 - **Left as they are by the audit:** see its entry in
-  [logger](logger.md#status).
+  [logger](logger.md#open).
 - **Roadmap** ([README](README.md#roadmap)): the read-only viewer, the
   archives and stats tools, a services dashboard; community services are
   notes only ([community](community.md)).

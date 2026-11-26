@@ -171,7 +171,7 @@ Each is a pause for review.
    - Requests name kick-mod in their `User-Agent` (`gavelgab/<version>`).
 
 8. **Switching to the logger,** once it serves Kick (see
-   [logger](logger.md#kick)):
+   [logger](logger.md#capture)):
    - Live chat from the logger's live endpoint, and user history from its
      query endpoint, with a query token and the mesh CA's certificate.
    - kick-mod's own Centrifugo connection, journal, gap filling and `ids` go,
