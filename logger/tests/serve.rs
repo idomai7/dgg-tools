@@ -39,6 +39,11 @@ fn pushed_statuses_move_onto_the_receivers_clock() {
   assert_eq!(parse_push(&body, 12_000), Some(expected));
   assert_eq!(parse_push("now x\n", 0), None);
   assert_eq!(parse_push(&status("a").encode(), 0), None);
+  // Times past what a clock can hold saturate rather than overflow.
+  let mut far = status("a");
+  far.heartbeat = i64::MAX;
+  let pushed = parse_push(&push_body(&far.encode(), 0), 10_000).unwrap();
+  assert_eq!(pushed.heartbeat, i64::MAX);
 }
 
 #[test]

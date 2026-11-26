@@ -203,12 +203,13 @@ impl Status {
     })
   }
 
-  /// Moves every time by `by` ms, onto another clock.
+  /// Moves every time by `by` ms, onto another clock. (A pushed status's
+  /// times are another host's to give, so they saturate, not overflow.)
   pub fn shift(&mut self, by: i64) {
-    self.started += by;
-    self.heartbeat += by;
+    self.started = self.started.saturating_add(by);
+    self.heartbeat = self.heartbeat.saturating_add(by);
     if let Some(since) = self.healthy_since.as_mut() {
-      *since += by;
+      *since = since.saturating_add(by);
     }
   }
 }
@@ -228,7 +229,7 @@ pub fn parse_push(body: &str, now: i64) -> Option<Status> {
     return None;
   }
   let mut status = Status::decode(status)?;
-  status.shift(now - sent.parse::<i64>().ok()?);
+  status.shift(now.saturating_sub(sent.parse::<i64>().ok()?));
   Some(status)
 }
 
