@@ -243,11 +243,21 @@ grouped:
   the bottom too (its border turns cyan); Up, Down, Page Up and Page Down
   scroll the focused one when it's over-tall (its title says which lines
   it shows); `m` minimizes it to its title line, or restores it, the
-  others taking the room.
+  others taking the room; `s` sorts it by its next key, round to the
+  first, and `S` reverses it (its title says which, once it isn't the
+  first).
 
 The captures box lists dgg's and Kick's captures together, each after its
 service, the unhealthy first (stale, then connecting), then the busiest,
-by frames a minute over about the last minute.
+by frames a minute over about the last minute. Each box's keys, its first
+how it starts:
+
+- programs: name, memory, CPU, build, started (the newest first);
+- captures: health, load, service, channel, started;
+- journal: the lists' order, name, size today, last write.
+
+The biggest, busiest and newest come first, and names A to Z. A log page
+keeps its time order.
 
 In a narrow window the keys take two lines.
 
